@@ -1,6 +1,14 @@
+![Community Cloud](https://community-cloud.technology/cloud-logo-color.png)
+
 # Community Cloud
 
 A multi-node, multi-site Kubernetes platform built on K3s, designed to provision and manage distributed infrastructure with automated storage, networking, and application lifecycle management.
+
+Community Cloud is currently in Alpha but is usable. We're currently going undergoing heavy active development. See our Roadmap [here](https://github.com/orgs/Mellow-Technology/projects/1).
+
+### Github
+
+While currently on Github we're actively expecting to migrate away at the earliest convenient time. More soon!
 
 ## Architecture Overview
 
