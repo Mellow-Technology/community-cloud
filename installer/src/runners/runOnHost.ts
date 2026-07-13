@@ -8,14 +8,21 @@ const bundleMap = {
   k3s: K3sBundle,
 };
 
-async function runRemoteBundle(bundleName, nodeName, config) {
+/**
+ * Run a command bundle remotely.
+ *
+ * @param bundleName
+ * @param nodeName
+ * @param config
+ */
+export async function runRemoteBundle(bundleName, nodeName, config) {
   // Retrieve the node
-  const node = config.getNode(nodeName);
+  const nodeInfo = config.getNode(nodeName);
 
   // Connect to the node via SSH
   const node = new RemoteHost({
-    host: node.address,
-    username: node.username,
+    host: nodeInfo.address,
+    username: nodeInfo.username,
   });
   await node.connect();
 
@@ -27,4 +34,4 @@ async function runRemoteBundle(bundleName, nodeName, config) {
   await node.disconnect();
 }
 
-async function runRemoteBundles(bundleList, nodeName, config) {}
+export async function runRemoteBundles(bundleList, nodeName, config) {}
