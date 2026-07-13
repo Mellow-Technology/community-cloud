@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: twenty-crm-init
+  namespace: cc-office
+spec:
+  template:
+    spec:
+      containers:
+        - name: twenty-crm
+          image: twentycrm/twenty:v2.7.3
+          imagePullPolicy: IfNotPresent
+          command:
+            - yarn
+            - database:init:prod
+          env:
+            - name: DISABLE_DB_MIGRATIONS
+              value: "true"
+            - name: LOG_LEVELS
+              value: "verbose"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: password
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: cc-postgres-app
+                  key: host
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: cc-postgres-app
+                  key: port
+            - name: PG_DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/twenty_crm"
+            - name: REDIS_URL
+              value: "redis://$(REDIS_SERVICE_HOST):$(REDIS_SERVICE_PORT)/0"
+      restartPolicy: Never
+  backoffLimit: 4

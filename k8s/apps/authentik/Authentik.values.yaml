@@ -1,0 +1,105 @@
+# Authentik authentication system
+#
+# Authentik is a default component of Community Cloud
+# It supports user authentication for Community Cloud Office apps
+# as well as for user-facing applications.
+#
+# Installation documentation here https://docs.goauthentik.io/install-config/install/kubernetes/
+#
+# To install:
+#
+# 1. Apply database
+# 2. Apply storage
+# 3. Apply secret
+# 4. helm repo add authentik https://charts.goauthentik.io
+# 5. helm repo update
+# 6. helm upgrade --install authentik authentik/authentik -f k8s/apps/authentik/Authentik.values.yaml --namespace cc-office
+
+authentik:
+  # TODO: More templated values here
+  secret_key: {{ .Values.authentik.secretKey | quote }}
+  email:
+    from: {{ printf "auth@%s" .Values.domain.main | quote }}
+  # Community Cloud aims for max privacy by default
+  # In most cases like this we will default to not
+  # reporting
+  error_reporting:
+    enabled: false
+  # We're using CNPG so we disable the chart's
+  # built in Postgres
+  postgresql:
+    name: authentik
+    host: cc-postgres-rw
+    user: file:///postgres-creds/username
+    password: file:///postgres-creds/password
+postgresql:
+  enabled: false
+server:
+  volumes:
+    - name: postgres-creds
+      secret:
+        secretName: authentik-db
+  volumeMounts:
+    - name: postgres-creds
+      mountPath: /postgres-creds
+      readOnly: true
+  route:
+    main:
+      enabled: true
+      hostnames:
+        - {{ .Values.domain.auth }}
+      parentRefs:
+        - name: cc-office-web-gateway
+          namespace: cc-office
+worker:
+  volumes:
+    - name: postgres-creds
+      secret:
+        secretName: authentik-db
+  volumeMounts:
+    - name: postgres-creds
+      mountPath: /postgres-creds
+      readOnly: true
+global:
+  # Need to make sure this is noted to be
+  # run by Community Cloud
+  podLabels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  # As per all things in Community Cloud
+  # We run everything on worker nodes
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  envFrom:
+    # Bucket configuration
+    - configMapRef:
+        name: authentik-bucket
+  env:
+    # TODO: Support read-replicas. Keep things
+    # available.
+    # https://docs.goauthentik.io/install-config/configuration/#read-replicas
+    #
+    # TODO: Probably need some amount of
+    # logic to figure out things between
+    # Garage. In YOLO mode it should
+    # typically be Garage. We may also support
+    # directly using TopoLVM, but this would
+    # make cluster expansion more difficult
+    - name: AUTHENTIK_STORAGE__BACKEND
+      value: "s3"
+      # Garage uses this region
+    - name: AUTHENTIK_STORAGE__S3__REGION
+      value: "garage"
+    - name: AUTHENTIK_STORAGE__S3__ENDPOINT
+      value: "http://$(BUCKET_HOST):$(BUCKET_PORT)"
+    - name: AUTHENTIK_STORAGE__S3__BUCKET_NAME
+      value: "$(BUCKET_NAME)"
+    - name: AUTHENTIK_STORAGE__S3__ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: authentik-bucket
+          key: AWS_ACCESS_KEY_ID
+    - name: AUTHENTIK_STORAGE__S3__SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: authentik-bucket
+          key: AWS_SECRET_ACCESS_KEY

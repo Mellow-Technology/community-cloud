@@ -1,0 +1,33 @@
+# Mattermost Operator Values
+#
+# Prepare:
+# From project root directory:
+#
+# 1 .helm repo add mattermost https://helm.mattermost.com
+# 2. kubectl create ns mattermost-operator
+# 3. helm install mattermost-operator mattermost/mattermost-operator -n mattermost-operator
+mattermostOperator:
+  enabled: true
+  # Just go with a single operator replica
+  replicas: 1
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
+  env:
+    maxReconcilingInstallations: 20
+    maxReconcilingConcurrency: 10
+    requeuOnLimitDelay: 20s
+  image:
+    repository: mattermost/mattermost-operator
+    tag: v1.25.4
+    pullPolicy: IfNotPresent
+  args:
+    - --enable-leader-election
+    - --metrics-addr=0.0.0.0:8383
+
+  ## Specify image pull secret for private repository
+  #
+  # privateRegistry:
+  #   enabled: false
+  #   imagePullSecret: <name of the secret>

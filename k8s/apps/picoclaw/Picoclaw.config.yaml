@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:

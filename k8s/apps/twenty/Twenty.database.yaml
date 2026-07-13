@@ -1,0 +1,11 @@
+# Database for Twenty CRM
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+spec:
+  name: twenty_crm
+  owner: twenty_crm
+  cluster:
+    name: cc-postgres

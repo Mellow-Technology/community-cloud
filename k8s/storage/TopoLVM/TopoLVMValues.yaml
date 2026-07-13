@@ -1,0 +1,31 @@
+# Only run controller pods on storage-local nodes
+controller:
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local
+lvmd:
+  managed: true
+  socketName: /run/topolvm/lvmd.sock
+  deviceClasses:
+    # This device class is specifically for M.2 SSDs
+    # They are by far the fastest
+    - name: ssd
+      volume-group: cc-ssd-vg
+      default: true
+    # For SATA based SSD drives. These are still fast
+    # but typically slower than M.2 devices
+    - name: ssd-sata
+      volume-group: cc-ssd-sata-vg
+    # It's possible to setup LVM such that an SSD
+    # is used as a cache for an HDD. This device
+    # class is reserved for that type of setup
+    - name: ssd-cache
+      volume-group: cc-ssd-cache-vg
+    # Finally, we have a device class for spinning
+    # drives. The slowest but highest capacity
+    - name: hdd
+      volume-group: cc-hdd-vg
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local
+node:
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local

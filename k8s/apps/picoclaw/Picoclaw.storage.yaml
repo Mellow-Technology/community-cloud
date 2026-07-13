@@ -1,0 +1,15 @@
+# Picoclaw uses storage on local disk
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: picoclaim
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  storageClassName: cc-local-ssd-fast
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

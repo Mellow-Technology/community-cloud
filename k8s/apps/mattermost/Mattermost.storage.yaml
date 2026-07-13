@@ -1,0 +1,10 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: mattermost-bucket
+  namespace: cc-office
+spec:
+  generateBucketName: mattermost
+  storageClassName: cc-s3-storage
+  additionalConfig:
+    maxSize: "30G"

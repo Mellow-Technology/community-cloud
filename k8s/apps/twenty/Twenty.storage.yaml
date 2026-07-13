@@ -1,0 +1,10 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: twenty-crm-bucket
+  namespace: cc-office
+spec:
+  generateBucketName: twenty-crm
+  storageClassName: cc-s3-storage
+  additionalConfig:
+    maxSize: "20G"

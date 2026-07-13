@@ -1,0 +1,94 @@
+# The default Gateway for applications
+# deployed to Community Cloud. It's currently
+# expected that _all_ applications will be deployed
+# into the default namespace. This is because
+# as of this writing Traefik doesn't support
+# ListerSets (see below), and cross namespace
+# routes need to have conifguration applied
+# to every single listener for support
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  # Out of the box we provide
+  # Let's Encrypt integration
+  name: cc-letsencrypt-web-gateway
+  namespace: community-cloud
+  # This will cause cert-manager to issue
+  # certificates for listerns on this
+  # Gateway.
+  # cert-manager.io/issuer: cc-lets-encrypt
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # TODO:
+  # Switch from Traefik to something else. Almost
+  # all of the networking issues we've experienced
+  # in setting this up have been linked to Traefik
+  # somehow. It's the default in k3s sadly 😭
+  gatewayClassName: traefik
+  # We could potentially be in a multi-tenant
+  # situation in which we don't actually
+  # want some namespaces to have outside
+  # routable access but only VPN routable
+  #
+  # TODO:
+  # ListernerSets aren't yet supported
+  # in Traefik, so we create them
+  # but nothing happens.
+  #
+  # PR for Support here: https://github.com/traefik/traefik/pull/12909
+  #
+  # allowedListeners:
+  #   namespaces:
+  #     from: Selector
+  #     selector:
+  #       matchLabels:
+  #         whereWereGoing: weDontNeedRoads
+  #
+  # Until we get actual ListenerSet support
+  # we have all of our configurations here
+  listeners:
+    - name: main-http
+      port: 8000
+      protocol: HTTP
+      hostname:  {{ .Values.domain.main  }}
+    - name: main-https
+      port: 8443
+      protocol: HTTPS
+      hostname:  {{ .Values.domain.main  }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cc-hq-secret
+    # - name: cc-s3-http
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname:  {{ printf "*.s3.%s" .Values.domain.main | quote  }}
+    # - name: cc-s3-https
+    #   port: 8443
+    #   protocol: HTTPS
+    #   hostname:{{ printf "*.s3.%s" .Values.domain.main | quote }}
+    #   tls:
+    #     mode: Terminate
+    #     certificateRefs:
+    #       - kind: Secret
+    #         name: cc-s3-secret
+    # Code HQ (example)
+    # - name: http
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname: code-hq.example.com
+    # - name: http-www
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname: www.code-hq.example.com
+    # - name: https
+    #   port: 8443
+    #   protocol: HTTPS
+    #   hostname: code-hq.example.com
+    #   tls:
+    #     mode: Terminate
+    #     certificateRefs:
+    #       - kind: Secret
+    #         name: code-hq-secret

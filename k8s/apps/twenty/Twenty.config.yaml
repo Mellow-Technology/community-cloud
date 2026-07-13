@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+data:
+  server_url: {{ .Values.domain.crm | quote }}

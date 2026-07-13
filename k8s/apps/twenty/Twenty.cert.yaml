@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: twenty-crm-cert
+  namespace: cc-office
+spec:
+  secretName: twenty-crm-secret
+  issuerRef:
+    name: cc-office-lets-encrypt
+    kind: Issuer
+  dnsNames:
+    - {{ .Values.domain.crm }}

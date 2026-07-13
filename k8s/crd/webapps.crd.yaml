@@ -1,0 +1,120 @@
+# Web application custom resource definition
+# Used to create all the elements of a full-fledged
+# running web application including handling the
+# following:
+#
+# - Handling framework specific considerations
+# - Setting up any database needs for the application
+# - Orchestrating services the application needs
+# - Run migrations, jobs, or other scripts to make the application function
+# - Setup logging, tracing, etc.
+#
+# In short this is made to handle as much of the
+# heavy lifting as possible so that everything
+# "just works".
+#
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: webapps.{{ .Values.domain.main }}
+spec:
+  group: {{ .Values.domain.main }}
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - webappImage
+              properties:
+                # Image that will be used for the deployment
+                webappImage:
+                  type: string
+                # How many replicas should the deployment run
+                webappReplicas:
+                  type: integer
+                  default: 1
+                # Container configuration (env vars, ports, etc.)
+                container:
+                  type: object
+                  properties:
+                    ports:
+                      type: array
+                      items:
+                        type: integer
+                    env:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          value:
+                            type: string
+                # Storage requests
+                storage:
+                  type: object
+                  properties:
+                    size:
+                      type: string
+                    mountPath:
+                      type: string
+                # Resource limits (defaults to 256Mi RAM if not specified)
+                resources:
+                  type: object
+                  properties:
+                    limits:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                    requests:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                # Database configuration
+                database:
+                  type: object
+                  properties:
+                    # e.g., "cloudnative-pg"
+                    type:
+                      type: string
+                      default: "cloudnative-pg"
+                    # Name of the existing cluster or configuration for a new one
+                    clusterName:
+                      type: string
+                    storageSize:
+                      type: string
+                # Domain names and ingress/egress routing
+                domains:
+                  type: array
+                  items:
+                    type: string
+                # Gateway API Configuration
+                gateway:
+                  type: object
+                  properties:
+                    httpRoute:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        host:
+                          type: string
+  scope: Namespace
+  names:
+    plural: webapps
+    singular: webapp
+    kind: Webapp
+    shortNames:
+      - wa

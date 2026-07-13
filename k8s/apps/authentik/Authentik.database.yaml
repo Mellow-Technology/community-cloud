@@ -1,0 +1,11 @@
+# Database for Authentik
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+    name: authentik
+    namespace: cc-office
+spec:
+    name: authentik
+    owner: authentik
+    cluster:
+        name: cc-postgres

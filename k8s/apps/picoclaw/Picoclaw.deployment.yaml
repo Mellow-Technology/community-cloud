@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # Picoclaw is designed to run on a single
+  # machine. It would probably take some modification
+  # to really get it to run more than a single instance
+  replicas: 1
+  spec:
+    containers:
+      - name: picoclaw
+        image: sipeed/picoclaw:v0.3.1-launcher
+        ports:
+          # TODO: Change to Picoclaw
+          # web interface
+          - name: http
+            containerPort: 18800
+            protocol: TCP
+        volumeMounts:
+          - name: config
+            mountPath: /root/.picoclaw/config.json
+            subPath: config.json
+            readOnly: true
+          - name: workspace
+            mountPath: /root/.picoclaw/workspace
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+        volumes:
+          - name: config
+            configMap:
+              name: picoclaw
+          - name: workspace
+            persistentVolumeClaim:
+              claimName: picoclaim

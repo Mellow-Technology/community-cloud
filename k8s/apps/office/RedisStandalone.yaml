@@ -1,0 +1,24 @@
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  namespace: cc-office
+  name: redis
+spec:
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v7.0.15
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 1
+        memory: 512Mi
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: cc-local-ssd-fast
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

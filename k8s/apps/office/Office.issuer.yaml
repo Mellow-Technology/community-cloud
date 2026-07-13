@@ -1,0 +1,23 @@
+# We also use a separate certificate issuer
+# so that it can have its own configuration
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: cc-office-lets-encrypt
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  acme:
+    email: {{ .Values.adminEmail }}
+    profile: tlsserver
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: cc-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: cc-office-web-gateway
+                namespace: cc-office
+                kind: Gateway

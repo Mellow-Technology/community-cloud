@@ -1,0 +1,38 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+  listeners:
+    - name: http
+      port: 8000
+      protocol: HTTP
+      hostname: {{ .Values.domain.crm }}
+    - name: https
+      port: 8443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.crm }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cc-hq-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+spec:
+  parentRefs:
+    - name: cc-web-gateway
+  hostnames:
+    - {{ .Values.domain.crm }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: twenty-crm
+          port: 8000

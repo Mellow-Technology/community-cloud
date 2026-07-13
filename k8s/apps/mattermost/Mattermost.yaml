@@ -1,0 +1,38 @@
+apiVersion: installation.mattermost.com/v1beta1
+kind: Mattermost
+metadata:
+  name: mattermost
+  namespace: cc-office
+spec:
+  # Size automatically sets resources based
+  # on Mattermost user sizing guidelines.
+  #
+  # We don't have HA in non-enterprise land
+  # but we setup 2 replicas for some level of redundancy
+  #
+  # Process:
+  # - Install in this order
+  # - Storage
+  # - Database
+  #
+  size: "100users" # Example: 5000users
+  replicas: 2
+  ingress:
+    enabled: true
+    host: {{ .Values.domain.mattermost }}
+    annotations:
+      kubernetes.io/ingress.class: traefik
+  version: "v10.11.19"
+  database:
+    external:
+      secret:
+  fileStore:
+    objectSore:
+
+    external:
+      url:
+      bucket:
+      secret:
+
+# For enterprise installations
+# licenseSecret: name-here

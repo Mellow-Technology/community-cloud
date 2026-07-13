@@ -1,0 +1,6 @@
+# Enable Gateway API support for cert manager
+config:
+  enableGatewayAPI: true
+  enableGatewayAPIListenerSet: true
+  featureGates:
+    ListenerSets: true

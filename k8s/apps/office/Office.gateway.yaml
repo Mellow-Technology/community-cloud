@@ -1,0 +1,60 @@
+# The office namespace uses it's own gateway
+# Generally speaking the idea is that any
+# back-office or administrative applications
+# run on this Gateway so that it can have
+# separate configuration from general cluster
+# networking.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cc-office-web-gateway
+  namespace: cc-office
+  # annotations:
+  #   cert-manager.io/issuer: cc-lets-encrypt
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  gatewayClassName: traefik
+  listeners:
+    # Authentik
+    - name: http-auth
+      port: 8000
+      protocol: HTTP
+      hostname: {{ .Values.domain.auth }}
+    - name: https-auth
+      port: 8443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.auth }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: authentik-secret
+    # CRM
+    - name: http-crm
+      port: 8000
+      protocol: HTTP
+      hostname: {{ .Values.domain.crm }}
+    - name: https
+      port: 8443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.crm }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: twenty-crm-secret
+    # S3 Access
+    - name: http-s3
+      port: 8000
+      protocol: HTTP
+      hostname: {{ printf "*.s3.%s" .Values.domain.main }}
+    - name: https-s3
+      port: 8443
+      protocol: HTTPS
+      hostname: {{ printf "*.s3.%s" .Values.domain.main }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cc-s3-secret

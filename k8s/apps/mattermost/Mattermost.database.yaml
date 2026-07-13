@@ -1,0 +1,11 @@
+# Database for Twenty CRM
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: mattermost
+  namespace: cc-office
+spec:
+  name: mattermost
+  owner: mattermost
+  cluster:
+    name: cc-postgres

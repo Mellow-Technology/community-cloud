@@ -1,0 +1,15 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgis
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgis:18-3.6-system-trixie
+
+  # Generally speaking for databasess we use fast SSDs
+  storage:
+    size: 30Gi
+    storageClass: cc-local-ssd-fast
+  postgresql:
+    parameters:
+      log_statement: ddl

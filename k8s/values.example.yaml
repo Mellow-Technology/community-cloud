@@ -1,0 +1,65 @@
+# example-values.yaml — Community Cloud Kubernetes Manifests
+#
+# Copy this file to values.yaml and replace the placeholder values
+# with your own configuration before deploying.
+#
+#   cp example-values.yaml values.yaml
+#   # edit values.yaml
+#   helm template community-cloud . -f values.yaml
+
+# -------------------------------------------------------------------
+# Administration
+# -------------------------------------------------------------------
+adminEmail: "admin@example.com"
+
+# -------------------------------------------------------------------
+# Domains
+# -------------------------------------------------------------------
+domain:
+  # Primary domain used for all Community Cloud services.
+  # Subdomains are derived automatically (storage.<main>, auth.<main>, etc.)
+  main: "my-community-cloud.example.com"
+  # Secondary domain (optional, for Bright Blue or other services)
+  secondary: "secondary.example.com"
+  # CRM (Twenty) hostname — can be on a different domain
+  crm: "crm.example.com"
+  # Mattermost hostname
+  mattermost: "chat.example.com"
+  # Authentik hostname (derived: auth.<main>)
+  auth: "auth.example.com"
+  # Picoclaw agent hostname (derived: agent.<main>)
+  agent: "agent.example.com"
+
+garage:
+  replicationFactor: 3
+  persistence:
+     meta:
+       storageClass: "cc-local-ssd-fast"
+       size: 600Mi
+     data:
+       storageClass: "cc-local-ssd-fast"
+       size: 200Gi
+
+
+# -------------------------------------------------------------------
+# Container Registry
+# -------------------------------------------------------------------
+registry:
+  url: "registry.example.com"
+  username: "my-registry-user"
+  password: "CHANGE_ME"
+
+# -------------------------------------------------------------------
+# Tailscale
+# -------------------------------------------------------------------
+tailscale:
+  clientID: "CHANGE_ME"
+  clientSecret: "CHANGE_ME"
+
+# -------------------------------------------------------------------
+# Authentik
+# -------------------------------------------------------------------
+authentik:
+  # Generate a strong secret key:
+  #   openssl rand -base64 64
+  secretKey: "CHANGE_ME_GENERATE_A_STRONG_SECRET_KEY"

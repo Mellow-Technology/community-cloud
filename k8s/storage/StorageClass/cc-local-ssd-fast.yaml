@@ -1,0 +1,39 @@
+# Named for the storage type
+# local - data is node local
+# ssd - data is stored on an SSD
+# fast - this is an m.2 form factor SSD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+
+# We use local fast storage as the default
+# We do this for the following reasons:
+# - Local storage is more straightforward
+#   and less error prone than distributed storage
+# - Most applications will prefer speed over
+#   storage size
+# - For applications where speed isn't preferred
+#   configuring them to use another storage class
+#   is not a heavy burden
+metadata:
+  name: cc-local-ssd-fast
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+
+# We use XFS and SSD storage
+parameters:
+  csi.storage.k8s.io/fstype: xfs
+  topolvm.io/device-class: ssd
+
+# TopoLVM is used to provision this storage
+provisioner: topolvm.io
+
+# Data loss is generally a very bad thing(tm)
+# Thus we add a manual step to reclaim unused storage
+reclaimPolicy: Retain
+
+# TopoLVM supports volume size expansion and expanding
+# rather than running out of space is generally a good thing(tm)
+allowVolumeExpansion: true
+
+# We use this binding mode for TopoLVM as it helps with scheduling
+volumeBindingMode: WaitForFirstConsumer

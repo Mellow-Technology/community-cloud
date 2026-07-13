@@ -1,0 +1,10 @@
+# We use a namespace for back office applications
+# appropriately named cc-office. This allows policies
+# to be set for back office applications.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cc-office
+  labels:
+    where-were-going: "we-dont-need-roads"
+    app.kubernetes.io/managed-by: "community-cloud"

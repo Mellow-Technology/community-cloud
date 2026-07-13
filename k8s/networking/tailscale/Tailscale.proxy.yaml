@@ -1,0 +1,9 @@
+# Allow services to be accessed directly over tailscale
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyGroup
+metadata:
+  name: cc-ts-ingress-proxies
+  namespace: tailscale
+spec:
+  type: ingress
+  replicas: 2
