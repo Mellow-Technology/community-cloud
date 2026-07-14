@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 
 // For now we're just loading a file in the current
 // working directory and using that for host defintions
-const HOSTS_FILE_NAME = "cc.json";
+// const HOSTS_FILE_NAME = "cc.json";
 
 export default class CloudConfig {
   /**
@@ -15,22 +15,31 @@ export default class CloudConfig {
    */
   protected config: any;
 
-  constructor(config: any) {
+  constructor(config: any = {}) {
     this.config = config;
   }
 
+
   /**
-   * Retrieve hosts that are available for install.
+   * Load configuration from a file
+   * @param configFilePath
    */
-  async getAvailableHosts() {
+  async loadConfigFromFile(configFilePath: string) {
     const cwd = process.cwd();
-    const filePath = join(cwd, HOSTS_FILE_NAME);
+    const filePath = join(cwd, configFilePath);
 
     const fileContents = await readFile(filePath, { encoding: "utf8" });
-    const data = JSON.parse(fileContents);
-
-    return data;
+    this.config = JSON.parse(fileContents);
   }
+
+  /**
+   * Get the entire configuration
+   * @returns
+   */
+  get() {
+    return this.config;
+  }
+
 
   /**
    * Retrieve configuration information
@@ -38,17 +47,17 @@ export default class CloudConfig {
    * @param nodeName
    * @returns
    */
-  getNode(nodeName) {
+  getNode(nodeName: string) {
     const { config } = this;
     const nodes = config.nodes.filter((node) => nodeName === node.name);
-    return nodes[0];
+    return nodes[0] !== undefined ? nodes[0] : null;
   }
 
   /**
    * On K3s
    */
   getControlPlaneUrl() {
-    const planeAddress = getControlPlaneHost().address;
+    const planeAddress = this.getControlPlaneHost().address;
     return `https://${planeAddress}:6443`;
   }
 

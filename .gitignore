@@ -35,6 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Host inventory file
 # and registries.yaml file
-cc.json
+*.config.json
 registries.yaml
 *.secret.yaml

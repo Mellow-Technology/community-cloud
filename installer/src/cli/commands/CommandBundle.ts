@@ -4,8 +4,9 @@ import {
   createActor,
   fromPromise,
   Observer,
-  MachineSnapshot,
 } from "xstate";
+
+import consumers from "stream/consumers";
 import Command from "./Command.ts";
 
 export interface CommandResult {
@@ -36,6 +37,7 @@ export interface BundleContext {
 enum CommandEvents {
   Start = "START",
   CommandUpdate = "COMMAND_UPDATE",
+  SetExec = "SET_EXEC"
 }
 
 export const CommandBundleMachine = createMachine({
@@ -63,23 +65,28 @@ export const CommandBundleMachine = createMachine({
             },
           }),
         },
+        SET_EXEC: {
+          actions: assign({
+            exec: ({ event }) => event.execFunction,
+          })
+        }
       },
     },
     running: {
       invoke: {
         // Async service that executes the current command
         src: fromPromise(async ({ input }) => {
-          const { command } = input;
+          const { command, exec } = input;
 
           // Execute the current command
-          const results = await command.exec();
-
-          // console.log({ results });
+          const rawResults = await exec(command.command);
+          const results = await consumers.text(rawResults.stdout);
 
           return results;
         }),
         input: ({ context }) => {
           return {
+            exec: context.exec,
             command: context.commands[context.currentIndex],
           };
         },
@@ -173,6 +180,28 @@ export class CommandBundle {
    */
   add(command: Command): this {
     this.actor.send({ type: CommandEvents.CommandUpdate, command });
+    return this;
+  }
+
+  /**
+   * Add commands in bulk.
+   *
+   * @param commands
+   * @returns
+   */
+  addBulk(commands: Command[]): this {
+    for (let i = 0; i < commands.length; i++) {
+      // @ts-expect-error This will always work (please let this not bite me lol)
+      this.add(commands[i]);
+    }
+
+    return this;
+  }
+
+
+  setExec(execFunction: Function): this {
+    this.actor.send({ type: CommandEvents.SetExec, execFunction });
+
     return this;
   }
 
