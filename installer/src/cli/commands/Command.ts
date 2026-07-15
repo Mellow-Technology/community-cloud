@@ -1,4 +1,5 @@
 import RemoteHost from "../remote/RemoteHost.ts";
+import { exec } from "node:child_process";
 
 export enum OutputType {
   // Output is JSON
@@ -48,6 +49,10 @@ export default class Command {
   // The type of output the command has
   outputType: OutputType;
 
+  // The function to execute the
+  // command with
+  execFunction: Function;
+
   // The parsed output of the command
   // TODO: Make this a generic so that
   // each command has a verifiable output
@@ -79,6 +84,16 @@ export default class Command {
     this.remoteHost = remoteHost;
     this.rawOutput = null;
     this.postProcessHooks = [];
+    this.execFunction = exec;
+  }
+
+
+  /**
+   * Set the execution function.
+   * @param execFunction
+   */
+  setExecFunction(execFunction: Function) {
+    this.execFunction = execFunction;
   }
 
   async exec(context = undefined) {
@@ -93,14 +108,15 @@ export default class Command {
       cmdString = this.command;
     }
 
-    // Run the command string
-    let res = null;
-    if (this.remoteHost !== undefined) {
-      res = await this.remoteHost.execJSON(cmdString);
-    }
+    // Run the function
+    this.rawOutput = await this.execFunction(cmdString);
+
+    // Parse the output
+    this.parseOutput();
+
 
     // Run post-process hooks
-    return res;
+    return this.parsedOutput;
   }
 
   parseOutput(): any {

@@ -36,7 +36,7 @@ export default class CloudConfig {
    * Get the entire configuration
    * @returns
    */
-  get() {
+  getConfig() {
     return this.config;
   }
 

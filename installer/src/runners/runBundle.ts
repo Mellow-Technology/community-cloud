@@ -36,7 +36,7 @@ export async function runBundle(bundleName, nodeName, configPath) {
   const bundleCommands = commandMap[bundleName];
 
   // Instantiate the bundle and add commands
-  const bundle = new CommandBundle();
+  const bundle = new CommandBundle(config);
   bundle.addBulk(bundleCommands);
 
 
