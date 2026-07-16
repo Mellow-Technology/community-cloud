@@ -1,4 +1,5 @@
 import { K3sCommands } from "../cli/commands/K3s.ts";
+import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
@@ -10,6 +11,7 @@ import os from "os";
  */
 const commandMap = {
   k3s: K3sCommands,
+  base: BasePackageCommands
 };
 
 /**
