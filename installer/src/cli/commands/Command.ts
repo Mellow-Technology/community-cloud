@@ -1,7 +1,6 @@
 // import RemoteHost from "../remote/RemoteHost.ts";
 import { exec } from "node:child_process";
 import consumers from "stream/consumers";
-import { promisify } from 'node:util';
 
 export enum OutputType {
   // Output is JSON

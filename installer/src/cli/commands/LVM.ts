@@ -1,5 +1,4 @@
 import Command, { OutputType } from "./Command.ts";
-import { CommandBundle } from "./CommandBundle.ts";
 
 /**
  * @file
@@ -8,48 +7,9 @@ import { CommandBundle } from "./CommandBundle.ts";
  *
  * Requires:
  * - jc
+ * - lvm
  * - root/sudo
  */
-
-export const bundle = new CommandBundle();
-
-/**
- * Find disks that can be used with LVM.
- */
-bundle.add(
-  new Command({
-    name: "find-disks",
-    description: "Find disks that can be used with LVM for node local storage.",
-    command: "sudo sfdisk -l | jc --sfdisk",
-    output: OutputType.Json,
-    postProcessHooks: [findCandidateDisks],
-    // configure,
-  }),
-);
-
-/**
- * Create physical volumes for use with LVM volume groups.
- */
-bundle.add(
-  new Command({
-    name: "create-pvs",
-    description: "Create LVM physical volumes from the configured disks.",
-    output: OutputType.Custom,
-    command: (context) => `sudo pvcreate ${diskList.join(" ")}`,
-  }),
-);
-
-/**
- * Create volume groups from physical volumes
- */
-bundle.add(
-  new Command({
-    name: "create-vgs",
-    description: "Create LVM volume groups from the selected physical volumes.",
-    output: OutputType.Custom,
-    command: (context) => `sudo vgcreate cc-ssd-vg ${diskList.join(" ")}`,
-  }),
-);
 
 /**
  * Regex which will skip loop devices
@@ -57,6 +17,7 @@ bundle.add(
  * actual physical drives.
  */
 const LOOP_DEVICE_REGEX = /^\/dev\/loop[0-9].*$/;
+
 
 /**
  * Finds candidate disks for use with LVM.
@@ -73,3 +34,45 @@ function findCandidateDisks(disks: string[]) {
 
   return emptyPartitionDisks;
 }
+
+
+export const LvmCommands = [
+  /**
+   * Find disks that can be used with LVM.
+   */
+  {
+    name: "find-disks",
+    description: "Find disks that can be used with LVM for node local storage.",
+    command: "sudo sfdisk -l | jc --sfdisk",
+    output: OutputType.Json,
+    postProcessHooks: [findCandidateDisks],
+    // configure,
+  },
+  /**
+   * Create physical volumes for use with LVM volume groups.
+   */
+  {
+    name: "create-pvs",
+    description: "Create LVM physical volumes from the configured disks.",
+    output: OutputType.Custom,
+    command: (context) => `sudo pvcreate ${context.diskList.join(" ")}`,
+  },
+  /**
+   * Create volume groups.
+   */
+  {
+    name: "create-vgs",
+    description: "Create LVM volume groups from the selected physical volumes.",
+    output: OutputType.Custom,
+    command: (context) => `sudo vgcreate cc-ssd-vg ${context.diskList.join(" ")}`,
+  },
+  /**
+   * Tag the volume groups
+   */
+  {
+    name: "tag-vgs",
+    description: "Tag logical volumes to indicate that they've been setup by Community Cloud",
+    OutputType: OutputType.Raw,
+    command: (context) => `sudo vgchange --addtag @community-cloud ${context.volumeGroup}`
+  }
+]
