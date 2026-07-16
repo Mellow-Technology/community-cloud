@@ -1,5 +1,7 @@
-import RemoteHost from "../remote/RemoteHost.ts";
+// import RemoteHost from "../remote/RemoteHost.ts";
 import { exec } from "node:child_process";
+import consumers from "stream/consumers";
+import { promisify } from 'node:util';
 
 export enum OutputType {
   // Output is JSON
@@ -20,6 +22,9 @@ export enum OutputType {
   // Output is handled by a custom function
   // in order to parse the output
   Custom = "custom",
+
+  // Raw output will short-circuit any parsing
+  Raw = "raw"
 }
 
 interface CommandParams {
@@ -85,6 +90,11 @@ export default class Command {
     this.rawOutput = null;
     this.postProcessHooks = [];
     this.execFunction = exec;
+    this.parsedOutput = {
+      stdout: null,
+      stderr: null,
+      parsed: null
+    }
   }
 
 
@@ -96,6 +106,11 @@ export default class Command {
     this.execFunction = execFunction;
   }
 
+  /**
+   * Execute a command
+   * @param context
+   * @returns
+   */
   async exec(context = undefined) {
     let cmdString = null;
 
@@ -112,19 +127,30 @@ export default class Command {
     this.rawOutput = await this.execFunction(cmdString);
 
     // Parse the output
-    this.parseOutput();
-
+    await this.parseOutput();
 
     // Run post-process hooks
     return this.parsedOutput;
   }
 
-  parseOutput(): any {
+
+  /**
+   * Parse the output of the command
+   * @returns
+   */
+  async parseOutput(): any {
     if (this.rawOutput === null || this.rawOutput === undefined) {
       this.parsedOutput = null;
       return false;
     }
 
+
+    // Read the streams
+    this.parsedOutput.stdout = await consumers.text(this.rawOutput.stdout);
+    this.parsedOutput.stderr = await consumers.text(this.rawOutput.stderr);
+
+
+    // Parse output
     try {
       switch (this.outputType) {
         case OutputType.Json:
@@ -163,6 +189,12 @@ export default class Command {
             console.warn("Custom output type requires a parseFunction.");
             this.parsedOutput = this.rawOutput;
           }
+          break;
+
+        // In the case of raw we don't do any parsing
+        // any simply copy the raw stdout to parsed
+        case OutputType.Raw:
+          this.parsedOutput.parsed = this.parsedOutput.stdout;
           break;
 
         default:

@@ -19,7 +19,7 @@ const commandMap = {
  * @param nodeName
  * @param config
  */
-export async function runBundle(bundleName, nodeName, configPath) {
+export async function runBundle(bundleName: string, nodeName: string, configPath: string) {
 
   // Load the configuration
   const config = new CloudConfig();
@@ -31,13 +31,11 @@ export async function runBundle(bundleName, nodeName, configPath) {
     throw new Error(`Couldn't find node "${nodeName}" in the specified configuration. Was the name misspelled?`);
   }
 
-
   // Retrieve the correct bundle
   const bundleCommands = commandMap[bundleName];
 
   // Instantiate the bundle and add commands
-  const bundle = new CommandBundle(config);
-  bundle.addBulk(bundleCommands);
+  const bundle = new CommandBundle(config, bundleCommands);
 
 
   // Don't use SSH if we're running directly
@@ -45,9 +43,7 @@ export async function runBundle(bundleName, nodeName, configPath) {
   const hostname = os.hostname();
   if (hostname === nodeName) {
     bundle.setExec(exec);
-
-    bundle.start();
-
+    bundle.runAllCommands();
   }
   else {
     // Connect to the node via SSH
@@ -56,7 +52,6 @@ export async function runBundle(bundleName, nodeName, configPath) {
       username: nodeInfo.username,
     });
     await node.connect();
-
 
     // Disconnect from the node
     await node.disconnect();

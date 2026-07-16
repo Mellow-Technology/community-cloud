@@ -69,7 +69,7 @@ export default class CloudConfig {
    */
   getControlPlaneHost() {
     const { config } = this;
-    const controlPlaneNodes = config.hosts.filter((host) => {
+    const controlPlaneNodes = config.nodes.filter((host) => {
       return host.type === "server";
     });
 

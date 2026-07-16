@@ -33,12 +33,11 @@ export interface BundleContext {
 export class CommandBundle {
 
   protected config: CloudConfig;
-  protected commands: Command[];
+  protected commands: object[];
   protected commandResults: CommandResult[];
   protected execFunction: Function | undefined;
 
-  constructor(config: CloudConfig, commands?: Command[], execFunction?: Function, subscribeHooks?: Observer<any>[]) {
-
+  constructor(config: CloudConfig, commands?: object[], execFunction?: Function, subscribeHooks?: Observer<any>[]) {
     this.config = config;
     this.commands = commands !== undefined ? commands: [];
     this.commandResults = [];
@@ -47,21 +46,12 @@ export class CommandBundle {
 
     // Have any subscribe hooks. Can be used for
     // to generate various output types
-    if (subscribeHooks !== undefined) {
-      for (let i = 0; i < subscribeHooks.length; i++) {
-        const hook = subscribeHooks[i];
-        this.actor.subscribe(hook);
-      }
-    }
-  }
-
-  setContext(key: string, value: unknown): this {
-    this.userContext[key] = value;
-    // Update actor context if machine hasn't started
-    if (this.actor.getSnapshot().value === "idle") {
-      this.actor.assign({ [key]: value });
-    }
-    return this;
+    // if (subscribeHooks !== undefined) {
+    //   for (let i = 0; i < subscribeHooks.length; i++) {
+    //     const hook = subscribeHooks[i];
+    //     this.actor.subscribe(hook);
+    //   }
+    // }
   }
 
   /**
@@ -91,21 +81,42 @@ export class CommandBundle {
   }
 
 
+  /**
+   * Set the execution function that we'll use to execute commands.
+   *
+   * @param execFunction
+   * @returns
+   */
   setExec(execFunction: Function): this {
-    this.actor.send({ type: CommandEvents.SetExec, execFunction });
-
+    this.execFunction = execFunction;
     return this;
   }
 
-  async runCommands(): Promise<void> {
+  /**
+   * Run all configured commands in the bundle
+   */
+  async runAllCommands(): Promise<void> {
 
 
     for (let i = 0; i < this.commands.length; i++) {
-      const { command } = this.commands[i];
+      // Grab the parameters for the current command
+      const commandSpec = this.commands[i];
 
-      await this.execFunction()
+      // Instantiate a command object
+      const command = new Command(commandSpec);
 
+      // Set the exec function for the command using
+      // the one that's configured for the command bundle
+      if (this.execFunction !== undefined) {
+        command.setExecFunction(this.execFunction);
+      }
 
+      // Execute the command
+      const res = await command.exec(this.config);
+
+      // Save the results
+      this.commandResults[i] = res;
+      console.log(res);
     }
 
 
