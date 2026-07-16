@@ -3,12 +3,6 @@ import { OutputType } from "./Command.ts";
 
 export const K3sCommands = [
   {
-    name: "test-command",
-    description: "run a test command",
-    command: "cat /etc/lsb-release",
-    output: OutputType.Raw
-  },
-  {
     name: "install-k3s-agent",
     description: "Install K3s agent on the node",
     command: (config) => {
@@ -17,5 +11,5 @@ export const K3sCommands = [
       return `curl -sfL https://get.k3s.io | K3S_URL=${k3sUrl} K3S_TOKEN=${k3sToken} INSTALL_K3S_EXEC="agent --flannel-iface=tailscale0" sh -`;
     },
     output: OutputType.Raw,
-  }
+  },
 ]
