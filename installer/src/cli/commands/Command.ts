@@ -26,11 +26,22 @@ export enum OutputType {
   Raw = "raw"
 }
 
-interface CommandParams {
+/**
+ * The specification for a command.
+ *
+ * Each command has a
+ * - name: a label for the command
+ * - description: a description to show the user what the command does
+ * - env: environment variables for the command
+ * - command: the command itself
+ * - output: an output type that will be automatically parsed
+ */
+export interface CommandSpec {
   name: string;
   description: string;
   command: string | Function;
   output: OutputType;
+  env?: Record<string, string> | Function;
   remoteHost?: RemoteHost;
 }
 
@@ -80,7 +91,7 @@ export default class Command {
     command,
     output,
     remoteHost = undefined,
-  }: CommandParams) {
+  }: CommandSpec) {
     this.name = name;
     this.description = description;
     this.command = command;
@@ -107,20 +118,22 @@ export default class Command {
 
   /**
    * Execute a command
-   * @param context
+   * @param config
    * @returns
    */
-  async exec(context = undefined) {
+  async exec(config, commandResults, context) {
     let cmdString = null;
 
     // If the command is a function it's a
     // command creator, so we pass the context
     // to it to get the final command string
     if (typeof this.command === "function") {
-      cmdString = this.command(context);
+      cmdString = this.command(config, commandResults, context);
     } else {
       cmdString = this.command;
     }
+
+    console.log(cmdString);
 
     // Run the function
     this.rawOutput = await this.execFunction(cmdString);

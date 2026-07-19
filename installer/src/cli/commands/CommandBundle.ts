@@ -34,14 +34,19 @@ export class CommandBundle {
 
   protected config: CloudConfig;
   protected commands: object[];
-  protected commandResults: CommandResult[];
+  protected commandResults: Record<string, CommandResult>;
   protected execFunction: Function | undefined;
+  protected context: object;
 
-  constructor(config: CloudConfig, commands?: object[], execFunction?: Function, subscribeHooks?: Observer<any>[]) {
+  constructor(config: CloudConfig, commands?: object[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
     this.config = config;
-    this.commands = commands !== undefined ? commands: [];
-    this.commandResults = [];
+    this.commands = commands !== undefined ? commands : [];
+    this.context = context !== undefined ? context : {};
     this.execFunction = execFunction;
+
+
+
+    this.commandResults = {};
 
 
     // Have any subscribe hooks. Can be used for
@@ -112,11 +117,11 @@ export class CommandBundle {
       }
 
       // Execute the command
-      const res = await command.exec(this.config);
+      const res = await command.exec(this.config, this.context, this.commandResults);
 
       // Save the results
-      this.commandResults[i] = res;
-      console.log(res);
+      this.commandResults[command.name] = res;
+      this.commandResults
     }
 
 
