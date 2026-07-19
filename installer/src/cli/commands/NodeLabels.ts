@@ -16,7 +16,7 @@ export const NodeLabelCommands: CommandSpec[] = [
       });
 
       // Produce the kubectl command
-      return `kubectl label  ${context.node.name} ${nodeRoleLabels.join(" ")}`
+      return `kubectl label node ${context.node.name} ${nodeRoleLabels.join(" ")}`
     },
     output: OutputType.Raw
   }

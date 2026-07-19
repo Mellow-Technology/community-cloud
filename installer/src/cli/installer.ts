@@ -79,8 +79,8 @@ program
 program
   .command(CliOperation.RunBundle)
   .description("Run a specific command bundle")
-  .argument("<bundleName>")
-  .argument("<node>",)
+  .argument("<bundleName>", "The name of the bundle to run")
+  .argument("<node>", "The name of the node to run the bundle on")
   // .option("--profile", "Specify a profile (e.g., staging, production).")
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
   // TODO: This is kind of ugly. Would much rather have dynamically generated

@@ -1,11 +1,14 @@
-import { K3sCommands } from "../cli/commands/K3s.ts";
-import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
-import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
+import os from "os";
+
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { exec } from "node:child_process";
-import os from "os";
+
+// Command Bundles
+import { K3sCommands } from "../cli/commands/K3s.ts";
+import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
+import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
+import { LvmCommands } from "../cli/commands/LVM.ts";
 
 /**
  * A map of command bundles
@@ -13,7 +16,8 @@ import os from "os";
 const commandMap = {
   k3s: K3sCommands,
   base: BasePackageCommands,
-  nodeLabels: NodeLabelCommands
+  nodeLabels: NodeLabelCommands,
+  lvm: LvmCommands,
 };
 
 /**
@@ -61,7 +65,7 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   // on the host already
   const hostname = os.hostname();
   if (hostname === nodeName) {
-    bundle.setExec(exec);
+    // bundle.setExec(exec);
     bundle.runAllCommands();
   }
   else {
