@@ -59,14 +59,17 @@ export const LvmCommands: CommandSpec[] = [
   },
   /**
    * Create physical volumes for use with LVM volume groups.
-   *
    */
-  // {
-  //   name: "create-pvs",
-  //   description: "Create LVM physical volumes from the configured disks.",
-  //   output: OutputType.Custom,
-  //   command: (context) => `sudo pvcreate ${context.diskList.join(" ")}`,
-  // },
+  {
+    name: "create-pvs",
+    description: "Create LVM physical volumes from the configured disks.",
+    output: OutputType.Raw,
+    sudo: true,
+    command: (config, context, commandResults) => {
+      const diskList = commandResults["find-disks"].processed.map((disk) => disk.disk);
+      return `pvcreate ${diskList.join(" ")}`
+    },
+  },
   // /**
   //  * Create volume groups.
   //

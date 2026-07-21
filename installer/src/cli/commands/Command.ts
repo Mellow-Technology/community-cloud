@@ -148,14 +148,14 @@ export default class Command {
    * @param config
    * @returns
    */
-  async exec(config, commandResults, context) {
+  async exec(config, context, commandResults) {
     let cmdString = null;
 
     // If the command is a function it's a
     // command creator, so we pass the context
     // to it to get the final command string
     if (typeof this.command === "function") {
-      cmdString = this.command(config, commandResults, context);
+      cmdString = this.command(config, context, commandResults);
     } else {
       cmdString = this.command;
     }

@@ -42,9 +42,6 @@ export class CommandBundle {
     this.commands = commands !== undefined ? commands : [];
     this.context = context !== undefined ? context : {};
     this.execFunction = execFunction;
-
-
-
     this.commandResults = {};
 
 
@@ -133,7 +130,6 @@ export class CommandBundle {
           parsed: ""
         }
       }
-
 
       // Save the results
       this.commandResults[command.name] = res;
