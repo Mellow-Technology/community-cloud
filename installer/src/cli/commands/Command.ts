@@ -1,6 +1,12 @@
 // import RemoteHost from "../remote/RemoteHost.ts";
-import { exec } from "node:child_process";
-import consumers from "stream/consumers";
+import { promisify } from 'node:util';
+import child_process from "node:child_process";
+import { loadAll } from 'js-yaml'
+
+// import consumers from "stream/consumers";
+
+// Use a promise-based exec
+const exec = promisify(child_process.exec);
 
 export enum OutputType {
   // Output is JSON
@@ -12,12 +18,6 @@ export enum OutputType {
   // Output is Yaml
   Yaml = "yaml",
 
-  // Output should be handled by a specific
-  // command parser
-  // e.g. for instance using JC (https://github.com/kellyjonbrazil/jc)
-  // for many commands
-  CommandParser = "command_parser",
-
   // Output is handled by a custom function
   // in order to parse the output
   Custom = "custom",
@@ -26,11 +26,35 @@ export enum OutputType {
   Raw = "raw"
 }
 
-interface CommandParams {
+/**
+ *
+ */
+export interface CommandOutput {
+  stdout: string | null;
+  stderr: string | null;
+  parsed?: any;
+  processed?: any;
+}
+
+/**
+ * The specification for a command.
+ *
+ * Each command has a
+ * - name: a label for the command
+ * - description: a description to show the user what the command does
+ * - env: environment variables for the command
+ * - command: the command itself
+ * - output: an output type that will be automatically parsed
+ */
+export interface CommandSpec {
   name: string;
   description: string;
   command: string | Function;
   output: OutputType;
+  sudo?: boolean;
+  commandParser?: string;
+  env?: Record<string, string> | Function;
+  postProcessHooks?: Function[];
   remoteHost?: RemoteHost;
 }
 
@@ -48,7 +72,7 @@ export default class Command {
   command: string | Function;
 
   // The raw output of the command
-  rawOutput: string | null;
+  rawOutput: CommandOutput | null;
 
   // The type of output the command has
   outputType: OutputType;
@@ -60,7 +84,20 @@ export default class Command {
   // The parsed output of the command
   // TODO: Make this a generic so that
   // each command has a verifiable output
-  parsedOutput: any;
+  parsedOutput: CommandOutput;
+
+  // Whether the command should be run using sudo
+  sudo: boolean;
+
+  // An optional program used to process the
+  // output of a command before parsing
+  // e.g. for using JC (https://github.com/kellyjonbrazil/jc)
+  commandParser?: string;
+
+  // An array of functionas that can be used to post-process
+  // data from a command after parsing. Processed data is
+  // placed in the "process" key of the CommandOutput
+  postProcessHooks?: Function[];
 
   // The function the command will be executed
   // with
@@ -70,24 +107,25 @@ export default class Command {
   // output
   parseFunction?: Function;
 
-  // Post process hooks will be called
-  // once the output has been parsed
-  postProcessHooks: Function[];
-
   constructor({
     name,
     description,
     command,
     output,
+    commandParser = undefined,
+    sudo = false,
+    postProcessHooks = undefined,
     remoteHost = undefined,
-  }: CommandParams) {
+  }: CommandSpec) {
     this.name = name;
     this.description = description;
     this.command = command;
     this.outputType = output;
+    this.commandParser = commandParser;
+    this.sudo = sudo;
+    this.postProcessHooks = postProcessHooks;
     this.remoteHost = remoteHost;
     this.rawOutput = null;
-    this.postProcessHooks = [];
     this.execFunction = exec;
     this.parsedOutput = {
       stdout: null,
@@ -107,28 +145,58 @@ export default class Command {
 
   /**
    * Execute a command
-   * @param context
+   * @param config
    * @returns
    */
-  async exec(context = undefined) {
+  async exec(config, context, commandResults) {
     let cmdString = null;
 
     // If the command is a function it's a
     // command creator, so we pass the context
     // to it to get the final command string
     if (typeof this.command === "function") {
-      cmdString = this.command(context);
+      cmdString = this.command(config, context, commandResults);
     } else {
       cmdString = this.command;
+    }
+
+    // If we're running with sudo then
+    // we prepend sudo to the command
+    if (this.sudo) {
+      cmdString = `sudo ${cmdString}`;
+    }
+
+    // If a command parser is specified then
+    // we pipe the contents of the command
+    // through the command parser
+    if (this.commandParser !== undefined) {
+      cmdString += ` | ${this.commandParser}`;
     }
 
     // Run the function
     this.rawOutput = await this.execFunction(cmdString);
 
-    // Parse the output
-    await this.parseOutput();
+
+    // Parse the output from the command
+    // If it doesn't succeed
+    // we simply return the raw output
+    const parseSucceeded = await this.parseOutput();
+    if (!parseSucceeded) {
+      return this.rawOutput;
+    }
 
     // Run post-process hooks
+    if (this.postProcessHooks !== undefined) {
+      for (let i = 0; i < this.postProcessHooks.length; i++) {
+        const hook = this.postProcessHooks[i];
+        if (hook !== undefined) {
+          this.parsedOutput.processed = hook(this.parsedOutput);
+        }
+      }
+    }
+
+    console.log(this.parsedOutput);
+
     return this.parsedOutput;
   }
 
@@ -137,49 +205,33 @@ export default class Command {
    * Parse the output of the command
    * @returns
    */
-  async parseOutput(): any {
+  async parseOutput(): boolean {
     if (this.rawOutput === null || this.rawOutput === undefined) {
-      this.parsedOutput = null;
       return false;
     }
 
-
-    // Read the streams
-    this.parsedOutput.stdout = await consumers.text(this.rawOutput.stdout);
-    this.parsedOutput.stderr = await consumers.text(this.rawOutput.stderr);
+    // Copy over the initial raw output
+    this.parsedOutput = this.rawOutput;
 
 
     // Parse output
     try {
       switch (this.outputType) {
         case OutputType.Json:
-          this.parsedOutput = JSON.parse(this.rawOutput);
+          this.parsedOutput.parsed = JSON.parse(this.rawOutput.stdout);
           break;
 
         case OutputType.Csv:
           console.warn(
             "YAML parsing requires an external library (e.g., js-yaml). Returning raw output.",
           );
-          this.parsedOutput = this.rawOutput;
+          this.parsedOutput.parsed = this.rawOutput;
           break;
 
         case OutputType.Yaml:
-          // YAML parsing would require a library like js-yaml
-          // For now, we'll store the raw output and note that parsing requires external dependency
-          console.warn(
-            "YAML parsing requires an external library (e.g., js-yaml). Returning raw output.",
-          );
-          this.parsedOutput = this.rawOutput;
+          this.parsedOutput.parsed = loadAll(this.rawOutput.stdout);
           break;
 
-        case OutputType.CommandParser:
-          // CommandParser (e.g., JC) would require external command execution
-          // This would be implemented when the execution infrastructure is ready
-          console.warn(
-            "CommandParser output type requires external tool (e.g., JC). Returning raw output.",
-          );
-          this.parsedOutput = this.rawOutput;
-          break;
 
         case OutputType.Custom:
           if (this.parseFunction) {

@@ -1,17 +1,23 @@
-import { K3sCommands } from "../cli/commands/K3s.ts";
-import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
+import os from "os";
+
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { exec } from "node:child_process";
-import os from "os";
+
+// Command Bundles
+import { K3sCommands } from "../cli/commands/K3s.ts";
+import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
+import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
+import { LvmCommands } from "../cli/commands/LVM.ts";
 
 /**
  * A map of command bundles
  */
 const commandMap = {
   k3s: K3sCommands,
-  base: BasePackageCommands
+  base: BasePackageCommands,
+  nodeLabels: NodeLabelCommands,
+  lvm: LvmCommands,
 };
 
 /**
@@ -21,7 +27,16 @@ const commandMap = {
  * @param nodeName
  * @param config
  */
-export async function runBundle(bundleName: string, nodeName: string, configPath: string) {
+export async function runBundle(bundleName: string, nodeName: string, configPath: string, ...params: string[]) {
+
+  // Instantiate the context
+  // We include the node name we're
+  // operating and any parameters for the command
+  let context = {
+    nodeName,
+    params,
+    node: null,
+  }
 
   // Load the configuration
   const config = new CloudConfig();
@@ -33,18 +48,24 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
     throw new Error(`Couldn't find node "${nodeName}" in the specified configuration. Was the name misspelled?`);
   }
 
+  // Add node information to the context
+  context.node = nodeInfo;
+
   // Retrieve the correct bundle
   const bundleCommands = commandMap[bundleName];
+  if (bundleCommands === undefined) {
+    throw new Error(`Couldn't find a command bundle named "${bundleName}". Was the bundle name spelled correctly?`)
+  }
 
   // Instantiate the bundle and add commands
-  const bundle = new CommandBundle(config, bundleCommands);
+  const bundle = new CommandBundle(config, bundleCommands, context);
 
 
   // Don't use SSH if we're running directly
   // on the host already
   const hostname = os.hostname();
   if (hostname === nodeName) {
-    bundle.setExec(exec);
+    // bundle.setExec(exec);
     bundle.runAllCommands();
   }
   else {

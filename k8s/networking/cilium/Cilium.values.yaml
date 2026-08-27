@@ -1,0 +1,61 @@
+k8sServiceHost: {{ .Values.k8sApiServer }}  # The Kubernetes API server address
+k8sServicePort: {{ .Values.k8sApiPort | "6443" }}  # Kubernetes API server port
+kubeProxyReplacement: true  # Enables eBPF-based kube-proxy replacement for better performance
+
+# Set the routing mode and tunnel protocol
+# These are currently the defaults, however
+# we want to set them explicitly
+routingMode: "tunnel"
+tunnelProtocol: "vxlan"
+
+# We attach eBPF datapath to the following
+# devices by default:
+# - enp+ All physical networking interfaces (predictable)
+# - eth+ All physical networking interfaces (unpredictable)
+# - defined+ Defined Network (Nebula) virtual mesh
+devices: "enp+,eth+,defined+"
+
+bpf:
+  masquerade: true
+externalIPs:
+  enabled: true  # Allows services to use external IPs for better connectivity
+k8sClientRateLimit:
+  qps: 200  # API request rate limit to avoid overwhelming the K8s API
+  burst: 600  # Maximum burst rate for API requests
+operator:
+  replicas: 1  # Ensures a single replica of the Cilium operator, suitable for small clusters
+
+# Ensures smooth rolling updates of Cilium components
+# Ensures that Cilium pods are updated properly during upgrades
+rollOutPods: true
+rollOutCiliumPods: true
+
+# Use Gateway API as it's the future
+gatewayAPI:
+  enabled: true
+
+# Envoy is used for L7 routing
+# We use in standalone mode so it can be
+# operated independently of Cilium
+envoy:
+  enabled: true
+  useOriginalSourceAddress: false
+  securityContext:
+    capabilities:
+      # Allow for port binding
+      keepCapNetBindService: true
+      envoy:
+        - NET_BIND_SERVICE
+        - NET_ADMIN
+        - SYS_ADMIN
+        - BPF
+# Enable Hubble
+hubble:
+  enabled: true
+  ui:
+    enabled: true
+  relay:
+    enabled: true
+ipam:
+  operator:
+    clusterPoolIPv4PodCIDRList: "10.42.0.0/16"

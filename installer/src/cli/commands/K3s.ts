@@ -1,10 +1,13 @@
-import { OutputType } from "./Command.ts";
+import { CommandSpec, OutputType } from "./Command.ts";
 
 
-export const K3sCommands = [
+export const K3sCommands: CommandSpec[] = [
   {
     name: "install-k3s-agent",
     description: "Install K3s agent on the node",
+    env: {
+      INSTALL_K3S_EXEC: "--flannel-backend=none --disable-network-policy"
+    },
     command: (config) => {
       const k3sUrl = config.getControlPlaneUrl();
       const k3sToken = config.config.k3s.token;
