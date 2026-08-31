@@ -1,5 +1,6 @@
 import { program } from "commander";
 import { runBundle } from "../runners/runBundle.ts";
+import { runTemplate } from "../runners/runTemplate.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -26,7 +27,8 @@ enum CliOperation {
   Install = "install",
   Uninstall = "uninstall",
   Clean = "clean",
-  RunBundle = "run-bundle"
+  RunBundle = "run-bundle",
+  RunTemplate = "run-template"
 }
 
 // =================================================
@@ -83,7 +85,15 @@ program
   .argument("<node>")
   // .option("--profile", "Specify a profile (e.g., staging, production).")
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
-  .action(runBundle);
+    .action(runBundle);
+
+program
+    .command(CliOperation.RunTemplate)
+    .description("Apply template variables to a yaml template file and apply (or delete) with kubectl")
+    .argument("<yamlFile>", "Path to the Yaml template file")
+    .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+    .action(runTemplate);
+
 
 // Parse arguments and exit
 program.parse(process.argv);
