@@ -1,0 +1,77 @@
+# The default Gateway for applications
+# deployed to Community Cloud
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  # Out of the box we provide
+  # Let's Encrypt integration
+  name: cc-letsencrypt-web-gateway
+  namespace: community-cloud
+  # This will cause cert-manager to issue
+  # certificates for listerns on this
+  # Gateway.
+  # cert-manager.io/issuer: cc-lets-encrypt
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # We use the default Cilium gateway
+  gatewayClassName: cilium
+  # A default dummy listener
+  listeners:
+    - name: example-http
+      port: 80
+      protocol: HTTP
+      hostname:  example
+  # We allow listeners from the label
+  # whereWereGoing=weDontNeedRoads
+  # on the namespace. This allows some
+  # default control at the cluster level
+  # if there's a desire to prevent ingress/egress
+  # outside of the cluster
+  allowedListeners:
+    namespaces:
+      from: Selector
+      selector:
+        matchLabels:
+          whereWereGoing: weDontNeedRoads
+
+    #- name: main-https
+    #  port: 443
+    #  protocol: HTTPS
+    #  hostname:  "community-cloud.technology"
+    #  tls:
+    #    mode: Terminate
+    #    certificateRefs:
+    #      - kind: Secret
+    #        name: cc-hq-secret
+    # - name: cc-s3-http
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname:  {{ printf "*.s3.%s" .Values.domain.main | quote  }}
+    # - name: cc-s3-https
+    #   port: 8443
+    #   protocol: HTTPS
+    #   hostname:{{ printf "*.s3.%s" .Values.domain.main | quote }}
+    #   tls:
+    #     mode: Terminate
+    #     certificateRefs:
+    #       - kind: Secret
+    #         name: cc-s3-secret
+    # Code HQ (example)
+    # - name: http
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname: code-hq.example.com
+    # - name: http-www
+    #   port: 8000
+    #   protocol: HTTP
+    #   hostname: www.code-hq.example.com
+    # - name: https
+    #   port: 8443
+    #   protocol: HTTPS
+    #   hostname: code-hq.example.com
+    #   tls:
+    #     mode: Terminate
+    #     certificateRefs:
+    #       - kind: Secret
+    #         name: code-hq-secret

@@ -7,11 +7,16 @@
 import { OutputType } from "./Command.ts"
 
 export const BasePackageCommands = [
-    {
-      name: "install-jc",
-      description: "Install 'jc' command line tool",
-      command: "sudo apt install jc -y",
-      output: OutputType.Raw,
-    },
-
-]
+  {
+    name: "update-apt",
+    description: "Update apt packages",
+    command: "sudo apt update",
+    output: OutputType.Raw
+  },
+  {
+    name: "install-jc",
+    description: "Install 'jc' command line tool",
+    command: "sudo apt install jc -y",
+    output: OutputType.Raw,
+  },
+];

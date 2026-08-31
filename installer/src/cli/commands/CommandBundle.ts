@@ -1,7 +1,6 @@
 import Command from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
-
 export interface CommandResult {
   stdout: string;
   stderr: string;
@@ -34,14 +33,16 @@ export class CommandBundle {
 
   protected config: CloudConfig;
   protected commands: object[];
-  protected commandResults: CommandResult[];
+  protected commandResults: Record<string, CommandResult>;
   protected execFunction: Function | undefined;
+  protected context: object;
 
-  constructor(config: CloudConfig, commands?: object[], execFunction?: Function, subscribeHooks?: Observer<any>[]) {
+  constructor(config: CloudConfig, commands?: object[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
     this.config = config;
-    this.commands = commands !== undefined ? commands: [];
-    this.commandResults = [];
+    this.commands = commands !== undefined ? commands : [];
+    this.context = context !== undefined ? context : {};
     this.execFunction = execFunction;
+    this.commandResults = {};
 
 
     // Have any subscribe hooks. Can be used for
@@ -112,11 +113,32 @@ export class CommandBundle {
       }
 
       // Execute the command
-      const res = await command.exec(this.config);
+      let res = null;
+      try {
+        res = await command.exec(this.config, this.context, this.commandResults);
+      }
+      catch (e: any) {
+        console.log(e);
+        console.log(`🔴 Error running command: "${command.name}"`)
+        console.log(`🔴 Generated Command: ${e.cmd}`)
+        console.log(`🔴 Error Message: ${e.stderr}`);
+
+        res = {
+          error: true,
+          stdout: e.stdout,
+          stderr: e.stderr,
+          parsed: ""
+        }
+      }
 
       // Save the results
-      this.commandResults[i] = res;
-      console.log(res);
+      this.commandResults[command.name] = res;
+
+      // Stop executing the bundle
+      if (res.error) {
+        console.log("== Halted execution ==");
+        break;
+      }
     }
 
 
