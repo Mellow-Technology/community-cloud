@@ -52,7 +52,17 @@ export default class CloudConfig {
    */
   getNode(nodeName: string) {
     const { config } = this;
-    const nodes = config.nodes.filter((node) => nodeName === node.name);
+    const name = nodeName.toLowerCase();
+
+    // Node names carry capitals and spaces ("Mamoru BKK") while the
+    // address is what people actually type at a terminal, so a node
+    // answers to either.
+    const nodes = config.nodes.filter((node) => {
+      return (
+        node.name?.toLowerCase() === name || node.address?.toLowerCase() === name
+      );
+    });
+
     return nodes[0] !== undefined ? nodes[0] : null;
   }
 

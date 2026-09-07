@@ -40,4 +40,8 @@ export enum Regions  {
     // For the possible (but very unlikely)
     // use of this software in Antartica
     Antartica = "ant",
+
+    // A special region to indicate that
+    // a computer is not statically located
+    Mobile = "mob",
 }

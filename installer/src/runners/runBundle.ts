@@ -1,5 +1,7 @@
 import os from "os";
 
+import { exec } from "../util/exec.ts";
+
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
@@ -9,6 +11,7 @@ import { K3sCommands } from "../cli/commands/K3s.ts";
 import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
 import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
 import { LvmCommands } from "../cli/commands/LVM.ts";
+import { NetworkingCommands } from "../cli/commands/Networking.ts";
 
 /**
  * A map of command bundles
@@ -18,6 +21,7 @@ const commandMap = {
   base: BasePackageCommands,
   nodeLabels: NodeLabelCommands,
   lvm: LvmCommands,
+  network: NetworkingCommands,
 };
 
 /**
@@ -65,23 +69,29 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   // on the host already
   const hostname = os.hostname();
   if (hostname === nodeName) {
-    // bundle.setExec(exec);
-    bundle.runAllCommands();
+    bundle.setExec(exec);
+    await bundle.runAllCommands();
   }
   else {
     // Connect to the node via SSH
     const node = new RemoteHost({
       host: nodeInfo.address,
       username: nodeInfo.username,
+      keyFile: nodeInfo.keyFile,
     });
     await node.connect();
 
-    // Disconnect from the node
-    await node.disconnect();
+    try {
+      // Run every command in the bundle over the connection
+      // we just opened
+      bundle.setExec((command: string) => node.exec(command));
+      await bundle.runAllCommands();
+    }
+    finally {
+      // Disconnect from the node
+      await node.disconnect();
+    }
   }
-
-  //
-
 }
 
 export async function runRemoteBundles(bundleList, nodeName, config) {}
