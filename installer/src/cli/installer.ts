@@ -87,11 +87,16 @@ program
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
   .action(runBundle);
 
+// 5. Apply variables to a template and apply or delete it with kubectl
 program
     .command(CliOperation.RunTemplate)
     .description("Apply template variables to a yaml template file and apply (or delete) with kubectl")
     .argument("<yamlFile>", "Path to the Yaml template file")
     .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+    .option("-o, --operation <operation>", "The kubectl operation to run, either apply or delete", "apply")
+    .option("-n, --node <node>", "Run kubectl on this node over SSH rather than locally")
+    .option("--namespace <namespace>", "Namespace to scope the operation to")
+    .option("--dry-run", "Render the template and print it without running kubectl")
     .action(runTemplate);
 
 // TODO: This is kind of ugly. Would much rather have dynamically generated
