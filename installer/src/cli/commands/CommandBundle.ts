@@ -144,6 +144,14 @@ export class CommandBundle {
 
   }
 
+  /**
+   * Retrieve the results of every command that ran, keyed
+   * by command name.
+   */
+  getResults(): Record<string, CommandResult> {
+    return this.commandResults;
+  }
+
   getContext(): BundleContext {
     return this.actor.getSnapshot().context;
   }

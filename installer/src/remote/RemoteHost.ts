@@ -108,12 +108,17 @@ export default class RemoteHost {
   /**
    * Execute a command on the remote host.
    * Returns stdout and stderr as strings.
+   *
+   * `stdin` is written to the command's standard input, which lets us
+   * feed it something (a rendered manifest, say) without first having
+   * to copy a file over.
    */
   async exec(
     command: string,
     args?: string[],
+    stdin?: string,
   ): Promise<{ stdout: string; stderr: string; parsed: any }> {
-    const result = await this.ssh.execCommand(command, { args });
+    const result = await this.ssh.execCommand(command, { args, stdin });
     return {
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",

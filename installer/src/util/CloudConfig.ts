@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 // For now we're just loading a file in the current
 // working directory and using that for host defintions
@@ -25,8 +25,11 @@ export default class CloudConfig {
    * @param configFilePath
    */
   async loadConfigFromFile(configFilePath: string) {
-    const cwd = process.cwd();
-    const filePath = join(cwd, configFilePath);
+    // Relative paths are resolved against the working directory,
+    // absolute ones are already where they need to be
+    const filePath = isAbsolute(configFilePath)
+      ? configFilePath
+      : join(process.cwd(), configFilePath);
 
     const fileContents = await readFile(filePath, { encoding: "utf8" });
     this.config = JSON.parse(fileContents);

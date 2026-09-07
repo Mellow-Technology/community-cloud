@@ -1,5 +1,5 @@
 k8sServiceHost: {{ .Values.k8sApiServer }}  # The Kubernetes API server address
-k8sServicePort: {{ .Values.k8sApiPort | "6443" }}  # Kubernetes API server port
+k8sServicePort: {{ .Values.k8sApiPort | default "6443" }}  # Kubernetes API server port
 kubeProxyReplacement: true  # Enables eBPF-based kube-proxy replacement for better performance
 
 # Set the routing mode and tunnel protocol
