@@ -12,6 +12,7 @@ import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
 import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
 import { LvmCommands } from "../cli/commands/LVM.ts";
 import { NetworkingCommands } from "../cli/commands/Networking.ts";
+import { CiliumCommands } from "../cli/commands/Cilium.ts";
 
 /**
  * A map of command bundles
@@ -22,6 +23,7 @@ const commandMap = {
   nodeLabels: NodeLabelCommands,
   lvm: LvmCommands,
   network: NetworkingCommands,
+  cilium: CiliumCommands,
 };
 
 /**

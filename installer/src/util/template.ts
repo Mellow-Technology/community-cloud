@@ -14,6 +14,8 @@
  */
 import { parse } from "@ctrl/golang-template";
 
+import CloudConfig from "./CloudConfig.ts";
+
 // Tags that @ctrl/golang-template handles on its own.
 // A tag opening with any of these is left untouched.
 const CONTROL_TAG = /^(?:if|else|end|with|range|join|index|re_replace)\b|^\.$/;
@@ -281,4 +283,66 @@ function unquote(token: string): string {
  */
 function isEmpty(value: any): boolean {
   return value === undefined || value === null || value === "" || value === false;
+}
+
+// The port a K3s API server listens on unless it's been configured
+// to do otherwise
+const DEFAULT_K8S_API_PORT = "6443";
+
+/**
+ * Build the value set handed to the template renderer.
+ *
+ * The manifests in k8s/ are written Helm style, so everything they
+ * reference is reached through ".Values". Values come from the
+ * "values" section of the configuration when there is one and from
+ * the top level of the configuration otherwise, which lets a
+ * configuration keep its values alongside its node list or in a
+ * section of their own.
+ *
+ * @param config
+ * @returns
+ */
+export function buildTemplateValues(config: CloudConfig) {
+  const rawConfig = config.getConfig();
+  const values = {
+    ...rawConfig,
+    ...(rawConfig.values !== undefined ? rawConfig.values : {}),
+  };
+
+  // The API server lives on the control plane node, so we derive it
+  // rather than make a configuration repeat what the node list
+  // already says
+  if (values.k8sApiServer === undefined) {
+    const controlPlane = getControlPlaneHost(config);
+    if (controlPlane !== undefined) {
+      // The address other nodes reach the API on, which isn't always
+      // the one we administer the node through
+      values.k8sApiServer =
+        controlPlane.apiAddress !== undefined
+          ? controlPlane.apiAddress
+          : controlPlane.address;
+    }
+  }
+
+  if (values.k8sApiPort === undefined) {
+    values.k8sApiPort = DEFAULT_K8S_API_PORT;
+  }
+
+  return { Values: values };
+}
+
+/**
+ * Look up the control plane node, tolerating a configuration that
+ * doesn't describe any nodes at all. Manifests that don't reference
+ * the API server should still render for those.
+ *
+ * @param config
+ * @returns
+ */
+function getControlPlaneHost(config: CloudConfig) {
+  try {
+    return config.getControlPlaneHost();
+  } catch {
+    return undefined;
+  }
 }
