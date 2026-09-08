@@ -1,6 +1,7 @@
 import { program } from "commander";
 import { runBundle } from "../runners/runBundle.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
+import { listBundles } from "../runners/listBundles.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -28,6 +29,7 @@ enum CliOperation {
   Uninstall = "uninstall",
   Clean = "clean",
   RunBundle = "run-bundle",
+  ListBundles = "list-bundles",
   RunTemplate = "run-template"
 }
 
@@ -88,6 +90,14 @@ program
   .action(runBundle);
 
 // 5. Apply variables to a template and apply or delete it with kubectl
+// 5. ListBundles Command
+program
+  .command(CliOperation.ListBundles)
+  .description("List the command bundles that can be run")
+  .argument("[bundleName]", "Show the commands in a single bundle")
+  .option("-c, --config <ccFilePath>", "Configuration file, needed for bundles whose commands come from one")
+  .action(listBundles);
+
 program
     .command(CliOperation.RunTemplate)
     .description("Apply template variables to a yaml template file and apply (or delete) with kubectl")

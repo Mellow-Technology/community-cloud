@@ -2,12 +2,7 @@ import Command, { OutputType } from "./Command.ts";
 
 /**
  * @file
- *
- * Setup Logical Volume Manager Volumes
- *
- * Requires:
- * - jc
- * - root/sudo
+ * Setup registries configuration file
  */
 
 

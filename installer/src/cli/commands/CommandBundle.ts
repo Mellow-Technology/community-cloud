@@ -1,11 +1,27 @@
-import Command from "./Command.ts";
+import Command, { CommandSpec, ContextUpdates } from "./Command.ts";
+import TerminalCommand from "./TerminalCommand.ts";
+import WebCommand from "./WebCommand.ts";
+import { createCommand } from "./createCommand.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 export interface CommandResult {
   stdout: string;
   stderr: string;
   parsed: any;
-  // contextUpdates?: Record<string, unknown>; // Allow commands to update context
+  processed?: any;
+
+  // Set by web commands
+  status?: number;
+  headers?: Record<string, string>;
+
+  // What the command added to the bundle's context
+  contextUpdates?: ContextUpdates;
+
+  // Set when the command failed
+  error?: boolean;
+
+  // Set when the command had nothing to do
+  skipped?: boolean;
 }
 
 export interface CommandConfig {
@@ -32,16 +48,18 @@ export interface BundleContext {
 export class CommandBundle {
 
   protected config: CloudConfig;
-  protected commands: object[];
+  protected commands: CommandSpec[];
   protected commandResults: Record<string, CommandResult>;
   protected execFunction: Function | undefined;
-  protected context: object;
+  protected fetchFunction: Function | undefined;
+  protected context: Record<string, unknown>;
 
-  constructor(config: CloudConfig, commands?: object[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
+  constructor(config: CloudConfig, commands?: CommandSpec[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
     this.config = config;
     this.commands = commands !== undefined ? commands : [];
     this.context = context !== undefined ? context : {};
     this.execFunction = execFunction;
+    this.fetchFunction = undefined;
     this.commandResults = {};
 
 
@@ -61,7 +79,7 @@ export class CommandBundle {
    * @param command
    * @returns
    */
-  add(command: Command): this {
+  add(command: CommandSpec): this {
     this.commands.push(command);
     return this;
   }
@@ -72,7 +90,7 @@ export class CommandBundle {
    * @param commands
    * @returns
    */
-  addBulk(commands: Command[]): this {
+  addBulk(commands: CommandSpec[]): this {
     for (let i = 0; i < commands.length; i++) {
       // @ts-expect-error This will always work (please let this not bite me lol)
       this.add(commands[i]);
@@ -94,6 +112,18 @@ export class CommandBundle {
   }
 
   /**
+   * Set the function that web commands make their requests with.
+   * Only useful for pointing them somewhere other than the network.
+   *
+   * @param fetchFunction
+   * @returns
+   */
+  setFetch(fetchFunction: Function): this {
+    this.fetchFunction = fetchFunction;
+    return this;
+  }
+
+  /**
    * Run all configured commands in the bundle
    */
   async runAllCommands(): Promise<void> {
@@ -103,13 +133,32 @@ export class CommandBundle {
       // Grab the parameters for the current command
       const commandSpec = this.commands[i];
 
-      // Instantiate a command object
-      const command = new Command(commandSpec);
+      // Instantiate a command object of whichever kind
+      // the specification describes
+      const command = createCommand(commandSpec);
 
-      // Set the exec function for the command using
-      // the one that's configured for the command bundle
-      if (this.execFunction !== undefined) {
+      // Hand over however this bundle runs things. A bundle can be
+      // pointed at a remote host or at a stand-in, and only the kind
+      // of command it applies to takes it.
+      if (this.execFunction !== undefined && command instanceof TerminalCommand) {
         command.setExecFunction(this.execFunction);
+      }
+
+      if (this.fetchFunction !== undefined && command instanceof WebCommand) {
+        command.setFetchFunction(this.fetchFunction);
+      }
+
+      // A command that has nothing to do is left alone, and says so
+      // in the results rather than going missing from them
+      if (command.shouldSkip(this.config, this.context, this.commandResults)) {
+        console.log(`⏭️  Skipped: "${command.name}" has nothing to do`);
+        this.commandResults[command.name] = {
+          stdout: "",
+          stderr: "",
+          parsed: null,
+          skipped: true,
+        };
+        continue;
       }
 
       // Execute the command
@@ -121,7 +170,7 @@ export class CommandBundle {
         console.log(e);
         console.log(`🔴 Error running command: "${command.name}"`)
         console.log(`🔴 Generated Command: ${e.cmd}`)
-        console.log(`🔴 Error Message: ${e.stderr}`);
+        console.log(`🔴 Error Message: ${e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message}`);
 
         res = {
           error: true,
@@ -133,6 +182,13 @@ export class CommandBundle {
 
       // Save the results
       this.commandResults[command.name] = res;
+
+      // Fold anything the command wanted to pass on into the shared
+      // context, so the commands after it can read it. This is how an
+      // API call hands a value to a shell command.
+      if (res.contextUpdates !== undefined) {
+        Object.assign(this.context, res.contextUpdates);
+      }
 
       // Stop executing the bundle
       if (res.error) {
@@ -152,11 +208,11 @@ export class CommandBundle {
     return this.commandResults;
   }
 
-  getContext(): BundleContext {
-    return this.actor.getSnapshot().context;
-  }
-
-  stop(): void {
-    this.actor.stop();
+  /**
+   * The context shared by every command in the bundle, including
+   * whatever the commands that have already run added to it.
+   */
+  getContext(): Record<string, unknown> {
+    return this.context;
   }
 }

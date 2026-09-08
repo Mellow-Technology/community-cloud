@@ -1,14 +1,18 @@
-// import RemoteHost from "../remote/RemoteHost.ts";
-import { promisify } from 'node:util';
-import child_process from "node:child_process";
-import { loadAll } from 'js-yaml'
-
-import { formatEnvAssignments } from "../../util/shell.ts";
-
-// import consumers from "stream/consumers";
-
-// Use a promise-based exec
-const exec = promisify(child_process.exec);
+/**
+ * @file
+ * The base of everything a bundle can run.
+ *
+ * A bundle is a sequence of steps, and not every step is a shell
+ * command: some of what has to happen during an install is an API
+ * call. Both kinds share the same shape — they produce output, that
+ * output gets parsed, post-processed and can be handed to the steps
+ * that follow — so the shared half lives here and the subclasses only
+ * describe how they actually go and get the output.
+ *
+ * - TerminalCommand runs something in a shell, locally or over SSH
+ * - WebCommand calls an HTTP API
+ */
+import { loadAll } from "js-yaml";
 
 export enum OutputType {
   // Output is JSON
@@ -25,54 +29,137 @@ export enum OutputType {
   Custom = "custom",
 
   // Raw output will short-circuit any parsing
-  Raw = "raw"
+  Raw = "raw",
 }
 
 /**
+ * The kinds of command a bundle can hold.
+ */
+export enum CommandType {
+  Terminal = "terminal",
+  Web = "web",
+}
+
+/**
+ * The output of a command.
  *
+ * Both kinds of command report through the same fields so that
+ * parsing, post-processing and anything reading a previous result
+ * doesn't have to care which one produced it. For a web command
+ * "stdout" is the response body, and status and headers carry the
+ * rest of the response.
  */
 export interface CommandOutput {
   stdout: string | null;
   stderr: string | null;
   parsed?: any;
   processed?: any;
+
+  // Set by web commands
+  status?: number;
+  headers?: Record<string, string>;
+
+  // What this command added to the bundle's context
+  contextUpdates?: ContextUpdates;
 }
 
 /**
- * The specification for a command.
- *
- * Each command has a
- * - name: a label for the command
- * - description: a description to show the user what the command does
- * - env: environment variables for the command, either as an object or
- *   as a function worked out from the configuration
- * - command: the command itself
- * - output: an output type that will be automatically parsed
+ * Values a command adds to the context shared by the bundle.
  */
-export interface CommandSpec {
+export type ContextUpdates = Record<string, unknown>;
+
+/**
+ * What every command has, whichever kind it is.
+ *
+ * - name: a label for the command, and the key its result is kept under
+ * - description: a description to show the user what the command does
+ * - type: which kind of command this is. Worked out from the spec when
+ *   it isn't given, so it's only needed to settle an ambiguous case
+ * - output: an output type that will be automatically parsed
+ * - postProcessHooks: functions run over the parsed output, whose
+ *   result lands in "processed"
+ * - saveToContext: what to put into the bundle's context for later
+ *   commands to use. Either a map of context key to a path into this
+ *   command's output ("parsed.token", "status"), or a function handed
+ *   the output which returns the values to add.
+ * - skipWhen: a function saying this command has nothing to do, given
+ *   what the commands before it found. A bundle that can be run twice
+ *   needs this: a shell command can check the state it's about to
+ *   change, but an API call that creates something can't take itself
+ *   back once it has been sent.
+ */
+export interface BaseCommandSpec {
   name: string;
   description: string;
-  command: string | Function;
-  output: OutputType;
-  sudo?: boolean;
+  type?: CommandType;
+  output?: OutputType;
   commandParser?: string;
-  env?: Record<string, string> | Function;
   postProcessHooks?: Function[];
-  remoteHost?: RemoteHost;
+  parseFunction?: Function;
+  saveToContext?: Record<string, string> | Function;
+  skipWhen?: Function;
 }
 
 /**
- * A single command, can be executed locally or remotely
+ * A command that runs in a shell.
+ *
+ * - command: the command itself, or a function that builds it
+ * - sudo: whether the command should be run using sudo
+ * - env: environment variables for the command, either as an object or
+ *   as a function worked out from the configuration
+ * - commandParser: a program to pipe the output through before parsing
+ *   e.g. for using JC (https://github.com/kellyjonbrazil/jc)
  */
-export default class Command {
-  // A human readable
+export interface TerminalCommandSpec extends BaseCommandSpec {
+  command: string | Function;
+  sudo?: boolean;
+  env?: Record<string, string> | Function;
+  remoteHost?: unknown;
+}
+
+/**
+ * A command that calls an HTTP API.
+ *
+ * Every part of the request can be a function taking the same
+ * arguments a command builder does, so a request can be put together
+ * from the configuration and from what earlier commands found.
+ *
+ * - url: where to send the request
+ * - method: defaults to GET
+ * - query: query string parameters
+ * - headers: request headers
+ * - body: a string is sent as-is, anything else is sent as JSON
+ * - expectStatus: response codes to accept. Any 2xx by default.
+ * - timeout: how long to wait, in milliseconds
+ */
+export interface WebCommandSpec extends BaseCommandSpec {
+  url: string | Function;
+  method?: string;
+  query?: Record<string, string | number | boolean> | Function;
+  headers?: Record<string, string> | Function;
+  body?: unknown;
+  expectStatus?: number[];
+  timeout?: number;
+}
+
+/**
+ * The specification for a command of any kind.
+ */
+export type CommandSpec = TerminalCommandSpec | WebCommandSpec;
+
+/**
+ * A single step in a bundle.
+ *
+ * Subclasses only have to say how they get their output. Everything
+ * after that — parsing it, running the post-process hooks, working out
+ * what to hand to the commands that follow — happens here.
+ */
+export default abstract class Command {
+  // A human readable name
   name: string;
 
   // A description of what the command does
   description: string;
-
-  // The string to use for the command
-  command: string | Function;
 
   // The raw output of the command
   rawOutput: CommandOutput | null;
@@ -80,78 +167,88 @@ export default class Command {
   // The type of output the command has
   outputType: OutputType;
 
-  // The function to execute the
-  // command with
-  execFunction: Function;
-
   // The parsed output of the command
   // TODO: Make this a generic so that
   // each command has a verifiable output
   parsedOutput: CommandOutput;
 
-  // Whether the command should be run using sudo
-  sudo: boolean;
-
   // An optional program used to process the
   // output of a command before parsing
-  // e.g. for using JC (https://github.com/kellyjonbrazil/jc)
   commandParser?: string;
 
-  // An array of functionas that can be used to post-process
+  // An array of functions that can be used to post-process
   // data from a command after parsing. Processed data is
-  // placed in the "process" key of the CommandOutput
+  // placed in the "processed" key of the CommandOutput
   postProcessHooks?: Function[];
 
-  // The function the command will be executed
-  // with
-  remoteHost?: RemoteHost;
-
-  // An optional function to parse the
-  // output
+  // An optional function to parse the output
   parseFunction?: Function;
 
-  // Environment variables for the command. Either a plain object or a
-  // function which is handed the same arguments as a command creator
-  // and returns one, for variables that depend on the configuration.
-  env?: Record<string, string> | Function;
+  // What this command contributes to the bundle's context
+  saveToContext?: Record<string, string> | Function;
 
-  constructor({
-    name,
-    description,
-    command,
-    output,
-    commandParser = undefined,
-    sudo = false,
-    env = undefined,
-    postProcessHooks = undefined,
-    remoteHost = undefined,
-  }: CommandSpec) {
+  // Whether this command has anything to do
+  skipWhen?: Function;
+
+  constructor(
+    {
+      name,
+      description,
+      output = undefined,
+      commandParser = undefined,
+      postProcessHooks = undefined,
+      parseFunction = undefined,
+      saveToContext = undefined,
+      skipWhen = undefined,
+    }: BaseCommandSpec,
+    defaultOutput: OutputType = OutputType.Raw,
+  ) {
     this.name = name;
     this.description = description;
-    this.command = command;
-    this.outputType = output;
+    this.outputType = output !== undefined ? output : defaultOutput;
     this.commandParser = commandParser;
-    this.sudo = sudo;
-    this.env = env;
     this.postProcessHooks = postProcessHooks;
-    this.remoteHost = remoteHost;
+    this.parseFunction = parseFunction;
+    this.saveToContext = saveToContext;
+    this.skipWhen = skipWhen;
     this.rawOutput = null;
-    this.execFunction = exec;
     this.parsedOutput = {
       stdout: null,
       stderr: null,
-      parsed: null
-    }
+      parsed: null,
+    };
   }
-
 
   /**
-   * Set the execution function.
-   * @param execFunction
+   * Go and get the output. This is the part that differs between a
+   * shell command and an API call, and the only thing a subclass has
+   * to provide.
+   *
+   * @param config
+   * @param context
+   * @param commandResults
    */
-  setExecFunction(execFunction: Function) {
-    this.execFunction = execFunction;
+  /**
+   * Whether this command has anything left to do.
+   *
+   * @param config
+   * @param context
+   * @param commandResults
+   * @returns
+   */
+  shouldSkip(config, context, commandResults): boolean {
+    if (typeof this.skipWhen !== "function") {
+      return false;
+    }
+
+    return this.skipWhen(config, context, commandResults) === true;
   }
+
+  protected abstract run(
+    config: any,
+    context: any,
+    commandResults: any,
+  ): Promise<CommandOutput>;
 
   /**
    * Execute a command
@@ -159,52 +256,7 @@ export default class Command {
    * @returns
    */
   async exec(config, context, commandResults) {
-    let cmdString = null;
-
-    // If the command is a function it's a
-    // command creator, so we pass the context
-    // to it to get the final command string
-    if (typeof this.command === "function") {
-      cmdString = this.command(config, context, commandResults);
-    } else {
-      cmdString = this.command;
-    }
-
-    // Work out the environment for the command, which can be a plain
-    // object or, like the command itself, something derived from the
-    // configuration
-    const assignments = formatEnvAssignments(
-      this.resolveEnv(config, context, commandResults),
-    );
-
-    // If we're running with sudo then
-    // we prepend sudo to the command
-    if (this.sudo) {
-      // sudo clears the environment it was given, so the variables go
-      // through env rather than being exported ahead of it
-      cmdString =
-        assignments.length > 0
-          ? `sudo env ${assignments.join(" ")} ${cmdString}`
-          : `sudo ${cmdString}`;
-    }
-    else if (assignments.length > 0) {
-      // Exported rather than written as a prefix so that everything
-      // the command runs sees them, including the far side of a pipe.
-      // "curl ... | sh -" is the reason this matters: a prefix would
-      // only reach curl.
-      cmdString = `export ${assignments.join(" ")}; ${cmdString}`;
-    }
-
-    // If a command parser is specified then
-    // we pipe the contents of the command
-    // through the command parser
-    if (this.commandParser !== undefined) {
-      cmdString += ` | ${this.commandParser}`;
-    }
-
-    // Run the function
-    this.rawOutput = await this.execFunction(cmdString);
-
+    this.rawOutput = await this.run(config, context, commandResults);
 
     // Parse the output from the command
     // If it doesn't succeed
@@ -224,31 +276,51 @@ export default class Command {
       }
     }
 
+    // Work out what the commands after this one should be able to see.
+    // Merging it into the context is the bundle's job, so that the
+    // context has one owner.
+    const contextUpdates = this.resolveContextUpdates(config, context, commandResults);
+    if (Object.keys(contextUpdates).length > 0) {
+      this.parsedOutput.contextUpdates = contextUpdates;
+    }
+
     console.log(this.parsedOutput);
 
     return this.parsedOutput;
   }
 
-
   /**
-   * Work out the environment variables for this command.
+   * Work out what this command adds to the bundle's context.
    *
    * @param config
    * @param context
    * @param commandResults
    * @returns
    */
-  resolveEnv(config, context, commandResults): Record<string, unknown> {
-    if (this.env === undefined || this.env === null) {
+  resolveContextUpdates(config, context, commandResults): ContextUpdates {
+    if (this.saveToContext === undefined || this.saveToContext === null) {
       return {};
     }
 
-    const env =
-      typeof this.env === "function"
-        ? this.env(config, context, commandResults)
-        : this.env;
+    if (typeof this.saveToContext === "function") {
+      const updates = this.saveToContext(
+        this.parsedOutput,
+        context,
+        config,
+        commandResults,
+      );
 
-    return env !== undefined && env !== null ? env : {};
+      return updates !== undefined && updates !== null ? updates : {};
+    }
+
+    // The map form names a path into this command's output, so that
+    // pulling a token out of a JSON response doesn't need a function
+    const updates: ContextUpdates = {};
+    for (const [key, path] of Object.entries(this.saveToContext)) {
+      updates[key] = readPath(this.parsedOutput, path);
+    }
+
+    return updates;
   }
 
   /**
@@ -263,7 +335,6 @@ export default class Command {
     // Copy over the initial raw output
     this.parsedOutput = this.rawOutput;
 
-
     // Parse output
     try {
       switch (this.outputType) {
@@ -273,7 +344,7 @@ export default class Command {
 
         case OutputType.Csv:
           console.warn(
-            "YAML parsing requires an external library (e.g., js-yaml). Returning raw output.",
+            "CSV parsing requires an external library. Returning raw output.",
           );
           this.parsedOutput.parsed = this.rawOutput;
           break;
@@ -281,7 +352,6 @@ export default class Command {
         case OutputType.Yaml:
           this.parsedOutput.parsed = loadAll(this.rawOutput.stdout);
           break;
-
 
         case OutputType.Custom:
           if (this.parseFunction) {
@@ -310,4 +380,25 @@ export default class Command {
 
     return true;
   }
+}
+
+/**
+ * Follow a dotted path into an object, e.g. "parsed.data.token".
+ *
+ * @param value
+ * @param path
+ * @returns
+ */
+function readPath(value: any, path: string) {
+  let current = value;
+
+  for (const segment of path.split(".")) {
+    if (current === undefined || current === null) {
+      return undefined;
+    }
+
+    current = current[segment];
+  }
+
+  return current;
 }

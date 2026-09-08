@@ -5,26 +5,7 @@ import { exec } from "../util/exec.ts";
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-
-// Command Bundles
-import { K3sCommands } from "../cli/commands/K3s.ts";
-import { BasePackageCommands } from "../cli/commands/BasePackages.ts";
-import { NodeLabelCommands } from "../cli/commands/NodeLabels.ts";
-import { LvmCommands } from "../cli/commands/LVM.ts";
-import { NetworkingCommands } from "../cli/commands/Networking.ts";
-import { CiliumCommands } from "../cli/commands/Cilium.ts";
-
-/**
- * A map of command bundles
- */
-const commandMap = {
-  k3s: K3sCommands,
-  base: BasePackageCommands,
-  nodeLabels: NodeLabelCommands,
-  lvm: LvmCommands,
-  network: NetworkingCommands,
-  cilium: CiliumCommands,
-};
+import { getBundle, getBundleCommands, getBundleNames } from "../cli/commands/bundles.ts";
 
 /**
  * Run a command bundle remotely.
@@ -58,10 +39,15 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   context.node = nodeInfo;
 
   // Retrieve the correct bundle
-  const bundleCommands = commandMap[bundleName];
-  if (bundleCommands === undefined) {
-    throw new Error(`Couldn't find a command bundle named "${bundleName}". Was the bundle name spelled correctly?`)
+  const bundleDefinition = getBundle(bundleName);
+  if (bundleDefinition === undefined) {
+    throw new Error(`Couldn't find a command bundle named "${bundleName}". Was the bundle name spelled correctly? The bundles that can be run are: ${getBundleNames().join(", ")}.`)
   }
+
+  // Most bundles are a fixed list of commands, but some are built from
+  // the configuration: the roles on a Nebula network are a command
+  // each, and only the configuration knows how many there are.
+  const bundleCommands = getBundleCommands(bundleDefinition, config, context);
 
   // Instantiate the bundle and add commands
   const bundle = new CommandBundle(config, bundleCommands, context);
