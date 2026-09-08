@@ -77,9 +77,20 @@ export interface GpuInfo {
  */
 export interface NodeSpecification {
   name: string;
+
+  // How to reach the node over SSH. Often an alias from ~/.ssh/config
+  // rather than anything DNS knows about.
   address: string;
+
+  // Where other nodes reach this one's Kubernetes API, when that isn't
+  // the same as the address we administer it through. An SSH alias, a
+  // bastion or a port forward all get you to a node without being a
+  // name the rest of the cluster can use.
+  apiAddress?: string;
+
   username: string;
   keyFile: string;
+  port?: number;
   type: K3SInstallationType;
   gateway: boolean;
   labels: NodeRole[];

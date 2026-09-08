@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import child_process from "node:child_process";
 import { loadAll } from 'js-yaml'
 
+import { formatEnvAssignments } from "../../util/shell.ts";
+
 // import consumers from "stream/consumers";
 
 // Use a promise-based exec
@@ -42,7 +44,8 @@ export interface CommandOutput {
  * Each command has a
  * - name: a label for the command
  * - description: a description to show the user what the command does
- * - env: environment variables for the command
+ * - env: environment variables for the command, either as an object or
+ *   as a function worked out from the configuration
  * - command: the command itself
  * - output: an output type that will be automatically parsed
  */
@@ -107,6 +110,11 @@ export default class Command {
   // output
   parseFunction?: Function;
 
+  // Environment variables for the command. Either a plain object or a
+  // function which is handed the same arguments as a command creator
+  // and returns one, for variables that depend on the configuration.
+  env?: Record<string, string> | Function;
+
   constructor({
     name,
     description,
@@ -114,6 +122,7 @@ export default class Command {
     output,
     commandParser = undefined,
     sudo = false,
+    env = undefined,
     postProcessHooks = undefined,
     remoteHost = undefined,
   }: CommandSpec) {
@@ -123,6 +132,7 @@ export default class Command {
     this.outputType = output;
     this.commandParser = commandParser;
     this.sudo = sudo;
+    this.env = env;
     this.postProcessHooks = postProcessHooks;
     this.remoteHost = remoteHost;
     this.rawOutput = null;
@@ -160,10 +170,29 @@ export default class Command {
       cmdString = this.command;
     }
 
+    // Work out the environment for the command, which can be a plain
+    // object or, like the command itself, something derived from the
+    // configuration
+    const assignments = formatEnvAssignments(
+      this.resolveEnv(config, context, commandResults),
+    );
+
     // If we're running with sudo then
     // we prepend sudo to the command
     if (this.sudo) {
-      cmdString = `sudo ${cmdString}`;
+      // sudo clears the environment it was given, so the variables go
+      // through env rather than being exported ahead of it
+      cmdString =
+        assignments.length > 0
+          ? `sudo env ${assignments.join(" ")} ${cmdString}`
+          : `sudo ${cmdString}`;
+    }
+    else if (assignments.length > 0) {
+      // Exported rather than written as a prefix so that everything
+      // the command runs sees them, including the far side of a pipe.
+      // "curl ... | sh -" is the reason this matters: a prefix would
+      // only reach curl.
+      cmdString = `export ${assignments.join(" ")}; ${cmdString}`;
     }
 
     // If a command parser is specified then
@@ -200,6 +229,27 @@ export default class Command {
     return this.parsedOutput;
   }
 
+
+  /**
+   * Work out the environment variables for this command.
+   *
+   * @param config
+   * @param context
+   * @param commandResults
+   * @returns
+   */
+  resolveEnv(config, context, commandResults): Record<string, unknown> {
+    if (this.env === undefined || this.env === null) {
+      return {};
+    }
+
+    const env =
+      typeof this.env === "function"
+        ? this.env(config, context, commandResults)
+        : this.env;
+
+    return env !== undefined && env !== null ? env : {};
+  }
 
   /**
    * Parse the output of the command

@@ -19,6 +19,7 @@
  */
 import { CommandSpec, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
+import { quoteForShell } from "../../util/shell.ts";
 
 // Where the settings are persisted. Both of these are drop-in
 // directories, so we own one file each and can rewrite it on every
@@ -143,16 +144,6 @@ function checkName(value: string, settingName: string): string {
 function writeFileAsRoot(filePath: string, lines: string[]): string {
   const contents = lines.map(quoteForShell).join(" ");
   return `printf '%s\\n' ${contents} | sudo tee ${filePath} > /dev/null`;
-}
-
-/**
- * Single quote a value for the shell.
- *
- * @param value
- * @returns
- */
-function quoteForShell(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export const NetworkingCommands: CommandSpec[] = [

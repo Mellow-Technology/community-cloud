@@ -70,7 +70,15 @@ export default class CloudConfig {
    * On K3s
    */
   getControlPlaneUrl() {
-    const planeAddress = this.getControlPlaneHost().address;
+    const controlPlane = this.getControlPlaneHost();
+
+    // Agents have to reach the API themselves, and the address we
+    // administer a node through won't always get them there
+    const planeAddress =
+      controlPlane.apiAddress !== undefined
+        ? controlPlane.apiAddress
+        : controlPlane.address;
+
     return `https://${planeAddress}:6443`;
   }
 

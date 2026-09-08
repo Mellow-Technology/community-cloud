@@ -78,6 +78,7 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
       host: nodeInfo.address,
       username: nodeInfo.username,
       keyFile: nodeInfo.keyFile,
+      port: nodeInfo.port,
     });
     await node.connect();
 
