@@ -16,6 +16,7 @@ import { NodeLabelCommands } from "./NodeLabels.ts";
 import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
+import { GpuInfoCommands } from "./GpuInfo.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
 
@@ -43,6 +44,11 @@ export const bundles: BundleDefinition[] = [
     name: "cilium",
     description: "Install Cilium as the cluster CNI, from the control plane",
     commands: CiliumCommands,
+  },
+  {
+    name: "gpu",
+    description: "Detect video hardware and whether its vendor tooling is installed",
+    commands: GpuInfoCommands,
   },
   {
     name: "k3s",

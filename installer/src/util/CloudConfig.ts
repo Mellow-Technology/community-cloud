@@ -59,7 +59,7 @@ export default class CloudConfig {
     // answers to either.
     const nodes = config.nodes.filter((node) => {
       return (
-        node.name?.toLowerCase() === name || node.address?.toLowerCase() === name
+        node.name?.toLowerCase() === name || node.address?.toLowerCase() === name || node.sshHost?.toLowerCase() === name
       );
     });
 
