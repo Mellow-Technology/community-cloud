@@ -12,14 +12,25 @@ const DEFAULT_KEY_PATHS = [
   join(homedir(), ".ssh", "id_ecdsa"),
 ];
 
+/**
+ * How to reach a host.
+ *
+ * node-ssh's own options don't include a key file, since it wants the
+ * key itself, so that's added here and read before connecting.
+ */
+export interface RemoteHostOptions extends Partial<Config> {
+  keyFile?: string;
+  sshAgent?: boolean | string;
+}
+
 export default class RemoteHost {
   ssh: NodeSSH;
-  options: Partial<Config>;
+  options: RemoteHostOptions;
 
   /**
-   * @param {Partial<NodeSSH.SSHConnectionOptions>} options - SSH connection options
+   * @param {RemoteHostOptions} options - SSH connection options
    */
-  constructor(options: Partial<Config>) {
+  constructor(options: RemoteHostOptions) {
     this.ssh = new NodeSSH();
     this.options = { ...options };
   }

@@ -17,6 +17,7 @@ import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
+import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
 
@@ -69,6 +70,11 @@ export const bundles: BundleDefinition[] = [
     name: "nebula-network",
     description: "Set up the Nebula network and the roles on it",
     commands: NebulaNetworkCommands,
+  },
+  {
+    name: "registries",
+    description: "Give K3s the credentials for the configured private registries",
+    commands: RegistryCommands,
   },
   {
     name: "network",

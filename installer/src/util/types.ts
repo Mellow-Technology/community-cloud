@@ -10,11 +10,42 @@ export enum K3SInstallationType {
   Agent = "agent",
 }
 
+/**
+ * Credentials for a registry.
+ *
+ * Either a username and password, or one of the pre-encoded forms
+ * containerd accepts: "auth" is base64 of "username:password", and an
+ * identity token is what some registries hand out instead.
+ */
+export interface K3sRegistryAuth {
+  username?: string;
+  password?: string;
+  auth?: string;
+  identityToken?: string;
+}
+
+/**
+ * TLS settings for talking to a registry, for the ones using a private
+ * certificate authority or a client certificate.
+ */
+export interface K3sRegistryTls {
+  caFile?: string;
+  certFile?: string;
+  keyFile?: string;
+  insecureSkipVerify?: boolean;
+}
+
 export type K3sRegistry = {
-  auth: {
-    username: string;
-    password: string;
-  };
+  auth?: K3sRegistryAuth;
+  tls?: K3sRegistryTls;
+
+  // Where to actually fetch from, when that isn't the registry's own
+  // name. Only needed for mirroring, or for a registry whose name
+  // isn't the host serving it, as with docker.io.
+  endpoint?: string[];
+
+  // Regular expression rewrites applied to the image path
+  rewrite?: Record<string, string>;
 };
 
 // A set of container registries

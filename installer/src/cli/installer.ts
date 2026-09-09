@@ -2,6 +2,7 @@ import { program } from "commander";
 import { runBundle } from "../runners/runBundle.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
 import { listBundles } from "../runners/listBundles.ts";
+import { runPipeline } from "../runners/runPipeline.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -30,6 +31,7 @@ enum CliOperation {
   Clean = "clean",
   RunBundle = "run-bundle",
   ListBundles = "list-bundles",
+  RunPipeline = "run-pipeline",
   RunTemplate = "run-template"
 }
 
@@ -90,7 +92,17 @@ program
   .action(runBundle);
 
 // 5. Apply variables to a template and apply or delete it with kubectl
-// 5. ListBundles Command
+// 5. RunPipeline Command
+program
+  .command(CliOperation.RunPipeline)
+  .description("Run several bundles against a node, one after another, sharing their context")
+  .argument("<pipeline>", "A comma separated list of bundles, or a pipeline named in the configuration")
+  .argument("<node>", "The name of the node to run the pipeline on")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("--keep-going", "Carry on after a bundle fails instead of stopping")
+  .action(runPipeline);
+
+// 6. ListBundles Command
 program
   .command(CliOperation.ListBundles)
   .description("List the command bundles that can be run")

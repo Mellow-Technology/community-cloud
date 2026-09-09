@@ -284,6 +284,8 @@ export default abstract class Command {
       this.parsedOutput.contextUpdates = contextUpdates;
     }
 
+    console.log(this.parsedOutput);
+
     return this.parsedOutput;
   }
 

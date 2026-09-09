@@ -53,6 +53,7 @@ export class CommandBundle {
   protected execFunction: Function | undefined;
   protected fetchFunction: Function | undefined;
   protected context: Record<string, unknown>;
+  protected failed: boolean;
 
   constructor(config: CloudConfig, commands?: CommandSpec[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
     this.config = config;
@@ -61,6 +62,7 @@ export class CommandBundle {
     this.execFunction = execFunction;
     this.fetchFunction = undefined;
     this.commandResults = {};
+    this.failed = false;
 
 
     // Have any subscribe hooks. Can be used for
@@ -192,6 +194,7 @@ export class CommandBundle {
 
       // Stop executing the bundle
       if (res.error) {
+        this.failed = true;
         console.log("== Halted execution ==");
         break;
       }
@@ -206,6 +209,27 @@ export class CommandBundle {
    */
   getResults(): Record<string, CommandResult> {
     return this.commandResults;
+  }
+
+  /**
+   * Whether a command in this bundle failed and stopped the rest.
+   *
+   * A bundle reports a failure rather than throwing, so that the
+   * caller decides what a failure means. On its own it means the
+   * remaining commands were skipped; in a pipeline it means the
+   * bundles after this one shouldn't run either.
+   */
+  hasFailed(): boolean {
+    return this.failed;
+  }
+
+  /**
+   * The name of the command that failed, when one did.
+   */
+  getFailedCommand(): string | undefined {
+    return Object.keys(this.commandResults).find(
+      (name) => this.commandResults[name]?.error === true,
+    );
   }
 
   /**

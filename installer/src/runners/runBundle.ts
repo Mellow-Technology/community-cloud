@@ -1,10 +1,6 @@
-import os from "os";
-
-import { exec } from "../util/exec.ts";
-
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
-import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { connectToNode } from "./nodeConnection.ts";
 import { getBundle, getBundleCommands, getBundleNames } from "../cli/commands/bundles.ts";
 
 /**
@@ -29,14 +25,11 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
 
-  // Retrieve the node configuration
-  const nodeInfo = config.getNode(nodeName);
-  if (nodeInfo === null) {
-    throw new Error(`Couldn't find node "${nodeName}" in the specified configuration. Was the name misspelled?`);
-  }
+  // Connect to the node, which may be this machine
+  const connection = await connectToNode(config, nodeName);
 
   // Add node information to the context
-  context.node = nodeInfo;
+  context.node = connection.node;
 
   // Retrieve the correct bundle
   const bundleDefinition = getBundle(bundleName);
@@ -51,35 +44,13 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
 
   // Instantiate the bundle and add commands
   const bundle = new CommandBundle(config, bundleCommands, context);
+  bundle.setExec(connection.exec);
 
-
-  // Don't use SSH if we're running directly
-  // on the host already
-  const hostname = os.hostname();
-  if (hostname === nodeName) {
-    bundle.setExec(exec);
+  try {
     await bundle.runAllCommands();
   }
-  else {
-    // Connect to the node via SSH
-    const node = new RemoteHost({
-      host: nodeInfo.address,
-      username: nodeInfo.username,
-      keyFile: nodeInfo.keyFile,
-      port: nodeInfo.port,
-    });
-    await node.connect();
-
-    try {
-      // Run every command in the bundle over the connection
-      // we just opened
-      bundle.setExec((command: string) => node.exec(command));
-      await bundle.runAllCommands();
-    }
-    finally {
-      // Disconnect from the node
-      await node.disconnect();
-    }
+  finally {
+    await connection.disconnect();
   }
 }
 

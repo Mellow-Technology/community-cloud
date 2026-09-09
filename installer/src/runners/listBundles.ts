@@ -6,6 +6,7 @@ import chalk from "chalk";
 
 import CloudConfig from "../util/CloudConfig.ts";
 import { getCommandType } from "../cli/commands/createCommand.ts";
+import { getConfiguredPipelines } from "./runPipeline.ts";
 import {
   BundleDefinition,
   bundles,
@@ -61,14 +62,47 @@ function listEveryBundle(config: CloudConfig | null) {
 
   bundles.forEach((bundle, index) => {
     const name = chalk.cyan.bold(bundle.name.padEnd(nameWidth));
-    const summary = chalk.dim(summaries[index].padEnd(summaryWidth));
+    const summary = chalk.dim((summaries[index] ?? "").padEnd(summaryWidth));
     console.log(`  ${name}  ${summary}  ${bundle.description}`);
   });
 
+  listPipelines(config);
+
   console.log(`
 ${chalk.dim("Run one:")}              community-cloud run-bundle <bundle> <node> <ccFilePath>
+${chalk.dim("Run several:")}          community-cloud run-pipeline <bundle,bundle,...> <node> <ccFilePath>
 ${chalk.dim("Show its commands:")}    community-cloud list-bundles <bundle>
 `);
+}
+
+/**
+ * Show the pipelines a configuration defines, when there is one to
+ * read them from.
+ *
+ * @param config
+ */
+function listPipelines(config: CloudConfig | null) {
+  if (config === null) {
+    console.log(`\n  ${chalk.dim("Pass --config <ccFilePath> to also list the pipelines it defines.")}`);
+    return;
+  }
+
+  const pipelines = getConfiguredPipelines(config);
+  const names = Object.keys(pipelines);
+
+  if (names.length === 0) {
+    console.log(`\n  ${chalk.dim('No pipelines in this configuration. Add them under "pipelines".')}`);
+    return;
+  }
+
+  console.log(`\n${chalk.bold("Pipelines")}\n`);
+
+  const width = Math.max(...names.map((name) => name.length));
+  for (const name of names) {
+    const bundles = pipelines[name];
+    const steps = Array.isArray(bundles) ? bundles.join(" → ") : chalk.red("not a list of bundles");
+    console.log(`  ${chalk.cyan.bold(name.padEnd(width))}  ${steps}`);
+  }
 }
 
 /**
@@ -104,7 +138,7 @@ function listOneBundle(bundleName: string, config: CloudConfig | null) {
   commands.forEach((command, index) => {
     const step = String(index + 1).padStart(2);
     const name = chalk.bold(command.name.padEnd(width));
-    const kind = chalk.dim(getCommandType(command).padEnd(8));
+    const kind = chalk.dim((getCommandType(command) ?? "unknown").padEnd(8));
     console.log(`  ${chalk.dim(step + ".")} ${name}  ${kind}  ${command.description}`);
   });
 
