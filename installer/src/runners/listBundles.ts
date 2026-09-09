@@ -6,6 +6,7 @@ import chalk from "chalk";
 
 import CloudConfig from "../util/CloudConfig.ts";
 import { getCommandType } from "../cli/commands/createCommand.ts";
+import { CommandSpec, CommandTarget, CommandType } from "../cli/commands/Command.ts";
 import { getConfiguredPipelines } from "./runPipeline.ts";
 import {
   BundleDefinition,
@@ -134,15 +135,35 @@ function listOneBundle(bundleName: string, config: CloudConfig | null) {
 
   const commands = getBundleCommands(bundle, config as CloudConfig);
   const width = Math.max(...commands.map((command) => command.name.length));
+  const targets = commands.map(describeTarget);
+  const targetWidth = Math.max(...targets.map((target) => target.length));
 
   commands.forEach((command, index) => {
     const step = String(index + 1).padStart(2);
     const name = chalk.bold(command.name.padEnd(width));
     const kind = chalk.dim((getCommandType(command) ?? "unknown").padEnd(8));
-    console.log(`  ${chalk.dim(step + ".")} ${name}  ${kind}  ${command.description}`);
+    const target = chalk.dim((targets[index] ?? "").padEnd(targetWidth));
+    console.log(`  ${chalk.dim(step + ".")} ${name}  ${kind}  ${target}  ${command.description}`);
   });
 
   console.log();
+}
+
+/**
+ * Where a command runs, for the listing.
+ *
+ * Worth showing: a bundle aimed at one node can still have steps that
+ * run somewhere else, and that isn't obvious from the name.
+ *
+ * @param command
+ * @returns
+ */
+function describeTarget(command: CommandSpec): string {
+  if (getCommandType(command) === CommandType.Web) {
+    return "installer";
+  }
+
+  return command.runOn === CommandTarget.ControlPlane ? "control plane" : "node";
 }
 
 /**

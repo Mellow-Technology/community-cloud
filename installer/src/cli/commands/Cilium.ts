@@ -2,10 +2,15 @@
  * @file
  * Commands for setting up [Cilium](https://cilium.io/)
  *
- * These run on the control plane, after K3s is installed. K3s is
- * brought up with its own networking disabled, so until Cilium is in
- * place every node sits NotReady with no CNI: this bundle is what
- * finishes the cluster.
+ * Every command here runs on the control plane, which is where the
+ * kubeconfig is and therefore where the CLI, the values file and the
+ * install itself have to live. The bundle can be aimed at any node:
+ * installing Cilium is a thing done to the cluster, not to a node,
+ * and the runner opens the connection it needs.
+ *
+ * K3s is brought up with its own networking disabled, so until Cilium
+ * is in place every node sits NotReady with no CNI: this bundle is
+ * what finishes the cluster.
  *
  * The settings come from k8s/networking/cilium/Cilium.values.yaml
  * rather than a pile of --set flags. That file is a template, so the
@@ -21,9 +26,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join } from "node:path";
 
-import { CommandSpec, OutputType } from "./Command.ts";
+import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { K3SInstallationType } from "../../util/types.ts";
 import { quoteForShell } from "../../util/shell.ts";
 import { buildTemplateValues, renderTemplate } from "../../util/template.ts";
 
@@ -83,34 +87,13 @@ function getCiliumConfig(config: CloudConfig): CiliumConfig {
 }
 
 /**
- * Cilium is installed from the control plane, since everything here
- * talks to the cluster rather than to the node it runs on. Pointing
- * this at an agent would get as far as looking for a kubeconfig that
- * isn't there, so we say so up front instead.
- *
- * @param context
- * @returns
- */
-function requireControlPlane(context: any): void {
-  const node = context.node !== undefined && context.node !== null ? context.node : {};
-
-  if (node.type !== K3SInstallationType.Server) {
-    throw new Error(
-      `Cilium is installed from the control plane, and "${context.nodeName}" is${node.type !== undefined ? ` an ${node.type}` : "n't a server"}. Run this bundle against a node whose type is "${K3SInstallationType.Server}".`,
-    );
-  }
-}
-
-/**
  * The kubeconfig the CLI should use. K3s puts one on the control
  * plane, which is where these commands run.
  *
  * @param config
  * @returns
  */
-function buildKubeEnv(config: CloudConfig, context: any): Record<string, string> {
-  requireControlPlane(context);
-
+function buildKubeEnv(config: CloudConfig): Record<string, string> {
   const { k3s } = config.getConfig();
   const kubeconfig =
     k3s !== undefined && k3s !== null && k3s.kubeconfig !== undefined
@@ -189,8 +172,8 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "get-cilium-cli-version",
     description: "Find the version of the Cilium CLI to install",
-    command: (config: CloudConfig, context: any) => {
-      requireControlPlane(context);
+    runOn: CommandTarget.ControlPlane,
+    command: (config: CloudConfig) => {
 
       const { cliVersion } = getCiliumConfig(config);
       if (cliVersion !== undefined) {
@@ -213,8 +196,8 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "install-cilium-cli",
     description: "Download the Cilium CLI, check it, and install it",
-    command: (config: CloudConfig, context: any, commandResults: any) => {
-      requireControlPlane(context);
+    runOn: CommandTarget.ControlPlane,
+    command: (_config: CloudConfig, _context: any, commandResults: any) => {
 
       const version = commandResults["get-cilium-cli-version"].parsed.trim();
       if (version === "") {
@@ -248,8 +231,8 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "write-cilium-values",
     description: "Write the rendered Cilium values onto the node",
-    command: (config: CloudConfig, context: any) => {
-      requireControlPlane(context);
+    runOn: CommandTarget.ControlPlane,
+    command: (config: CloudConfig) => {
 
       return [
         `printf '%s' ${quoteForShell(renderValues(config))} > ${REMOTE_VALUES_PATH}`,
@@ -265,9 +248,9 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "install-cilium",
     description: "Install Cilium with the configured values",
+    runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    command: (config: CloudConfig, context: any) => {
-      requireControlPlane(context);
+    command: (config: CloudConfig) => {
 
       const { version } = getCiliumConfig(config);
 
@@ -283,6 +266,7 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "wait-for-cilium",
     description: "Wait for Cilium to report itself healthy",
+    runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     command: `cilium status --wait --wait-duration ${READY_TIMEOUT}`,
     output: OutputType.Raw,
@@ -299,9 +283,9 @@ export const CiliumCommands: CommandSpec[] = [
   {
     name: "verify-cilium",
     description: "Verify the CNI is up and the nodes are ready",
+    runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    command: (config: CloudConfig, context: any) => {
-      requireControlPlane(context);
+    command: (config: CloudConfig) => {
 
       const checks = [
         "kubectl wait --for=condition=Ready nodes --all --timeout=300s",

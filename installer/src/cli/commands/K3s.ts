@@ -144,7 +144,7 @@ function getServiceName(context: any): string {
  * @param context
  * @returns
  */
-function getNodeName(context: any): string | undefined {
+export function getNodeName(context: any): string | undefined {
   const node = context.node !== undefined && context.node !== null ? context.node : {};
 
   for (const candidate of [node.nodeName, node.name, node.address]) {

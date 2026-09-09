@@ -23,7 +23,7 @@ import {
   getBundleCommands,
   getBundleNames,
 } from "../cli/commands/bundles.ts";
-import { connectToNode } from "./nodeConnection.ts";
+import { NodeConnection, connectToControlPlane, connectToNode } from "./nodeConnection.ts";
 
 /**
  * Options for a pipeline run.
@@ -76,16 +76,30 @@ export async function runPipeline(
   const completed: string[] = [];
   const failures: string[] = [];
 
+  // Opened once, the first time a bundle asks for it, and shared by
+  // every bundle after that. Held on an object rather than in a plain
+  // variable so the assignment inside the closure is visible to the
+  // cleanup below.
+  const opened: { controlPlane?: NodeConnection } = {};
+  const getControlPlane = async (): Promise<NodeConnection> => {
+    if (opened.controlPlane === undefined) {
+      opened.controlPlane = await connectToControlPlane(config, connection);
+    }
+
+    return opened.controlPlane;
+  };
+
   try {
     for (const definition of definitions) {
       console.log(`${chalk.bold("▶")} ${chalk.cyan.bold(definition.name)}  ${chalk.dim(definition.description)}`);
 
-      const bundle = new CommandBundle(
-        config,
-        getBundleCommands(definition, config, context),
-        context,
-      );
+      const commands = getBundleCommands(definition, config, context);
+      const bundle = new CommandBundle(config, commands, context);
       bundle.setExec(connection.exec);
+
+      if (bundle.needsControlPlane(commands)) {
+        bundle.setControlPlaneExec((await getControlPlane()).exec);
+      }
 
       await bundle.runAllCommands();
 
@@ -111,6 +125,10 @@ export async function runPipeline(
       );
     }
   } finally {
+    if (opened.controlPlane !== undefined && opened.controlPlane !== connection) {
+      await opened.controlPlane.disconnect();
+    }
+
     await connection.disconnect();
   }
 

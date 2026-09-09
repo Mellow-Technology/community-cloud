@@ -83,7 +83,7 @@ export const bundles: BundleDefinition[] = [
   },
   {
     name: "nodeLabels",
-    description: "Label a node with its configured Kubernetes roles",
+    description: "Label a node with its roles, its own labels, and what was detected on it",
     commands: NodeLabelCommands,
   },
 ];

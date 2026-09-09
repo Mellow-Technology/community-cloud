@@ -94,6 +94,10 @@ export enum NodeRole {
   WorkerGPU = "worker-gpu",
   StorageLocal = "storage-local",
   StorageDistributed = "storage-distributed",
+
+  // Used for the Rook and TopoLVM controllers, as
+  // k8s/storage/README.md describes
+  Storage = "storage",
 }
 
 /**
@@ -188,6 +192,15 @@ export interface NodeSpecification {
   port?: number;
   type: K3SInstallationType;
   gateway: boolean;
-  labels: NodeRole[];
+
+  // What the node is for. Applied as node-role.kubernetes.io/<role>
+  // labels, which is what the manifests in k8s/ select on.
+  roles?: NodeRole[];
+
+  // Anything else worth labelling the node with, as plain key and
+  // value pairs. Written as given, so this is where a topology key or
+  // a hardware note goes.
+  labels?: Record<string, string>;
+
   useTailscale: boolean;
 }

@@ -1,4 +1,4 @@
-import Command, { CommandSpec, ContextUpdates } from "./Command.ts";
+import Command, { CommandSpec, CommandTarget, ContextUpdates } from "./Command.ts";
 import TerminalCommand from "./TerminalCommand.ts";
 import WebCommand from "./WebCommand.ts";
 import { createCommand } from "./createCommand.ts";
@@ -51,6 +51,7 @@ export class CommandBundle {
   protected commands: CommandSpec[];
   protected commandResults: Record<string, CommandResult>;
   protected execFunction: Function | undefined;
+  protected controlPlaneExecFunction: Function | undefined;
   protected fetchFunction: Function | undefined;
   protected context: Record<string, unknown>;
   protected failed: boolean;
@@ -60,6 +61,7 @@ export class CommandBundle {
     this.commands = commands !== undefined ? commands : [];
     this.context = context !== undefined ? context : {};
     this.execFunction = execFunction;
+    this.controlPlaneExecFunction = undefined;
     this.fetchFunction = undefined;
     this.commandResults = {};
     this.failed = false;
@@ -114,6 +116,26 @@ export class CommandBundle {
   }
 
   /**
+   * Set the execution function for commands that asked to run on the
+   * control plane rather than on the node this bundle is aimed at.
+   *
+   * @param execFunction
+   * @returns
+   */
+  setControlPlaneExec(execFunction: Function): this {
+    this.controlPlaneExecFunction = execFunction;
+    return this;
+  }
+
+  /**
+   * Whether this bundle holds anything that needs the control plane,
+   * so a runner knows whether to go and connect to one.
+   */
+  needsControlPlane(commands: CommandSpec[]): boolean {
+    return commands.some((command) => command.runOn === CommandTarget.ControlPlane);
+  }
+
+  /**
    * Set the function that web commands make their requests with.
    * Only useful for pointing them somewhere other than the network.
    *
@@ -142,8 +164,11 @@ export class CommandBundle {
       // Hand over however this bundle runs things. A bundle can be
       // pointed at a remote host or at a stand-in, and only the kind
       // of command it applies to takes it.
-      if (this.execFunction !== undefined && command instanceof TerminalCommand) {
-        command.setExecFunction(this.execFunction);
+      if (command instanceof TerminalCommand) {
+        const execFunction = this.getExecFor(command);
+        if (execFunction !== undefined) {
+          command.setExecFunction(execFunction);
+        }
       }
 
       if (this.fetchFunction !== undefined && command instanceof WebCommand) {
@@ -209,6 +234,31 @@ export class CommandBundle {
    */
   getResults(): Record<string, CommandResult> {
     return this.commandResults;
+  }
+
+  /**
+   * The execution function a command should run through.
+   *
+   * A command asking for the control plane and not being given one is
+   * a mistake worth stopping for: running it on the node instead would
+   * mean running kubectl where there is no kubeconfig, and reporting
+   * that as though it were the command's own failure.
+   *
+   * @param command
+   * @returns
+   */
+  protected getExecFor(command: Command): Function | undefined {
+    if (command.runOn !== CommandTarget.ControlPlane) {
+      return this.execFunction;
+    }
+
+    if (this.controlPlaneExecFunction === undefined) {
+      throw new Error(
+        `The command "${command.name}" runs on the control plane, but this bundle wasn't given a connection to one.`,
+      );
+    }
+
+    return this.controlPlaneExecFunction;
   }
 
   /**

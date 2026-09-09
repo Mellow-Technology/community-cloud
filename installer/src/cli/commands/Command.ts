@@ -41,6 +41,26 @@ export enum CommandType {
 }
 
 /**
+ * Where a command runs.
+ *
+ * A bundle is aimed at one node and nearly everything in it belongs
+ * there: installing a package, reading the hardware, writing a config
+ * file. Anything that talks to the cluster is the exception, because
+ * only a server has a kubeconfig. Rather than making every bundle that
+ * needs kubectl be run from the control plane, and losing the node it
+ * was actually about, a command says where it wants to run and the
+ * runner opens the connection it needs.
+ *
+ * - Node: the node the bundle is aimed at. The default.
+ * - ControlPlane: a server, wherever that is. The node the bundle is
+ *   about is still in the context, so a command can act on it by name.
+ */
+export enum CommandTarget {
+  Node = "node",
+  ControlPlane = "control-plane",
+}
+
+/**
  * The output of a command.
  *
  * Both kinds of command report through the same fields so that
@@ -82,6 +102,8 @@ export type ContextUpdates = Record<string, unknown>;
  *   commands to use. Either a map of context key to a path into this
  *   command's output ("parsed.token", "status"), or a function handed
  *   the output which returns the values to add.
+ * - runOn: where the command runs. Defaults to the node the bundle is
+ *   aimed at; set to the control plane for anything needing kubectl.
  * - skipWhen: a function saying this command has nothing to do, given
  *   what the commands before it found. A bundle that can be run twice
  *   needs this: a shell command can check the state it's about to
@@ -98,6 +120,7 @@ export interface BaseCommandSpec {
   parseFunction?: Function;
   saveToContext?: Record<string, string> | Function;
   skipWhen?: Function;
+  runOn?: CommandTarget;
 }
 
 /**
@@ -190,6 +213,9 @@ export default abstract class Command {
   // Whether this command has anything to do
   skipWhen?: Function;
 
+  // Where the command runs
+  runOn: CommandTarget;
+
   constructor(
     {
       name,
@@ -200,6 +226,7 @@ export default abstract class Command {
       parseFunction = undefined,
       saveToContext = undefined,
       skipWhen = undefined,
+      runOn = CommandTarget.Node,
     }: BaseCommandSpec,
     defaultOutput: OutputType = OutputType.Raw,
   ) {
@@ -211,6 +238,7 @@ export default abstract class Command {
     this.parseFunction = parseFunction;
     this.saveToContext = saveToContext;
     this.skipWhen = skipWhen;
+    this.runOn = runOn;
     this.rawOutput = null;
     this.parsedOutput = {
       stdout: null,

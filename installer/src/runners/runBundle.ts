@@ -1,6 +1,6 @@
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { connectToNode } from "./nodeConnection.ts";
+import { connectToControlPlane, connectToNode } from "./nodeConnection.ts";
 import { getBundle, getBundleCommands, getBundleNames } from "../cli/commands/bundles.ts";
 
 /**
@@ -46,10 +46,29 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   const bundle = new CommandBundle(config, bundleCommands, context);
   bundle.setExec(connection.exec);
 
+  // Inside the try, so that a failure to reach the control plane still
+  // closes the connection we already have. An open SSH session keeps
+  // the process alive, so leaking one turns a clear error into a hang.
+  let controlPlane = connection;
+
   try {
+    // Only go looking for a control plane if something in here wants
+    // one, so a bundle that never touches the cluster doesn't need a
+    // configuration that describes a server
+    if (bundle.needsControlPlane(bundleCommands)) {
+      controlPlane = await connectToControlPlane(config, connection);
+      bundle.setControlPlaneExec(controlPlane.exec);
+    }
+
     await bundle.runAllCommands();
   }
   finally {
+    // The same connection when the node is the control plane, and
+    // closing it twice would be wrong
+    if (controlPlane !== connection) {
+      await controlPlane.disconnect();
+    }
+
     await connection.disconnect();
   }
 }
