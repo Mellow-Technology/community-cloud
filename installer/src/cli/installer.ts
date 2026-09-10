@@ -3,6 +3,7 @@ import { runBundle } from "../runners/runBundle.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
 import { listBundles } from "../runners/listBundles.ts";
 import { runPipeline } from "../runners/runPipeline.ts";
+import { configure } from "../runners/configure.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -26,6 +27,7 @@ const COMMAND_NAME = "community-cloud";
  * TODO: Switch this to use commander sub-commands
  */
 enum CliOperation {
+  Configure = "configure",
   Install = "install",
   Uninstall = "uninstall",
   Clean = "clean",
@@ -59,6 +61,17 @@ program
   .name(COMMAND_NAME)
   .description("Community Cloud Installer CLI utility.")
   .showHelpAfterError()
+
+// 0. Configure Command
+// The default, because a configuration file is what every other
+// command takes and this is where one comes from
+program
+  .command(CliOperation.Configure, { isDefault: true })
+  .description("Build a Community Cloud configuration, or change an existing one")
+  .argument("[ccFilePath]", "Path to the configuration file", "cc.config.json")
+  .option("--all", "Walk through every section rather than opening the menu")
+  .option("--section <name>", "Go straight to one section")
+  .action(configure);
 
 // 1. Install Command (Primary Operation)
 program
