@@ -27,8 +27,9 @@ import CloudConfig from "../../util/CloudConfig.ts";
  *   which makes an install depend on the day it was run — worth
  *   pinning once a cluster is real.
  * - namespace: where the release goes
- * - valuesFile: a values file shipping with the repository, relative
- *   to its root. Rendered as a template first, so it can refer to the
+ * - valuesFile: the values file, as an embed:// path for one shipping
+ *   with the installer or a plain path for one on this machine.
+ *   Rendered as a template first, so it can refer to the
  *   configuration through ".Values".
  * - requires: packages that have to be installed before this one.
  *   Pulled in automatically when this package is enabled.
@@ -92,7 +93,7 @@ export const packageCatalogue: PackageDefinition[] = [
     // The version k8s/certs and K3sInstallation.ts were written against
     version: "v1.19.2",
     namespace: "cert-manager",
-    valuesFile: "k8s/certs/CertManager.values.yaml",
+    valuesFile: "embed://certs/CertManager.values.yaml",
   },
   {
     name: "cloudnative-pg",
@@ -105,7 +106,7 @@ export const packageCatalogue: PackageDefinition[] = [
     description: "Single sign on",
     chart: { repo: "https://charts.goauthentik.io", name: "authentik" },
     namespace: "cc-office",
-    valuesFile: "k8s/apps/authentik/Authentik.values.yaml",
+    valuesFile: "embed://apps/authentik/Authentik.values.yaml",
 
     // Its chart ships a Postgres and a Redis; the values file turns
     // both off and points it at the cluster's own. That only works if
@@ -116,8 +117,8 @@ export const packageCatalogue: PackageDefinition[] = [
     // applied yet, recorded so the ordering is known.
     manifests: {
       before: [
-        "k8s/apps/authentik/Authentik.database.yaml",
-        "k8s/apps/authentik/Authentik.storage.yaml",
+        "embed://apps/authentik/Authentik.database.yaml",
+        "embed://apps/authentik/Authentik.storage.yaml",
       ],
     },
   },
@@ -126,7 +127,7 @@ export const packageCatalogue: PackageDefinition[] = [
     description: "Node local storage, backed by LVM",
     chart: { repo: "https://topolvm.github.io/topolvm", name: "topolvm" },
     namespace: "topolvm-system",
-    valuesFile: "k8s/storage/TopoLVM/TopoLVMValues.yaml",
+    valuesFile: "embed://storage/TopoLVM/TopoLVMValues.yaml",
     requires: ["cert-manager"],
   },
   {
@@ -134,7 +135,7 @@ export const packageCatalogue: PackageDefinition[] = [
     description: "A web interface for the cluster",
     chart: { repo: "https://kubernetes-sigs.github.io/headlamp/", name: "headlamp" },
     namespace: "cc-office",
-    valuesFile: "k8s/apps/headlamp/Headlamp.values.yaml",
+    valuesFile: "embed://apps/headlamp/Headlamp.values.yaml",
   },
   {
     name: "tailscale-operator",

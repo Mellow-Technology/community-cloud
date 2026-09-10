@@ -8,12 +8,13 @@
   "main": "index.js",
   "scripts": {
     "cc": "bun ./src/cli/installer.ts",
-    "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build:linux": "bun build --compile --target=bun-linux-x64-modern ./src/installer.ts --outfile build/community-cloud-linux-x64",
-    "build:macos:arm": "bun build --compile --target=bun-darwin-arm64 ./src/installer.ts --outfile build/community-cloud-macos-arm",
-    "build:macos:x64": "bun build  --compile --target=bun-darwin-x64 ./src/installer.ts --outfile build/community-cloud-macos-x64",
-    "build:windows": "bun build --compile --target=bun-windows-x64-modern  ./src/installer.ts --outfile build/community-cloud-win-x64"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ./scripts/build.ts",
+    "build:embedded": "bun ./scripts/generateEmbedded.ts",
+    "build:linux": "bun ./scripts/build.ts linux",
+    "build:macos": "bun ./scripts/build.ts macos",
+    "build:windows": "bun ./scripts/build.ts windows",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@ctrl/golang-template": "^2.0.1",

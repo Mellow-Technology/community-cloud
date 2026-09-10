@@ -16,13 +16,11 @@
 import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { quoteForShell } from "../../util/shell.ts";
-import { renderRepoFile } from "../../util/template.ts";
+import { renderInstallerFile } from "../../util/template.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
 import {
   PackageDefinition,
-  getPackageSelections,
   resolveInstallOrder,
-  valuesFileIsFromConfig,
 } from "./packages.ts";
 
 // Where rendered values files are put on the control plane. They can
@@ -90,19 +88,15 @@ function buildAddRepoCommand(definition: PackageDefinition): CommandSpec {
  * Put the rendered values file on the control plane.
  *
  * @param definition
- * @param fromConfig
  * @returns
  */
-function buildWriteValuesCommand(
-  definition: PackageDefinition,
-  fromConfig: boolean,
-): CommandSpec {
+function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
   return {
     name: `helm-values-${definition.name}`,
     description: `Write the rendered values for ${definition.name}`,
     runOn: CommandTarget.ControlPlane,
     command: (config: CloudConfig) => {
-      const rendered = renderRepoFile(config, definition.valuesFile as string, fromConfig);
+      const rendered = renderInstallerFile(config, definition.valuesFile as string);
       const path = getValuesPath(definition);
 
       return [
@@ -193,7 +187,6 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
  * @returns
  */
 export function HelmCommands(config: CloudConfig): CommandSpec[] {
-  const selections = getPackageSelections(config);
   const ordered = resolveInstallOrder(config);
 
   if (ordered.length === 0) {
@@ -227,9 +220,7 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     commands.push(buildAddRepoCommand(definition));
 
     if (definition.valuesFile !== undefined) {
-      commands.push(
-        buildWriteValuesCommand(definition, valuesFileIsFromConfig(selections[definition.name])),
-      );
+      commands.push(buildWriteValuesCommand(definition));
     }
 
     commands.push(buildInstallCommand(definition));

@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.config.json
 registries.yaml
 *.secret.yaml
+
+# compiled installers
+installer/build

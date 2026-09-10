@@ -13,12 +13,12 @@
  * the tag rather than rendering something surprising.
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { isAbsolute, join } from "node:path";
 
 import { parse } from "@ctrl/golang-template";
 
 import CloudConfig from "./CloudConfig.ts";
+import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 
 // Tags that @ctrl/golang-template handles on its own.
 // A tag opening with any of these is left untouched.
@@ -352,38 +352,27 @@ function getControlPlaneHost(config: CloudConfig) {
 }
 
 /**
- * Resolve a path that names a file shipping with the repository.
+ * Read a file, from inside the installer or from this machine.
  *
- * Values files and manifests live alongside the installer rather than
- * wherever it happened to be run from, so a relative path is taken to
- * mean the root of the repository. An absolute path is left alone, and
- * so is one a configuration gave, which is relative to the working
- * directory the way a path typed at a terminal would be.
- *
- * TODO: Support plugins. We want it to be fairly easy to interact
- * with plugins. A couple of options:
- *
- * 1. Plugins are JS and can be imported dynamically using
- *    dyanmic import https://bun.com/docs/runtime/module-resolution#using-import
- * 2. Plugins are still primarily JS but are built into an executable
- *    Bun uses fetch over a local domain socket to get plugin data https://bun.com/guides/http/fetch-unix
+ * An "embed://" path means one of the manifests the installer ships
+ * with; anything else is a path on disk, relative to wherever the
+ * command was run from.
  *
  * @param filePath
- * @param fromConfiguration whether the path came from a configuration
  * @returns
  */
-export function resolveRepoPath(filePath: string, fromConfiguration = false): string {
-  if (isAbsolute(filePath)) {
-    return filePath;
+export function readInstallerFile(filePath: string): string {
+  if (isEmbeddedPath(filePath)) {
+    return readEmbeddedFile(filePath);
   }
 
-  if (fromConfiguration) {
-    return join(process.cwd(), filePath);
-  }
+  const resolved = isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
 
-  // installer/src/util -> the root of the repository
-  const utilDir = fileURLToPath(new URL(".", import.meta.url));
-  return join(utilDir, "..", "..", "..", filePath);
+  try {
+    return readFileSync(resolved, { encoding: "utf8" });
+  } catch (e: any) {
+    throw new Error(`Couldn't read "${resolved}": ${e.message}`);
+  }
 }
 
 /**
@@ -401,23 +390,12 @@ export function resolveRepoPath(filePath: string, fromConfiguration = false): st
  * @param fromConfiguration
  * @returns
  */
-export function renderRepoFile(
-  config: CloudConfig,
-  filePath: string,
-  fromConfiguration = false,
-): string {
-  const resolved = resolveRepoPath(filePath, fromConfiguration);
-
-  let contents = null;
-  try {
-    contents = readFileSync(resolved, { encoding: "utf8" });
-  } catch (e: any) {
-    throw new Error(`Couldn't read "${resolved}": ${e.message}`);
-  }
+export function renderInstallerFile(config: CloudConfig, filePath: string): string {
+  const contents = readInstallerFile(filePath);
 
   try {
     return renderTemplate(contents, buildTemplateValues(config));
   } catch (e: any) {
-    throw new Error(`Couldn't render "${resolved}": ${e.message}`);
+    throw new Error(`Couldn't render "${filePath}": ${e.message}`);
   }
 }

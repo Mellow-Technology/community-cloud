@@ -3,8 +3,6 @@
  * Render a Kubernetes manifest template with values from a Community
  * Cloud configuration file and hand the result to kubectl.
  */
-import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
 import os from "os";
 
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
@@ -16,7 +14,8 @@ import {
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { execWithInput } from "../util/exec.ts";
-import { buildTemplateValues, renderTemplate } from "../util/template.ts";
+import { renderInstallerFile } from "../util/template.ts";
+import { isEmbeddedPath } from "../util/embedded.ts";
 
 /**
  * Options for a template run.
@@ -141,26 +140,15 @@ async function renderTemplateFile(
   yamlFilePath: string,
   config: CloudConfig,
 ): Promise<string> {
-  const filePath = isAbsolute(yamlFilePath)
-    ? yamlFilePath
-    : join(process.cwd(), yamlFilePath);
+  const rendered = renderInstallerFile(config, yamlFilePath);
 
-  let fileContents = null;
-  try {
-    fileContents = await readFile(filePath, { encoding: "utf8" });
-  } catch (e: any) {
-    throw new Error(
-      `Couldn't read the template file "${yamlFilePath}": ${e.message}`,
-    );
+  // Said afterwards, so a path that turns out not to be there doesn't
+  // get announced as though it were
+  if (isEmbeddedPath(yamlFilePath)) {
+    console.log(`Using ${yamlFilePath}, which ships with the installer`);
   }
 
-  try {
-    return renderTemplate(fileContents, buildTemplateValues(config));
-  } catch (e: any) {
-    throw new Error(
-      `Couldn't render the template "${yamlFilePath}": ${e.message}`,
-    );
-  }
+  return rendered;
 }
 
 /**

@@ -1,9 +1,33 @@
 import { program } from "commander";
+import chalk from "chalk";
+
+/**
+ * Report a failure the way a command line tool should.
+ *
+ * The runners throw when something is wrong, and commander doesn't
+ * await the handlers, so without this a mistyped path comes back as an
+ * unhandled rejection and a stack trace through minified code. Set
+ * CC_DEBUG to see the stack anyway.
+ */
+process.on("unhandledRejection", (reason: any) => {
+  const message = reason !== null && reason !== undefined && reason.message !== undefined
+    ? reason.message
+    : String(reason);
+
+  console.error(`\n${chalk.red("⛔")} ${message}\n`);
+
+  if (process.env["CC_DEBUG"] !== undefined && reason?.stack !== undefined) {
+    console.error(reason.stack);
+  }
+
+  process.exit(1);
+});
 import { runBundle } from "../runners/runBundle.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
 import { listBundles } from "../runners/listBundles.ts";
 import { runPipeline } from "../runners/runPipeline.ts";
 import { configure } from "../runners/configure.ts";
+import { listEmbedded } from "../runners/listEmbedded.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -33,6 +57,7 @@ enum CliOperation {
   Clean = "clean",
   RunBundle = "run-bundle",
   ListBundles = "list-bundles",
+  ListEmbedded = "list-embedded",
   RunPipeline = "run-pipeline",
   RunTemplate = "run-template"
 }
@@ -123,10 +148,17 @@ program
   .option("-c, --config <ccFilePath>", "Configuration file, needed for bundles whose commands come from one")
   .action(listBundles);
 
+// 7. ListEmbedded Command
+program
+  .command(CliOperation.ListEmbedded)
+  .description("List the manifests that ship inside the installer")
+  .argument("[filter]", "Only show paths containing this")
+  .action(listEmbedded);
+
 program
     .command(CliOperation.RunTemplate)
     .description("Apply template variables to a yaml template file and apply (or delete) with kubectl")
-    .argument("<yamlFile>", "Path to the Yaml template file")
+    .argument("<yamlFile>", "A template: embed://<path> for one shipped with the installer, or a path on this machine")
     .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
     .option("-o, --operation <operation>", "The kubectl operation to run, either apply or delete", "apply")
     .option("-n, --node <node>", "Run kubectl on this node over SSH rather than locally")

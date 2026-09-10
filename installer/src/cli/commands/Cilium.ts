@@ -22,14 +22,11 @@
  * - curl, tar, sha256sum
  * - sudo, to put the CLI on the path
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { isAbsolute, join } from "node:path";
 
 import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { quoteForShell } from "../../util/shell.ts";
-import { buildTemplateValues, renderTemplate } from "../../util/template.ts";
+import { renderInstallerFile } from "../../util/template.ts";
 
 // Where the CLI says which of its releases is current
 const CLI_STABLE_URL = "https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt";
@@ -44,8 +41,8 @@ const CLI_INSTALL_DIR = "/usr/local/bin";
 // since the values below are written against it.
 const DEFAULT_CILIUM_VERSION = "1.19.6";
 
-// The values file, relative to the root of the repository
-const DEFAULT_VALUES_FILE = "k8s/networking/cilium/Cilium.values.yaml";
+// The values file that ships with the installer
+const DEFAULT_VALUES_FILE = "embed://networking/cilium/Cilium.values.yaml";
 
 // Where the rendered values are put on the node. Only the installer
 // reads it, and it holds nothing secret.
@@ -104,52 +101,22 @@ function buildKubeEnv(config: CloudConfig): Record<string, string> {
 }
 
 /**
- * Work out where the Cilium values file is.
- *
- * It ships with the repository, so it's found relative to this file
- * rather than to wherever the installer was run from. A configuration
- * can point somewhere else if it needs to.
- *
- * @param config
- * @returns
- */
-function getValuesFilePath(config: CloudConfig): string {
-  const { valuesFile } = getCiliumConfig(config);
-
-  if (valuesFile !== undefined) {
-    return isAbsolute(valuesFile) ? valuesFile : join(process.cwd(), valuesFile);
-  }
-
-  // installer/src/cli/commands -> the root of the repository
-  const commandsDir = fileURLToPath(new URL(".", import.meta.url));
-  return join(commandsDir, "..", "..", "..", "..", DEFAULT_VALUES_FILE);
-}
-
-/**
  * Read the values file and fill in the configured values.
+ *
+ * The file ships with the installer, so it's read through the shared
+ * helper: from the repository in a checkout, and from inside the
+ * binary in a release.
  *
  * @param config
  * @returns
  */
 function renderValues(config: CloudConfig): string {
-  const valuesFilePath = getValuesFilePath(config);
+  const { valuesFile } = getCiliumConfig(config);
 
-  let contents = null;
-  try {
-    contents = readFileSync(valuesFilePath, { encoding: "utf8" });
-  } catch (e: any) {
-    throw new Error(
-      `Couldn't read the Cilium values file at "${valuesFilePath}": ${e.message}`,
-    );
-  }
-
-  try {
-    return renderTemplate(contents, buildTemplateValues(config));
-  } catch (e: any) {
-    throw new Error(
-      `Couldn't render the Cilium values file at "${valuesFilePath}": ${e.message}`,
-    );
-  }
+  return renderInstallerFile(
+    config,
+    valuesFile !== undefined ? valuesFile : DEFAULT_VALUES_FILE,
+  );
 }
 
 /**
