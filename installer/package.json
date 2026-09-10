@@ -7,12 +7,14 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build:linux": "bun build --compile --target=bun-linux-x64-modern ./src/installer.ts --outfile build/community-cloud-linux-x64",
-    "build:macos:arm": "bun build --compile --target=bun-darwin-arm64 ./src/installer.ts --outfile build/community-cloud-macos-arm",
-    "build:macos:x64": "bun build  --compile --target=bun-darwin-x64 ./src/installer.ts --outfile build/community-cloud-macos-x64",
-    "build:windows": "bun build --compile --target=bun-windows-x64-modern  ./src/installer.ts --outfile build/community-cloud-win-x64"
+    "cc": "bun ./src/cli/installer.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun ./scripts/build.ts",
+    "build:embedded": "bun ./scripts/generateEmbedded.ts",
+    "build:linux": "bun ./scripts/build.ts linux",
+    "build:macos": "bun ./scripts/build.ts macos",
+    "build:windows": "bun ./scripts/build.ts windows",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@ctrl/golang-template": "^2.0.1",
@@ -20,6 +22,7 @@
     "@kubernetes/client-node": "^1.4.0",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
+    "csv-parse": "^7.0.1",
     "ink": "^6.8.0",
     "ink-big-text": "^2.0.0",
     "ink-multi-select": "^2.0.0",

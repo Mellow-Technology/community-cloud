@@ -10,11 +10,42 @@ export enum K3SInstallationType {
   Agent = "agent",
 }
 
+/**
+ * Credentials for a registry.
+ *
+ * Either a username and password, or one of the pre-encoded forms
+ * containerd accepts: "auth" is base64 of "username:password", and an
+ * identity token is what some registries hand out instead.
+ */
+export interface K3sRegistryAuth {
+  username?: string;
+  password?: string;
+  auth?: string;
+  identityToken?: string;
+}
+
+/**
+ * TLS settings for talking to a registry, for the ones using a private
+ * certificate authority or a client certificate.
+ */
+export interface K3sRegistryTls {
+  caFile?: string;
+  certFile?: string;
+  keyFile?: string;
+  insecureSkipVerify?: boolean;
+}
+
 export type K3sRegistry = {
-  auth: {
-    username: string;
-    password: string;
-  };
+  auth?: K3sRegistryAuth;
+  tls?: K3sRegistryTls;
+
+  // Where to actually fetch from, when that isn't the registry's own
+  // name. Only needed for mirroring, or for a registry whose name
+  // isn't the host serving it, as with docker.io.
+  endpoint?: string[];
+
+  // Regular expression rewrites applied to the image path
+  rewrite?: Record<string, string>;
 };
 
 // A set of container registries
@@ -63,6 +94,74 @@ export enum NodeRole {
   WorkerGPU = "worker-gpu",
   StorageLocal = "storage-local",
   StorageDistributed = "storage-distributed",
+
+  // Used for the Rook and TopoLVM controllers, as
+  // k8s/storage/README.md describes
+  Storage = "storage",
+}
+
+/**
+ * Who made a piece of video hardware.
+ *
+ * Worked out from the PCI vendor ID rather than from a name, since the
+ * names vary and the IDs don't. The last few matter because servers
+ * nearly always have video hardware that is no use for compute: a BMC
+ * puts an ASPEED or Matrox chip on the bus, and a virtual machine gets
+ * an emulated adapter. Both are display hardware, neither is something
+ * to install a GPU runtime for.
+ */
+export enum GpuVendor {
+  Nvidia = "nvidia",
+  Amd = "amd",
+  Intel = "intel",
+
+  // Onboard server video, from the management controller
+  Aspeed = "aspeed",
+  Matrox = "matrox",
+
+  // Emulated adapters
+  Virtio = "virtio",
+  Vmware = "vmware",
+  Qemu = "qemu",
+  Hyperv = "hyperv",
+
+  // Found something, but nothing we know what to do with
+  Unknown = "unknown",
+}
+
+/**
+ * A single piece of video hardware on a node.
+ */
+export interface VideoDevice {
+  // Where it sits. A PCI address like "0000:01:00.0", or the DRM card
+  // name for hardware that isn't on a PCI bus at all, which is how the
+  // GPU on an ARM board shows up.
+  address: string;
+
+  vendor: GpuVendor;
+
+  // Whether this is worth installing a GPU runtime for, or is only
+  // ever going to draw a console
+  compute: boolean;
+
+  // Straight off the PCI bus, when it's a PCI device
+  vendorId?: string;
+  deviceId?: string;
+  deviceClass?: string;
+
+  // The kernel driver bound to it, e.g. "nvidia", "amdgpu", "i915"
+  driver?: string;
+
+  // A readable name, which needs lspci and its device database
+  model?: string;
+
+  // Filled in by whichever vendor command knows how to ask
+  memoryBytes?: number;
+  driverVersion?: string;
+  computeCapability?: string;
+  cores?: number;
+  maxFrequencyMhz?: number;
+  uuid?: string;
 }
 
 export interface GpuInfo {
@@ -77,11 +176,31 @@ export interface GpuInfo {
  */
 export interface NodeSpecification {
   name: string;
+
+  // How to reach the node over SSH. Often an alias from ~/.ssh/config
+  // rather than anything DNS knows about.
   address: string;
+
+  // Where other nodes reach this one's Kubernetes API, when that isn't
+  // the same as the address we administer it through. An SSH alias, a
+  // bastion or a port forward all get you to a node without being a
+  // name the rest of the cluster can use.
+  apiAddress?: string;
+
   username: string;
   keyFile: string;
+  port?: number;
   type: K3SInstallationType;
   gateway: boolean;
-  labels: NodeRole[];
+
+  // What the node is for. Applied as node-role.kubernetes.io/<role>
+  // labels, which is what the manifests in k8s/ select on.
+  roles?: NodeRole[];
+
+  // Anything else worth labelling the node with, as plain key and
+  // value pairs. Written as given, so this is where a topology key or
+  // a hardware note goes.
+  labels?: Record<string, string>;
+
   useTailscale: boolean;
 }
