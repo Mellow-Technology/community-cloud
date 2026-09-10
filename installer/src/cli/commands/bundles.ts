@@ -17,6 +17,8 @@ import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
+import { HelmInstallCommands } from "./Helm.install.ts";
+import { HelmCommands } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
@@ -50,6 +52,16 @@ export const bundles: BundleDefinition[] = [
     name: "gpu",
     description: "Detect video hardware and whether its vendor tooling is installed",
     commands: GpuInfoCommands,
+  },
+  {
+    name: "helm",
+    description: "Install Helm on the control plane",
+    commands: HelmInstallCommands,
+  },
+  {
+    name: "helm-charts",
+    description: "Install the configured Helm charts, dependencies first",
+    commands: HelmCommands,
   },
   {
     name: "k3s",

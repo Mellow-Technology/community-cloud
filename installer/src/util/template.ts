@@ -12,6 +12,10 @@
  * the manifests actually use, and anything else raises an error naming
  * the tag rather than rendering something surprising.
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { isAbsolute, join } from "node:path";
+
 import { parse } from "@ctrl/golang-template";
 
 import CloudConfig from "./CloudConfig.ts";
@@ -75,9 +79,9 @@ function resolvePipelines(source: string, values: Record<string, any>): string {
 function renderPipeline(expression: string, values: Record<string, any>): string {
   const stages = splitStages(expression);
 
-  let value = evaluateStage(stages[0], values);
+  let value = evaluateStage(stages[0] ?? "", values);
   for (let i = 1; i < stages.length; i++) {
-    value = applyFunction(stages[i], value, values);
+    value = applyFunction(stages[i] ?? "", value, values);
   }
 
   // Go renders a missing value as nothing, and so does the
@@ -344,5 +348,76 @@ function getControlPlaneHost(config: CloudConfig) {
     return config.getControlPlaneHost();
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Resolve a path that names a file shipping with the repository.
+ *
+ * Values files and manifests live alongside the installer rather than
+ * wherever it happened to be run from, so a relative path is taken to
+ * mean the root of the repository. An absolute path is left alone, and
+ * so is one a configuration gave, which is relative to the working
+ * directory the way a path typed at a terminal would be.
+ *
+ * TODO: Support plugins. We want it to be fairly easy to interact
+ * with plugins. A couple of options:
+ *
+ * 1. Plugins are JS and can be imported dynamically using
+ *    dyanmic import https://bun.com/docs/runtime/module-resolution#using-import
+ * 2. Plugins are still primarily JS but are built into an executable
+ *    Bun uses fetch over a local domain socket to get plugin data https://bun.com/guides/http/fetch-unix
+ *
+ * @param filePath
+ * @param fromConfiguration whether the path came from a configuration
+ * @returns
+ */
+export function resolveRepoPath(filePath: string, fromConfiguration = false): string {
+  if (isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  if (fromConfiguration) {
+    return join(process.cwd(), filePath);
+  }
+
+  // installer/src/util -> the root of the repository
+  const utilDir = fileURLToPath(new URL(".", import.meta.url));
+  return join(utilDir, "..", "..", "..", filePath);
+}
+
+/**
+ * Read a file from the repository and fill in the configured values.
+ *
+ * The values files in k8s/ are templates, so an address or a domain
+ * that only the configuration knows can be written once and land in
+ * every chart that needs it.
+ *
+ * TODO: Update to support bundled bun URLs.
+ * See https://bun.com/docs/bundler/executables#embed-assets-files
+ *
+ * @param config
+ * @param filePath
+ * @param fromConfiguration
+ * @returns
+ */
+export function renderRepoFile(
+  config: CloudConfig,
+  filePath: string,
+  fromConfiguration = false,
+): string {
+  const resolved = resolveRepoPath(filePath, fromConfiguration);
+
+  let contents = null;
+  try {
+    contents = readFileSync(resolved, { encoding: "utf8" });
+  } catch (e: any) {
+    throw new Error(`Couldn't read "${resolved}": ${e.message}`);
+  }
+
+  try {
+    return renderTemplate(contents, buildTemplateValues(config));
+  } catch (e: any) {
+    throw new Error(`Couldn't render "${resolved}": ${e.message}`);
   }
 }
