@@ -130,6 +130,15 @@ export interface BaseCommandSpec {
  * - sudo: whether the command should be run using sudo
  * - env: environment variables for the command, either as an object or
  *   as a function worked out from the configuration
+ * - stdin: what to write to the command's standard input, as a string
+ *   or a function returning one. This is where anything secret or
+ *   large belongs: a command line is world-readable in a process
+ *   listing and gets repeated back in error messages, while standard
+ *   input is seen only by the process reading it.
+ * - secretEnv: environment variables that mustn't appear on the
+ *   command line. They travel over standard input and are exported by
+ *   a preamble on the far side, so "env" stays the place for ordinary
+ *   settings and this is the place for credentials.
  * - commandParser: a program to pipe the output through before parsing
  *   e.g. for using JC (https://github.com/kellyjonbrazil/jc)
  */
@@ -137,6 +146,8 @@ export interface TerminalCommandSpec extends BaseCommandSpec {
   command: string | Function;
   sudo?: boolean;
   env?: Record<string, string> | Function;
+  stdin?: string | Function;
+  secretEnv?: Record<string, unknown> | Function;
   remoteHost?: unknown;
 }
 

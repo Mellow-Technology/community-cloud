@@ -13,7 +13,7 @@ import {
 } from "../cli/commands/KubeCtl.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { execWithInput } from "../util/exec.ts";
+import { exec } from "../util/exec.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { isEmbeddedPath } from "../util/embedded.ts";
 
@@ -64,9 +64,10 @@ export async function runTemplate(
   }
 
   // Instantiate the context
-  // The kubectl command reads the operation and the
+  // The kubectl command reads the manifest, the operation and the
   // namespace from here
   let context = {
+    manifest,
     operation,
     namespace: options.namespace !== undefined ? options.namespace : null,
     templatePath: yamlFilePath,
@@ -81,8 +82,9 @@ export async function runTemplate(
   const { node: nodeName } = options;
   const hostname = os.hostname();
   if (nodeName === undefined || hostname === nodeName) {
-    // The manifest goes to kubectl on stdin
-    bundle.setExec(execWithInput(manifest));
+    // The manifest goes to kubectl on stdin, which the command asks
+    // for itself
+    bundle.setExec(exec);
     await bundle.runAllCommands();
   } else {
     // Retrieve the node configuration
@@ -107,7 +109,9 @@ export async function runTemplate(
 
     try {
       // Same as locally, the manifest goes over on stdin
-      bundle.setExec((command: string) => node.exec(command, undefined, manifest));
+      bundle.setExec((command: string, stdin?: string) =>
+        node.exec(command, undefined, stdin),
+      );
       await bundle.runAllCommands();
     } finally {
       // Disconnect from the node

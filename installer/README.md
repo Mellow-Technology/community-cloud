@@ -93,6 +93,68 @@ bun run cc <args>        # run from source without building
 bun run typecheck        # tsc --noEmit
 ```
 
+## Secrets in commands
+
+Anything a command is given on its command line is readable by every
+user on that node through a process listing, and gets quoted back in
+error messages and logs besides. Credentials go over standard input
+instead, which only the process reading it ever sees.
+
+A command spec has two ways to do that:
+
+```ts
+{
+  name: "write-config",
+  description: "Write a config file that holds a password",
+  command: [
+    `sudo install -o root -g root -m 0600 /dev/null ${FILE}`,
+    `sudo tee ${FILE} > /dev/null`,
+  ].join("\n"),
+  // A payload for the command to read
+  stdin: (config) => buildFile(config),
+}
+```
+
+```ts
+{
+  name: "install-something",
+  description: "Run an installer that reads a token from its environment",
+  env: { INSTALL_VERSION: "1.2.3" },
+  // Read and exported by a preamble on the far side, so the value
+  // never appears in an argument list
+  secretEnv: (config) => ({ TOKEN: config.getToken() }),
+  command: "sh ./install.sh",
+}
+```
+
+Both accept a plain value or a function taking the same arguments a
+command builder does. A few rules follow from a command having only
+one standard input:
+
+- `stdin` and `secretEnv` can't both be set on one command
+- `secretEnv` values have to be single lines; a document belongs on
+  `stdin`
+- `secretEnv` can't be combined with `sudo`, which clears the
+  environment it was given — the only way to put a value back is to
+  name it in sudo's own arguments, which is the command line these are
+  meant to stay off
+
+Where a tool only accepts a secret as a flag, read it into a shell
+variable and hand it over from there:
+
+```ts
+command: [
+  "code=$(cat)",
+  '[ -n "$code" ] || { echo "nothing on standard input" >&2; exit 1; }',
+  'sudo dnclient enroll -code "$code"',
+].join("\n"),
+stdin: (config, context) => context.enrollmentCode,
+```
+
+That keeps the value out of the command this installer builds and out
+of what SSH carries, though it still reaches the tool's own arguments
+while it runs.
+
 ## Contributing
 
 We welcome contributions from the community! Please see our [Contributing Guide](./CONTRIBUTING.md) for more information on how to get involved.

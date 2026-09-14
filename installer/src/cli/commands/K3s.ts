@@ -210,9 +210,9 @@ function buildInstallExec(config: CloudConfig, context: any): string {
  * Build the environment the install script runs with.
  *
  * K3s reads most of what it needs from the environment, so settings go
- * here rather than into flags wherever it offers the choice. That
- * keeps the token off the command line, where it would otherwise show
- * up in a process listing for anyone on the node.
+ * here rather than into flags wherever it offers the choice. None of
+ * this is secret: it's the release to install, the name to register
+ * under and the server to join.
  *
  * @param config
  * @param context
@@ -225,9 +225,6 @@ function buildInstallEnv(config: CloudConfig, context: any): Record<string, stri
   const env: Record<string, string | undefined> = {
     // The subcommand and everything with no environment variable
     INSTALL_K3S_EXEC: buildInstallExec(config, context),
-
-    // Shared by the server and every agent that joins it
-    K3S_TOKEN: getToken(config),
 
     // Otherwise K3s takes whatever the machine calls itself
     K3S_NODE_NAME: getNodeName(context),
@@ -248,6 +245,28 @@ function buildInstallEnv(config: CloudConfig, context: any): Record<string, stri
   }
 
   return env;
+}
+
+/**
+ * The part of the environment that has to stay off the command line.
+ *
+ * The cluster token is the whole of the cluster's security: anything
+ * holding it can join a node, and a node can read every secret
+ * scheduled onto it. Written into the command it would be in the
+ * shell's own arguments, which every user on the machine can read from
+ * a process listing, and in any error message quoting the command
+ * back. Passing it as a secret sends it over standard input instead,
+ * where the shell reads it and exports it without it ever appearing in
+ * an argument list.
+ *
+ * @param config
+ * @returns
+ */
+function buildInstallSecrets(config: CloudConfig): Record<string, string> {
+  return {
+    // Shared by the server and every agent that joins it
+    K3S_TOKEN: getToken(config),
+  };
 }
 
 /**
@@ -280,6 +299,7 @@ export const K3sCommands: CommandSpec[] = [
     name: "install-k3s",
     description: "Install K3s and start it as a server or an agent",
     env: buildInstallEnv,
+    secretEnv: buildInstallSecrets,
     command: () =>
       [
         "installer=$(mktemp)",

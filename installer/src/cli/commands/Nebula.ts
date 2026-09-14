@@ -312,16 +312,28 @@ export const NebulaCommands: CommandSpec[] = [
   /**
    * Enrol with the code the API just issued.
    *
-   * The code goes on the command line because that's the only way
-   * dnclient takes it, so it's visible in a process listing on the
-   * node for as long as the command runs. It's single use and
-   * short-lived, but worth knowing.
+   * The code arrives on standard input and is read into a shell
+   * variable, so it isn't in the command this installer builds, isn't
+   * in what SSH carries over, and isn't in any error quoting the
+   * command back.
+   *
+   * It does still reach dnclient's own arguments, because -code is the
+   * only way dnclient will take it, so for the few seconds enrolment
+   * runs the code is visible in a process listing on the node. Codes
+   * are single use and expire, so that window is the whole of the
+   * exposure, but it's worth knowing it's there.
    */
   {
     name: "enroll-nebula-host",
     description: "Enroll the node into the Nebula network",
     skipWhen: (config: CloudConfig, context: any) => context.dnclientEnrolled === true,
-    command: (config: CloudConfig, context: any) => {
+    command: [
+      // Reads to end of input, and drops the trailing newline with it
+      "code=$(cat)",
+      '[ -n "$code" ] || { echo "No enrollment code arrived on standard input" >&2; exit 1; }',
+      `sudo ${SERVICE} enroll -code "$code"`,
+    ].join("\n"),
+    stdin: (config: CloudConfig, context: any) => {
       const { nebulaEnrollmentCode } = context;
 
       if (typeof nebulaEnrollmentCode !== "string" || nebulaEnrollmentCode === "") {
@@ -330,7 +342,7 @@ export const NebulaCommands: CommandSpec[] = [
         );
       }
 
-      return `sudo ${SERVICE} enroll -code ${quoteForShell(nebulaEnrollmentCode)}`;
+      return nebulaEnrollmentCode;
     },
     output: OutputType.Raw,
   },

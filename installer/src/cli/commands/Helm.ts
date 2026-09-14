@@ -91,22 +91,28 @@ function buildAddRepoCommand(definition: PackageDefinition): CommandSpec {
  * @returns
  */
 function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
+  const path = getValuesPath(definition);
+
   return {
     name: `helm-values-${definition.name}`,
     description: `Write the rendered values for ${definition.name}`,
     runOn: CommandTarget.ControlPlane,
-    command: (config: CloudConfig) => {
-      const rendered = renderInstallerFile(config, definition.valuesFile as string);
-      const path = getValuesPath(definition);
-
-      return [
-        `mkdir -p ${WORK_DIR}`,
-        `chmod 0700 ${WORK_DIR}`,
-        `printf '%s' ${quoteForShell(rendered)} > ${path}`,
-        `chmod 0600 ${path}`,
-        `echo "wrote ${path}"`,
-      ].join("\n");
-    },
+    command: [
+      `mkdir -p ${WORK_DIR}`,
+      `chmod 0700 ${WORK_DIR}`,
+      // Created with its permissions already on it. Values carry
+      // database passwords and signing keys, and a file that starts
+      // out world-readable has already been read by the time a chmod
+      // after the fact catches up with it.
+      `install -m 0600 /dev/null ${path} || { echo "Couldn't create ${path}" >&2; exit 1; }`,
+      `cat > ${path} || { echo "Couldn't write ${path}" >&2; exit 1; }`,
+      `echo "wrote ${path}"`,
+    ].join("\n"),
+    // The rendered values go over standard input rather than into the
+    // command, so nothing secret in them turns up in a process listing
+    // on the control plane or in an error quoting the command back
+    stdin: (config: CloudConfig) =>
+      renderInstallerFile(config, definition.valuesFile as string),
     output: OutputType.Raw,
   };
 }

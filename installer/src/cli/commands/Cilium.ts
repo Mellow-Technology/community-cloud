@@ -194,18 +194,22 @@ export const CiliumCommands: CommandSpec[] = [
    * Put the rendered values on the node for the installer to read.
    * They're rendered here rather than there, since the file lives
    * with the repository and the node has never seen it.
+   *
+   * They travel on standard input, which keeps a whole YAML document
+   * out of a command line and means the values file is never quoted
+   * into one. Nothing in the Cilium values is secret today, but the
+   * writing of a file shouldn't depend on that staying true.
    */
   {
     name: "write-cilium-values",
     description: "Write the rendered Cilium values onto the node",
     runOn: CommandTarget.ControlPlane,
-    command: (config: CloudConfig) => {
-
-      return [
-        `printf '%s' ${quoteForShell(renderValues(config))} > ${REMOTE_VALUES_PATH}`,
-        `echo "wrote ${REMOTE_VALUES_PATH}"`,
-      ].join("; ");
-    },
+    command: [
+      `install -m 0600 /dev/null ${REMOTE_VALUES_PATH} || { echo "Couldn't create ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
+      `cat > ${REMOTE_VALUES_PATH} || { echo "Couldn't write ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
+      `echo "wrote ${REMOTE_VALUES_PATH}"`,
+    ].join("\n"),
+    stdin: (config: CloudConfig) => renderValues(config),
     output: OutputType.Raw,
   },
 

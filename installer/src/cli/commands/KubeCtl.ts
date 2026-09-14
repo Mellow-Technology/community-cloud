@@ -25,13 +25,12 @@ export const KUBECTL_MANIFEST_COMMAND = "kubectl-manifest";
 /**
  * Run kubectl against a manifest.
  *
- * The manifest is read from stdin rather than from a file so that
- * we never have to write a rendered template (which usually contains
- * secrets) to disk. Supplying it is the job of the exec function
- * configured on the bundle, as a bundle only ever hands the command
- * string to that function.
+ * The manifest is read from stdin rather than from a file so that we
+ * never have to write a rendered template, which usually contains
+ * secrets, to disk or put it on a command line.
  *
  * Context:
+ * - manifest: the rendered manifest, which is what kubectl reads
  * - operation: the KubeCtlOperation to run, defaults to apply
  * - namespace: an optional namespace to scope the operation to
  */
@@ -55,6 +54,7 @@ export const KubeCtlCommands: CommandSpec[] = [
       // We use stdin
       return `kubectl ${operation}${namespace} -f -`;
     },
+    stdin: (_config: unknown, context: any) => context.manifest,
     output: OutputType.Raw,
   },
 ];

@@ -16,7 +16,8 @@ import { exec } from "../util/exec.ts";
  * A node that's ready to run commands.
  *
  * - node: the node's entry in the configuration
- * - exec: runs a command on it, whether that's here or over SSH
+ * - exec: runs a command on it, whether that's here or over SSH, and
+ *   writes the second argument to its standard input when there is one
  * - local: whether this is the machine we're already on
  * - disconnect: closes the connection, and does nothing when there
  *   wasn't one to close
@@ -68,7 +69,7 @@ export async function connectToNode(
 
   return {
     node,
-    exec: (command: string) => host.exec(command),
+    exec: (command: string, stdin?: string) => host.exec(command, undefined, stdin),
     local: false,
     disconnect: () => host.disconnect(),
   };

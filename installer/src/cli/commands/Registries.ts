@@ -325,20 +325,29 @@ export const RegistryCommands: CommandSpec[] = [
    *
    * It holds registry passwords, so it's owned by root and readable by
    * nobody else. K3s runs as root and is the only thing that reads it.
+   *
+   * The contents go over standard input rather than into the command.
+   * A command line is readable by every user on the node through a
+   * process listing, and gets quoted back in any error the command
+   * produces, so a password written into one is a password given away
+   * to anyone who happens to be looking. Nothing but tee ever sees
+   * what arrives here.
    */
   {
     name: "write-registries-config",
     description: "Write registries.yaml from the configured registries",
     skipWhen: (config: CloudConfig) => !hasRegistries(config),
-    command: (config: CloudConfig) =>
-      [
-        `sudo mkdir -p ${CONFIG_DIRECTORY} || { echo "Couldn't create ${CONFIG_DIRECTORY}" >&2; exit 1; }`,
-        `printf '%s' ${quoteForShell(buildRegistriesFile(config))} | sudo tee ${CONFIG_FILE} > /dev/null || { echo "Couldn't write ${CONFIG_FILE}" >&2; exit 1; }`,
-        // The file carries credentials, so nothing but root sees it
-        `sudo chown root:root ${CONFIG_FILE}`,
-        `sudo chmod 0600 ${CONFIG_FILE}`,
-        `ls -l ${CONFIG_FILE}`,
-      ].join("\n"),
+    command: [
+      `sudo mkdir -p ${CONFIG_DIRECTORY} || { echo "Couldn't create ${CONFIG_DIRECTORY}" >&2; exit 1; }`,
+      // Created empty with its permissions already set, so there's no
+      // moment where the file holds credentials and is readable by
+      // everyone. tee writes into it afterwards and leaves the mode
+      // alone.
+      `sudo install -o root -g root -m 0600 /dev/null ${CONFIG_FILE} || { echo "Couldn't create ${CONFIG_FILE}" >&2; exit 1; }`,
+      `sudo tee ${CONFIG_FILE} > /dev/null || { echo "Couldn't write ${CONFIG_FILE}" >&2; exit 1; }`,
+      `ls -l ${CONFIG_FILE}`,
+    ].join("\n"),
+    stdin: (config: CloudConfig) => buildRegistriesFile(config),
     output: OutputType.Raw,
   },
 
