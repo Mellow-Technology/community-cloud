@@ -11,6 +11,7 @@ import Command, {
   CommandOutput,
   OutputType,
   TerminalCommandSpec,
+  joinCommand,
 } from "./Command.ts";
 import {
   SecretEnvScript,
@@ -20,8 +21,8 @@ import {
 import { exec } from "../../util/exec.ts";
 
 export default class TerminalCommand extends Command {
-  // The string to use for the command
-  command: string | Function;
+  // The command itself. An array is taken as the lines of a script.
+  command: string | string[] | Function;
 
   // The function to execute the command with
   execFunction: Function;
@@ -83,16 +84,18 @@ export default class TerminalCommand extends Command {
    * @returns
    */
   protected async run(config, context, commandResults): Promise<CommandOutput> {
-    let cmdString = null;
-
     // If the command is a function it's a
     // command creator, so we pass the context
     // to it to get the final command string
-    if (typeof this.command === "function") {
-      cmdString = this.command(config, context, commandResults);
-    } else {
-      cmdString = this.command;
-    }
+    const built =
+      typeof this.command === "function"
+        ? this.command(config, context, commandResults)
+        : this.command;
+
+    // Either form can be an array of lines, a builder included, since
+    // a command put together from the configuration is the one most
+    // likely to be assembled a piece at a time
+    let cmdString = joinCommand(built);
 
     // Work out the environment for the command, which can be a plain
     // object or, like the command itself, something derived from the

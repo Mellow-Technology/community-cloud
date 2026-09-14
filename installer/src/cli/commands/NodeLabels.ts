@@ -351,7 +351,7 @@ export const NodeLabelCommands: CommandSpec[] = [
         'command -v kubectl > /dev/null 2>&1 || { echo "kubectl isn\'t on the control plane, so nothing can be labelled. Check K3s is installed there." >&2; exit 1; }',
         `for attempt in $(seq ${REGISTRATION_TIMEOUT_SECONDS}); do kubectl get node ${name} > /dev/null 2>&1 && break; sleep 1; done`,
         `kubectl get node ${name} -o json 2>/dev/null || { echo "The cluster still has no node called ${name} after ${REGISTRATION_TIMEOUT_SECONDS}s. Check K3s is installed on it and that it has joined." >&2; exit 1; }`,
-      ].join("\n");
+      ];
     },
     output: OutputType.Json,
     postProcessHooks: [readNodeLabels],
@@ -403,7 +403,7 @@ export const NodeLabelCommands: CommandSpec[] = [
         commands.push(`kubectl label node ${name} ${removals}`);
       }
 
-      return commands.join("\n");
+      return commands;
     },
     output: OutputType.Raw,
   },

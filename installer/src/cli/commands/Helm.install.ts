@@ -54,7 +54,7 @@ export const HelmInstallCommands: CommandSpec[] = [
       'then printf "installed|%s\\n" "$(helm version --short 2>/dev/null)"',
       'else echo "missing|"',
       "fi",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     saveToContext: (output: any) => {
       const [state, version] = String(output.parsed).trim().split("|");
@@ -106,7 +106,7 @@ export const HelmInstallCommands: CommandSpec[] = [
       "status=$?",
       'rm -f "$installer"',
       "exit $status",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
   },
 
@@ -134,7 +134,7 @@ export const HelmInstallCommands: CommandSpec[] = [
       // cheapest proof that Helm can actually do anything
       'helm list --all-namespaces > /dev/null || { echo "Helm is installed but can\'t reach the cluster. Check the kubeconfig." >&2; exit 1; }',
       'echo "Helm can reach the cluster"',
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     saveToContext: (output: any) => ({
       helmVersion: String(output.parsed).trim().split("\n")[0],

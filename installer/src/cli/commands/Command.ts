@@ -126,7 +126,9 @@ export interface BaseCommandSpec {
 /**
  * A command that runs in a shell.
  *
- * - command: the command itself, or a function that builds it
+ * - command: the command itself, or a function that builds it. Most
+ *   commands here are several lines of shell, so an array is taken as
+ *   those lines and joined, and a function may return either form.
  * - sudo: whether the command should be run using sudo
  * - env: environment variables for the command, either as an object or
  *   as a function worked out from the configuration
@@ -143,7 +145,7 @@ export interface BaseCommandSpec {
  *   e.g. for using JC (https://github.com/kellyjonbrazil/jc)
  */
 export interface TerminalCommandSpec extends BaseCommandSpec {
-  command: string | Function;
+  command: string | string[] | Function;
   sudo?: boolean;
   env?: Record<string, string> | Function;
   stdin?: string | Function;
@@ -180,6 +182,26 @@ export interface WebCommandSpec extends BaseCommandSpec {
  * The specification for a command of any kind.
  */
 export type CommandSpec = TerminalCommandSpec | WebCommandSpec;
+
+/**
+ * Turn what a spec gave as a command into the one string a shell runs.
+ *
+ * Nearly every command in here is a sequence of steps, and writing
+ * that as an array reads better than one long string. Joining is done
+ * here rather than at each spec so that they all agree on the
+ * separator, which had been half "; " and half "\n".
+ *
+ * The separator is a newline, because "; " is wrong after the words
+ * that take their body straight after them. "for x in y; do; echo $x;
+ * done" is a syntax error, and it's an easy one to write by accident
+ * when the join is putting the separators in.
+ *
+ * @param command
+ * @returns
+ */
+export function joinCommand(command: string | string[]): string {
+  return Array.isArray(command) ? command.join("\n") : command;
+}
 
 /**
  * A single step in a bundle.

@@ -107,7 +107,7 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
       `install -m 0600 /dev/null ${path} || { echo "Couldn't create ${path}" >&2; exit 1; }`,
       `cat > ${path} || { echo "Couldn't write ${path}" >&2; exit 1; }`,
       `echo "wrote ${path}"`,
-    ].join("\n"),
+    ],
     // The rendered values go over standard input rather than into the
     // command, so nothing secret in them turns up in a process listing
     // on the control plane or in an error quoting the command back
@@ -177,7 +177,7 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
       `status=$(helm status ${release} --namespace ${namespace} -o json 2>/dev/null | tr -d " \\n" | sed -n 's/.*"status":"\\([a-z]*\\)".*/\\1/p')`,
       `echo "${definition.name}: $status"`,
       `[ "$status" = "deployed" ] || { echo "${definition.name} is \\"$status\\", not deployed" >&2; helm status ${release} --namespace ${namespace} >&2; exit 1; }`,
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
   };
 }

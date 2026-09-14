@@ -185,7 +185,7 @@ export const CiliumCommands: CommandSpec[] = [
         `sudo tar xzf "${archive}" -C ${CLI_INSTALL_DIR} || { echo "Couldn't unpack the Cilium CLI into ${CLI_INSTALL_DIR}" >&2; rm -rf "$workdir"; exit 1; }`,
         `cd / && rm -rf "$workdir"`,
         `${CLI_INSTALL_DIR}/cilium version --client`,
-      ].join("; ");
+      ];
     },
     output: OutputType.Raw,
   },
@@ -208,7 +208,7 @@ export const CiliumCommands: CommandSpec[] = [
       `install -m 0600 /dev/null ${REMOTE_VALUES_PATH} || { echo "Couldn't create ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
       `cat > ${REMOTE_VALUES_PATH} || { echo "Couldn't write ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
       `echo "wrote ${REMOTE_VALUES_PATH}"`,
-    ].join("\n"),
+    ],
     stdin: (config: CloudConfig) => renderValues(config),
     output: OutputType.Raw,
   },
@@ -271,7 +271,7 @@ export const CiliumCommands: CommandSpec[] = [
         );
       }
 
-      return checks.join("; ");
+      return checks;
     },
     output: OutputType.Raw,
   },

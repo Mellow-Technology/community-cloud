@@ -93,6 +93,28 @@ bun run cc <args>        # run from source without building
 bun run typecheck        # tsc --noEmit
 ```
 
+## Writing commands
+
+A command is a string, an array of strings, or a function returning
+either. Nearly all of them are several lines of shell, so the array
+form is the usual one and the lines are joined for you:
+
+```ts
+{
+  name: "wait-for-service",
+  description: "Wait for the service to come up",
+  command: [
+    `for attempt in $(seq 60); do systemctl is-active --quiet ${SERVICE} && break; sleep 1; done`,
+    `systemctl is-active --quiet ${SERVICE} || { echo "${SERVICE} never came up" >&2; exit 1; }`,
+  ],
+}
+```
+
+The lines are joined with a newline rather than `"; "`, which is what
+the shell words taking a body straight after them require — `for x in
+y; do; echo $x; done` is a syntax error, and an easy one to write when
+a join is putting the separators in.
+
 ## Secrets in commands
 
 Anything a command is given on its command line is readable by every
@@ -109,7 +131,7 @@ A command spec has two ways to do that:
   command: [
     `sudo install -o root -g root -m 0600 /dev/null ${FILE}`,
     `sudo tee ${FILE} > /dev/null`,
-  ].join("\n"),
+  ],
   // A payload for the command to read
   stdin: (config) => buildFile(config),
 }
@@ -147,7 +169,7 @@ command: [
   "code=$(cat)",
   '[ -n "$code" ] || { echo "nothing on standard input" >&2; exit 1; }',
   'sudo dnclient enroll -code "$code"',
-].join("\n"),
+],
 stdin: (config, context) => context.enrollmentCode,
 ```
 

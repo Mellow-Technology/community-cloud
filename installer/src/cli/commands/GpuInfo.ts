@@ -105,7 +105,7 @@ const DETECT_SCRIPT = [
   '  [ -e "$node" ] || continue',
   '  printf "devnode|%s\\n" "$node"',
   'done',
-].join("\n");
+];
 
 /**
  * Read a field out of a split line, treating a missing one as empty.
@@ -372,7 +372,7 @@ export const GpuInfoCommands: CommandSpec[] = [
       '  nvidia-smi --query-gpu=pci.bus_id,name,memory.total,driver_version,compute_cap,uuid --format=csv,noheader,nounits 2>/dev/null || true',
       'else echo "tooling|missing"',
       "fi",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {
@@ -446,7 +446,7 @@ export const GpuInfoCommands: CommandSpec[] = [
       '   else printf "tooling|%s|missing\\n" "$tool"',
       "   fi",
       "done",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {
@@ -517,7 +517,7 @@ export const GpuInfoCommands: CommandSpec[] = [
       '   else printf "tooling|%s|missing\\n" "$tool"',
       "   fi",
       "done",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {

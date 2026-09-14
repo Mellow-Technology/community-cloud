@@ -266,7 +266,7 @@ export const NebulaCommands: CommandSpec[] = [
       'then echo "enrolled"',
       'else echo "not-enrolled"',
       "fi",
-    ].join("; "),
+    ],
     output: OutputType.Raw,
     saveToContext: (output: any) => ({
       dnclientEnrolled: output.parsed.trim() === "enrolled",
@@ -305,7 +305,7 @@ export const NebulaCommands: CommandSpec[] = [
       `sudo systemctl enable --now ${SERVICE} || { echo "Couldn't start ${SERVICE}" >&2; exit 1; }`,
       // dnclient has no version subcommand, so we ask the package
       `dpkg-query -W -f='\${Version}\\n' ${SERVICE} 2>/dev/null || true`,
-    ].join("; "),
+    ],
     output: OutputType.Raw,
   },
 
@@ -332,7 +332,7 @@ export const NebulaCommands: CommandSpec[] = [
       "code=$(cat)",
       '[ -n "$code" ] || { echo "No enrollment code arrived on standard input" >&2; exit 1; }',
       `sudo ${SERVICE} enroll -code "$code"`,
-    ].join("\n"),
+    ],
     stdin: (config: CloudConfig, context: any) => {
       const { nebulaEnrollmentCode } = context;
 
@@ -374,7 +374,7 @@ export const NebulaCommands: CommandSpec[] = [
           `sudo ${SERVICE} info || { echo "${SERVICE} couldn't report its status, so the node isn't enrolled" >&2; exit 1; }`,
         );
 
-        return checks.join("; ");
+        return checks;
       }
 
       const address = quoteForShell(addresses[0]);
@@ -386,7 +386,7 @@ export const NebulaCommands: CommandSpec[] = [
         `sudo ${SERVICE} info || true`,
       );
 
-      return checks.join("; ");
+      return checks;
     },
     output: OutputType.Raw,
   },

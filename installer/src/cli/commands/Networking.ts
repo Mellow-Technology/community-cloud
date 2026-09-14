@@ -181,7 +181,7 @@ export const NetworkingCommands: CommandSpec[] = [
         // their own lines and match one whole
         `echo "$available" | tr ' ' '\\n' | grep -qx ${quoteForShell(algorithm)} || { echo "This kernel doesn't offer ${algorithm} congestion control. Available: $available" >&2; exit 1; }`,
         `[ -e "${QDISC_SYSCTL_PATH}" ] || { echo "This kernel doesn't expose ${QDISC_SYSCTL_KEY}, so the default qdisc can't be set" >&2; exit 1; }`,
-      ].join("; ");
+      ];
     },
     output: OutputType.Raw,
   },
@@ -245,7 +245,7 @@ export const NetworkingCommands: CommandSpec[] = [
         'echo "default qdisc: $current_qdisc"',
         `[ "$current_congestion" = "${algorithm}" ] || { echo "Expected congestion control ${algorithm}, got $current_congestion" >&2; exit 1; }`,
         `[ "$current_qdisc" = "${qdisc}" ] || { echo "Expected qdisc ${qdisc}, got $current_qdisc" >&2; exit 1; }`,
-      ].join("; ");
+      ];
     },
     output: OutputType.Raw,
   },

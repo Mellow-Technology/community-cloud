@@ -300,16 +300,15 @@ export const K3sCommands: CommandSpec[] = [
     description: "Install K3s and start it as a server or an agent",
     env: buildInstallEnv,
     secretEnv: buildInstallSecrets,
-    command: () =>
-      [
-        "installer=$(mktemp)",
-        `curl -fsSL ${K3S_INSTALL_URL} -o "$installer" || { echo "Couldn't download the K3s install script from ${K3S_INSTALL_URL}" >&2; rm -f "$installer"; exit 1; }`,
-        `test -s "$installer" || { echo "The K3s install script came back empty" >&2; rm -f "$installer"; exit 1; }`,
-        'sh "$installer"',
-        "status=$?",
-        'rm -f "$installer"',
-        "exit $status",
-      ].join("; "),
+    command: [
+      "installer=$(mktemp)",
+      `curl -fsSL ${K3S_INSTALL_URL} -o "$installer" || { echo "Couldn't download the K3s install script from ${K3S_INSTALL_URL}" >&2; rm -f "$installer"; exit 1; }`,
+      `test -s "$installer" || { echo "The K3s install script came back empty" >&2; rm -f "$installer"; exit 1; }`,
+      'sh "$installer"',
+      "status=$?",
+      'rm -f "$installer"',
+      "exit $status",
+    ],
     output: OutputType.Raw,
   },
 
@@ -328,7 +327,7 @@ export const K3sCommands: CommandSpec[] = [
         waitUntil(`systemctl is-active --quiet ${service}`),
         `systemctl is-active --quiet ${service} || { echo "${service} didn't come up within ${READY_TIMEOUT_SECONDS}s" >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
         `echo "${service} is active"`,
-      ].join("; ");
+      ];
     },
     output: OutputType.Raw,
   },
@@ -355,7 +354,7 @@ export const K3sCommands: CommandSpec[] = [
           nodeName !== undefined
             ? `k3s kubectl get node ${quoteForShell(nodeName)} >/dev/null || { echo "${nodeName} hasn't registered with the cluster" >&2; exit 1; }`
             : "true",
-        ].join("; ");
+        ];
       }
 
       // Written by the agent only after the server has accepted it
@@ -373,7 +372,7 @@ export const K3sCommands: CommandSpec[] = [
         // Containers won't start without this
         `sudo test -S /run/k3s/containerd/containerd.sock || { echo "containerd isn't listening, so the agent can't run workloads" >&2; exit 1; }`,
         'echo "containerd is up"',
-      ].join("; ");
+      ];
     },
     output: OutputType.Raw,
   },

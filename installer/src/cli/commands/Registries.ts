@@ -286,7 +286,7 @@ export const RegistryCommands: CommandSpec[] = [
       '  [ -f "/etc/systemd/system/$service.service" ] || continue',
       '  printf "service|%s|%s\\n" "$service" "$(systemctl is-active "$service" 2>/dev/null || echo inactive)"',
       "done",
-    ].join("\n"),
+    ],
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {
@@ -346,7 +346,7 @@ export const RegistryCommands: CommandSpec[] = [
       `sudo install -o root -g root -m 0600 /dev/null ${CONFIG_FILE} || { echo "Couldn't create ${CONFIG_FILE}" >&2; exit 1; }`,
       `sudo tee ${CONFIG_FILE} > /dev/null || { echo "Couldn't write ${CONFIG_FILE}" >&2; exit 1; }`,
       `ls -l ${CONFIG_FILE}`,
-    ].join("\n"),
+    ],
     stdin: (config: CloudConfig) => buildRegistriesFile(config),
     output: OutputType.Raw,
   },
@@ -371,7 +371,7 @@ export const RegistryCommands: CommandSpec[] = [
         `for attempt in $(seq ${RESTART_TIMEOUT_SECONDS}); do systemctl is-active --quiet ${service} && break; sleep 1; done`,
         `systemctl is-active --quiet ${service} || { echo "${service} didn't come back within ${RESTART_TIMEOUT_SECONDS}s" >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
         `echo "${service} restarted and running"`,
-      ].join("\n");
+      ];
     },
     output: OutputType.Raw,
   },
@@ -410,7 +410,7 @@ export const RegistryCommands: CommandSpec[] = [
         `  scheme=$(printf '%s\\n' "$response" | awk 'tolower($1) == "www-authenticate:" {print $2; exit}')`,
         '  printf "registry|%s|%s|%s\\n" "$registry" "${status:-none}" "${scheme:-none}"',
         "done",
-      ].join("\n");
+      ];
     },
     output: OutputType.Raw,
     postProcessHooks: [
