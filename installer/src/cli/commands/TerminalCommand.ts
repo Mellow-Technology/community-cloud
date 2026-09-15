@@ -107,6 +107,16 @@ export default class TerminalCommand extends Command {
     // If we're running with sudo then
     // we prepend sudo to the command
     if (this.sudo) {
+      // One sudo in front of a script only elevates its first line.
+      // The rest run as the connecting user, which mostly looks like
+      // working until something needs root and doesn't say so. A
+      // script that needs root says so on each line that does.
+      if (cmdString.includes("\n")) {
+        throw new Error(
+          `The command "${this.name}" sets "sudo" and is more than one line. A leading sudo only applies to the first of them, so put sudo on each line that needs it instead.`,
+        );
+      }
+
       // sudo clears the environment it was given, so the variables go
       // through env rather than being exported ahead of it
       cmdString =

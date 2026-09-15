@@ -127,7 +127,7 @@ export const packageCatalogue: PackageDefinition[] = [
     description: "Node local storage, backed by LVM",
     chart: { repo: "https://topolvm.github.io/topolvm", name: "topolvm" },
     namespace: "topolvm-system",
-    valuesFile: "embed://storage/TopoLVM/TopoLVMValues.yaml",
+    valuesFile: "embed://storage/TopoLVM/TopoLVM.values.yaml",
     requires: ["cert-manager"],
   },
   {
