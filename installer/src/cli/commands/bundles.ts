@@ -19,6 +19,7 @@ import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
 import { GatewayCommands } from "./GatewayNodes.ts";
 import { PreflightCommands } from "./Preflight.ts";
+import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
 import { HelmCommands } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
@@ -49,6 +50,11 @@ export const bundles: BundleDefinition[] = [
     name: "cilium",
     description: "Install Cilium as the cluster CNI, from the control plane",
     commands: CiliumCommands,
+  },
+  {
+    name: "cluster",
+    description: "Record this cluster's configuration in the cluster itself",
+    commands: ClusterConfigCommands,
   },
   {
     name: "gateway",
