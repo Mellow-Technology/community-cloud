@@ -30,16 +30,11 @@ import CloudConfig from "../../util/CloudConfig.ts";
 import { GpuVendor, NodeRole, VideoDevice } from "../../util/types.ts";
 import { getNodeName } from "./K3s.ts";
 import { quoteForShell } from "../../util/shell.ts";
-
-// The prefix Kubernetes reads roles from
-const ROLE_PREFIX = "node-role.kubernetes.io";
+import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
 
 // Where automatic hardware labels live. Namespaced, so it's obvious
 // which labels this installer owns and which came from elsewhere.
 const GPU_PREFIX = "gpu.community-cloud.technology";
-
-// K3s writes the cluster's kubeconfig here
-const DEFAULT_KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
 
 // How long to wait for a node to show up in the cluster. An agent
 // that has just enrolled has its certificate before the API server
@@ -52,22 +47,6 @@ const REGISTRATION_TIMEOUT_SECONDS = 120;
 // poor way to find out a configuration has a typo in it.
 const LABEL_NAME = /^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$/;
 const LABEL_PREFIX = /^[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?$/;
-
-/**
- * The kubeconfig to use, which is K3s's own unless told otherwise.
- *
- * @param config
- * @returns
- */
-function buildKubeEnv(config: CloudConfig): Record<string, string> {
-  const { k3s } = config.getConfig();
-  const kubeconfig =
-    k3s !== undefined && k3s !== null && k3s.kubeconfig !== undefined
-      ? k3s.kubeconfig
-      : DEFAULT_KUBECONFIG;
-
-  return { KUBECONFIG: kubeconfig };
-}
 
 /**
  * The name this node is registered under in the cluster.
@@ -148,6 +127,14 @@ function getAutomaticRoles(context: any): string[] {
 
   if (getComputeGpus(context).length > 0) {
     roles.push(NodeRole.WorkerGPU);
+  }
+
+  // A node that can be reached from outside is a gateway, whether or
+  // not anyone wrote the role down. The gateway bundle's announcement
+  // policy selects on this label, so the two have to agree.
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+  if (node.gateway === true) {
+    roles.push(NodeRole.Gateway);
   }
 
   return roles;

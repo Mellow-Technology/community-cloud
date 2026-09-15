@@ -176,8 +176,32 @@ export class CommandBundle {
       }
 
       // A command that has nothing to do is left alone, and says so
-      // in the results rather than going missing from them
-      if (command.shouldSkip(this.config, this.context, this.commandResults)) {
+      // in the results rather than going missing from them.
+      //
+      // Working that out reads the configuration, so it can find a
+      // mistake in it. That's a failure of this command like any
+      // other, rather than something that should escape the runner as
+      // a stack trace.
+      let skip = false;
+      try {
+        skip = command.shouldSkip(this.config, this.context, this.commandResults);
+      }
+      catch (e: any) {
+        console.log(`🔴 Error deciding whether to run: "${command.name}"`);
+        console.log(`🔴 Error Message: ${e.message}`);
+
+        this.commandResults[command.name] = {
+          error: true,
+          stdout: "",
+          stderr: e.message,
+          parsed: "",
+        };
+        this.failed = true;
+        console.log("== Halted execution ==");
+        break;
+      }
+
+      if (skip) {
         console.log(`⏭️  Skipped: "${command.name}" has nothing to do`);
         this.commandResults[command.name] = {
           stdout: "",
@@ -202,7 +226,12 @@ export class CommandBundle {
         res = {
           error: true,
           stdout: e.stdout,
-          stderr: e.stderr,
+          // A command that failed in the shell reports on stderr, but
+          // one that failed before it got there — a configuration a
+          // builder wouldn't accept — has only a message. Either way
+          // the result should say why, since that's what a caller
+          // reads to find out.
+          stderr: e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message,
           parsed: ""
         }
       }

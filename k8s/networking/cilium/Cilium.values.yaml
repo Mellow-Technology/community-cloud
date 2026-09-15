@@ -34,6 +34,18 @@ rollOutCiliumPods: true
 gatewayAPI:
   enabled: true
 
+# Answer for load balancer addresses on the LAN with ARP.
+# Needed when a router forwards ports to an address nothing
+# is holding, which is the "port-forward" gateway mode. In
+# the "floating" mode the node already holds the address,
+# so nothing has to announce it.
+#
+# k8sClientRateLimit above is sized for this: announcing
+# uses a lease per service, and the defaults of 5 and 10
+# are far too low to renew them.
+l2announcements:
+  enabled: {{ .Values.l2Announcements }}
+
 # Envoy is used for L7 routing
 # We use in standalone mode so it can be
 # operated independently of Cilium

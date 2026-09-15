@@ -101,6 +101,30 @@ export enum NodeRole {
 }
 
 /**
+ * How traffic from outside reaches the cluster.
+ *
+ * Both of these end in the same place — a LoadBalancer Service holding
+ * an address that something outside can connect to — and differ only
+ * in who is responsible for getting a packet to the node.
+ *
+ * - Floating:
+ *   The address is already configured on an interface of a gateway
+ *   node, and the network routes it there. This is the usual shape in
+ *   a data centre: a provider assigns a floating or failover IP and
+ *   the machine holds it. Cilium only has to hand the address to a
+ *   Service, because the node already answers for it.
+ * - PortForward:
+ *   A router maps ports on its external address to an address on the
+ *   LAN. Nothing holds that address yet, so Cilium claims it with ARP
+ *   from whichever gateway node is available. This is the usual shape
+ *   on a home or small office network.
+ */
+export enum GatewayMode {
+  Floating = "floating",
+  PortForward = "port-forward",
+}
+
+/**
  * Who made a piece of video hardware.
  *
  * Worked out from the PCI vendor ID rather than from a name, since the

@@ -27,6 +27,7 @@ import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { quoteForShell } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
+import { buildKubeEnv } from "../../util/kube.ts";
 
 // Where the CLI says which of its releases is current
 const CLI_STABLE_URL = "https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt";
@@ -47,9 +48,6 @@ const DEFAULT_VALUES_FILE = "embed://networking/cilium/Cilium.values.yaml";
 // Where the rendered values are put on the node. Only the installer
 // reads it, and it holds nothing secret.
 const REMOTE_VALUES_PATH = "/tmp/cc-cilium-values.yaml";
-
-// K3s writes the cluster's kubeconfig here
-const DEFAULT_KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
 
 // How long to wait for Cilium to report itself healthy
 const READY_TIMEOUT = "10m";
@@ -81,23 +79,6 @@ function getCiliumConfig(config: CloudConfig): CiliumConfig {
   const cilium = network !== undefined && network !== null ? network.cilium : undefined;
 
   return cilium !== undefined && cilium !== null ? cilium : {};
-}
-
-/**
- * The kubeconfig the CLI should use. K3s puts one on the control
- * plane, which is where these commands run.
- *
- * @param config
- * @returns
- */
-function buildKubeEnv(config: CloudConfig): Record<string, string> {
-  const { k3s } = config.getConfig();
-  const kubeconfig =
-    k3s !== undefined && k3s !== null && k3s.kubeconfig !== undefined
-      ? k3s.kubeconfig
-      : DEFAULT_KUBECONFIG;
-
-  return { KUBECONFIG: kubeconfig };
 }
 
 /**

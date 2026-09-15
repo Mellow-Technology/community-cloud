@@ -18,6 +18,7 @@ import { isAbsolute, join } from "node:path";
 import { parse } from "@ctrl/golang-template";
 
 import CloudConfig from "./CloudConfig.ts";
+import { GatewayMode } from "./types.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 
 // Tags that @ctrl/golang-template handles on its own.
@@ -332,7 +333,37 @@ export function buildTemplateValues(config: CloudConfig) {
     values.k8sApiPort = DEFAULT_K8S_API_PORT;
   }
 
+  // Cilium only answers for a load balancer address on the LAN when
+  // it was installed with that switched on, and whether it should be
+  // follows from how the cluster is reached rather than being another
+  // thing to remember to set. Always given a value, since a missing
+  // one renders as nothing and leaves Helm an empty setting.
+  if (values.l2Announcements === undefined) {
+    values.l2Announcements = announcesGatewayAddresses(rawConfig);
+  }
+
   return { Values: values };
+}
+
+/**
+ * Whether Cilium has to announce the cluster's gateway addresses.
+ *
+ * True only for the port-forward shape, where a router sends traffic
+ * to an address on the LAN that nothing is holding. In the floating
+ * shape the gateway node already has the address on an interface, and
+ * a second machine announcing it would be claiming what isn't its own.
+ *
+ * @param rawConfig
+ * @returns
+ */
+function announcesGatewayAddresses(rawConfig: any): boolean {
+  const network = rawConfig.network;
+  const gateway =
+    network !== undefined && network !== null ? network.gateway : undefined;
+
+  return (
+    gateway !== undefined && gateway !== null && gateway.mode === GatewayMode.PortForward
+  );
 }
 
 /**
