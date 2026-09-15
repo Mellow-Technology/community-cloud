@@ -22,6 +22,259 @@ The Community Cloud Installer is a command-line interface (CLI) tool designed to
 
 For detailed instructions on how to use the Community Cloud Installer, please refer to the [Documentation](./docs/).
 
+## Configuration
+
+Everything the installer does comes from one JSON file, conventionally
+`cc.config.json`. Every command takes its path:
+
+```bash
+community-cloud preflight cc.config.json
+community-cloud run-bundle k3s phoenix cc.config.json
+community-cloud doctor cc.config.json
+```
+
+You don't have to write it by hand. `community-cloud` with no
+arguments walks through building one, and can edit an existing file:
+
+```bash
+community-cloud                      # build or edit a configuration
+community-cloud configure --section nodes
+```
+
+**The file holds secrets** — the cluster token, registry passwords, a
+Nebula API key — so it's gitignored here as `*.config.json`. What the
+installer records *in* the cluster has those stripped out; see
+[Secrets in commands](#secrets-in-commands).
+
+### A small complete example
+
+```jsonc
+{
+  "config": { "adminEmail": "you@example.com" },
+
+  "k3s": { "token": "a-long-shared-secret" },
+
+  "values": {
+    "domain": { "main": "example.com" }
+  },
+
+  "network": {
+    "congestionControl": "bbr",
+    "gateway": {
+      "mode": "port-forward",
+      "addresses": ["192.168.1.240-192.168.1.250"]
+    }
+  },
+
+  "packages": { "cert-manager": true, "cloudnative-pg": true },
+
+  "nodes": [
+    {
+      "name": "server-1",
+      "address": "server-1.local",
+      "username": "kyle",
+      "type": "server",
+      "gateway": true,
+      "roles": ["worker", "storage-local"],
+      "region": "eur",
+      "zone": "eur-de-1"
+    }
+  ]
+}
+```
+
+### `nodes`
+
+The only required section. Each entry is one machine.
+
+| Key | Meaning |
+|---|---|
+| `name` | What to call it. Also how it registers in the cluster, when it can be a DNS label. |
+| `address` | How to reach it over SSH. Often an alias from `~/.ssh/config` rather than a name DNS knows. |
+| `type` | `server` or `agent`. Exactly one node should be a `server`. |
+| `username` | The SSH user. Needs passwordless sudo. |
+| `keyFile` | A private key path. Otherwise the usual `~/.ssh` keys and your agent are tried. |
+| `port` | SSH port, when it isn't 22. |
+| `apiAddress` | Where *other nodes* reach this one's Kubernetes API, when that differs from `address`. A bastion or port forward gets you to a node without being a name the cluster can use. |
+| `nodeName` | What to register as in the cluster, when `name` and `address` can't be DNS labels. `"Mamoru BKK"` and `10.0.0.5` both can't. |
+| `gateway` | `true` if the outside world can reach this node. See `network.gateway`. |
+| `roles` | What it's for: `worker`, `worker-gpu`, `storage-local`, `storage-distributed`, `storage`, `gateway`, `lighthouse`. Applied as `node-role.kubernetes.io/<role>` labels, which is what the manifests in `k8s/` select on. |
+| `labels` | Anything else worth labelling it with, as key/value pairs. |
+| `region`, `zone` | Where it physically is. Kubernetes spreads workloads across zones. Region codes are fixed — see `src/topology/regions.ts`. |
+| `storage` | Per-node storage settings, overriding the cluster-wide `storage` section. |
+| `nebula` | Per-node mesh settings: `role`, `listenPort`, `staticAddresses`, `isLighthouse`, `isRelay`. |
+
+Some roles are worked out rather than written down: a node with a GPU
+gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
+
+### `k3s`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `token` | — | The cluster token. The server and every agent need the same one. Required. |
+| `version` / `channel` | current stable | Pin the K3s release. |
+| `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
+| `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik` and `servicelb` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API and Cilium's own IP management hands out load balancer addresses. |
+| `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
+| `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
+
+### `network`
+
+Kernel networking settings sit at the top of this section; everything
+else is a subsection.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `congestionControl` | `bbr` | TCP congestion control. BBR holds throughput up over links that lose the odd packet, which CUBIC reads as congestion. |
+| `qdisc` | `fq` | The default queueing discipline. BBR wants a fair-queueing one underneath it. |
+| `congestionModule` | `tcp_<algorithm>` | The kernel module, when it isn't named after the algorithm. |
+
+#### `network.cilium`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `1.20.1` | The Cilium release. |
+| `cliVersion` | `v0.20.0` | The Cilium CLI. `"stable"` takes whatever is current instead. |
+| `gatewayApiVersion` | `v1.6.1` | The Gateway API release. Pinned deliberately: a mismatched pair fails quietly. |
+| `kubeProxyReplacement` | `true` | Whether Cilium takes over from kube-proxy. K3s reads this too. |
+| `valuesFile` | the embedded one | Override the Cilium values. |
+
+#### `network.gateway`
+
+How the outside world reaches the cluster. The `gateway` bundle turns
+this into a Cilium address pool, and on a home network an ARP
+announcement policy as well.
+
+| Key | Meaning |
+|---|---|
+| `mode` | `floating` — the address is already on an interface of a gateway node, routed there by a provider. `port-forward` — a router maps ports to a LAN address nothing holds, and Cilium answers ARP for it. |
+| `addresses` | What a LoadBalancer Service may be given: `"203.0.113.10"`, `"10.0.0.0/29"`, or `"192.168.1.240-192.168.1.250"`. |
+| `interfaces` | `port-forward` only. Which interfaces to answer ARP on, as regular expressions. Defaults to every local interface. |
+| `name` | What to call the pool and policy. Defaults to `community-cloud-gateway`. |
+
+#### `network.externalIPs`
+
+Addresses a particular node holds, as node name to address. This is
+the floating case written per node, and the node must be a gateway.
+
+```jsonc
+"externalIPs": { "Brahma": "203.0.113.10" }
+```
+
+#### `network.nebula`
+
+A Defined Networking mesh, for nodes that can't reach each other
+directly.
+
+| Key | Meaning |
+|---|---|
+| `apiKey` | A Defined Networking API key. Falls back to the `DEFINED_API_KEY` environment variable. |
+| `network` / `networkID` | Which network, by name or by ID. |
+| `defaultRole` | The role nodes enrol under. |
+| `roles` | Roles to create: `name`, `description`, and `firewallRules` of `protocol` (`ANY`/`TCP`/`UDP`/`ICMP`), `allowedRole` or `allowedTags`, and `portRange`. |
+
+### `storage`
+
+Which disks TopoLVM may carve volumes out of. Can also be set per
+node, which is usually where it belongs — nodes differ in their disks
+more than in anything else.
+
+| Key | Meaning |
+|---|---|
+| `disks` | Consider only these, by path. This **narrows** what's considered; it never overrides a safety check. |
+| `diskClasses` | Put a disk in a class other than the one its hardware suggests: `{"/dev/sdb": "hdd"}`. |
+| `minimumSizeGb` | Ignore disks smaller than this. Defaults to 1. |
+
+Disks are sorted by what they are — NVMe to `ssd`, other solid state
+to `ssd-sata`, spinning to `hdd` — and the volume group each class
+lands in comes from the TopoLVM values file. A disk is only ever
+touched if it is demonstrably unused: no partitions, no filesystem
+signature, not mounted, nothing holding it, not removable, not
+read-only. Anything else is reported and left alone.
+
+### `packages`
+
+Which Helm charts to install. `true` is shorthand for enabled.
+
+```jsonc
+"packages": {
+  "cert-manager": true,
+  "cloudnative-pg": true,
+  "authentik": { "enabled": true, "version": "2024.10.1" }
+}
+```
+
+In the catalogue: `cert-manager`, `cloudnative-pg`, `authentik`,
+`topolvm`, `headlamp`, `tailscale-operator`. Dependencies are worked
+out and installed first — Authentik needs CloudNativePG, so enabling
+it enables that too.
+
+A package not in the catalogue needs `repo` and `chart`. Any package
+takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
+the working directory) and `requires`.
+
+### `registries`
+
+Credentials for private registries, keyed by hostname. These end up in
+`/etc/rancher/k3s/registries.yaml`, owned by root and readable by
+nobody else.
+
+```jsonc
+"registries": {
+  "registry.gitlab.com": {
+    "auth": { "username": "deploy-token", "password": "..." }
+  }
+}
+```
+
+`auth` takes either `username` and `password`, or one of the encoded
+forms: `auth` (base64 of `username:password`) or `identityToken`.
+`tls` takes `caFile`, `certFile`, `keyFile`, `insecureSkipVerify`.
+`endpoint` and `rewrite` are for mirroring.
+
+### `values` and `config`
+
+What the manifests under `k8s/` render against. Anything in `values`
+is available as `.Values.<path>`; the top level of the configuration
+is too, so `config.adminEmail` reaches a manifest as
+`.Values.adminEmail`.
+
+The manifests currently reference `adminEmail`, `domain.main`,
+`domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost` and
+`authentik.secretKey`. A few values are derived rather than written:
+`k8sApiServer` and `k8sApiPort` come from the control-plane node,
+`l2Announcements` from the gateway mode, and `networkDevices` from the
+shared interface list.
+
+### `pipelines`
+
+Named sequences of bundles, for `run-pipeline`:
+
+```jsonc
+"pipelines": {
+  "new-node": ["base", "network", "gpu", "k3s", "nodeLabels"]
+}
+```
+
+### `helm`
+
+`version` pins the Helm release. That's all it takes.
+
+### Checking a configuration
+
+`preflight` reads it and says what would stop an install — no server,
+two servers, a missing token, a node that can't be reached, a gateway
+with no addresses — before anything is changed:
+
+```bash
+community-cloud preflight cc.config.json
+```
+
+Once a cluster exists, its configuration is recorded in the cluster
+itself as a ConfigMap in `kube-system`, with the secrets stripped.
+`doctor` compares that against your file and reports anywhere they've
+drifted apart.
+
 ## Building
 
 The installer ships as a single executable. It needs nothing on the
