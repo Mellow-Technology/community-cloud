@@ -23,9 +23,9 @@
  * - sudo, to put the CLI on the path
  */
 
-import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { quoteForShell, writeFileCommand } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
 
@@ -139,10 +139,7 @@ interface CiliumConfig {
  * @returns
  */
 function getCiliumConfig(config: CloudConfig): CiliumConfig {
-  const { network } = config.getConfig();
-  const cilium = network !== undefined && network !== null ? network.cilium : undefined;
-
-  return cilium !== undefined && cilium !== null ? cilium : {};
+  return config.getNetworkSection("cilium");
 }
 
 /**
@@ -227,6 +224,7 @@ export const CiliumCommands: CommandSpec[] = [
    */
   {
     name: "get-cilium-cli-version",
+    purpose: CommandPurpose.Inspect,
     description: "Work out which version of the Cilium CLI to install",
     runOn: CommandTarget.ControlPlane,
     command: (config: CloudConfig) => {
@@ -296,8 +294,7 @@ export const CiliumCommands: CommandSpec[] = [
     description: "Write the rendered Cilium values onto the node",
     runOn: CommandTarget.ControlPlane,
     command: [
-      `install -m 0600 /dev/null ${REMOTE_VALUES_PATH} || { echo "Couldn't create ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
-      `cat > ${REMOTE_VALUES_PATH} || { echo "Couldn't write ${REMOTE_VALUES_PATH}" >&2; exit 1; }`,
+      ...writeFileCommand(REMOTE_VALUES_PATH, { mode: "0600" }),
       `echo "wrote ${REMOTE_VALUES_PATH}"`,
     ],
     stdin: (config: CloudConfig) => renderValues(config),
@@ -368,6 +365,7 @@ export const CiliumCommands: CommandSpec[] = [
    */
   {
     name: "wait-for-cilium",
+    purpose: CommandPurpose.Settle,
     description: "Wait for Cilium to report itself healthy",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
@@ -385,6 +383,7 @@ export const CiliumCommands: CommandSpec[] = [
    */
   {
     name: "verify-cilium",
+    purpose: CommandPurpose.Verify,
     description: "Verify the CNI is up and the nodes are ready",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,

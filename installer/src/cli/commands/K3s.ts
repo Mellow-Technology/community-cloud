@@ -22,10 +22,10 @@
  * - sudo, which the K3s install script uses itself for the privileged
  *   parts, so these commands don't set the sudo flag
  */
-import { CommandSpec, OutputType } from "./Command.ts";
+import { CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SInstallationType } from "../../util/types.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 
 // Where the install script comes from
 const K3S_INSTALL_URL = "https://get.k3s.io";
@@ -102,10 +102,7 @@ function getK3sConfig(config: CloudConfig): K3sConfig {
  * @returns
  */
 function replacesKubeProxy(config: CloudConfig): boolean {
-  const { network } = config.getConfig();
-  const cilium = network !== undefined && network !== null ? network.cilium : undefined;
-
-  return cilium === undefined || cilium.kubeProxyReplacement !== false;
+  return config.getNetworkSection("cilium").kubeProxyReplacement !== false;
 }
 
 /**
@@ -301,19 +298,6 @@ function buildInstallSecrets(config: CloudConfig): Record<string, string> {
   };
 }
 
-/**
- * Poll a check until it passes, or until we've waited long enough.
- *
- * Written as one loop rather than joined with the commands around it,
- * since "do" takes the body straight after it with no separator.
- *
- * @param check
- * @returns
- */
-function waitUntil(check: string): string {
-  return `for attempt in $(seq ${READY_TIMEOUT_SECONDS}); do ${check} && break; sleep 1; done`;
-}
-
 export const K3sCommands: CommandSpec[] = [
   /**
    * Install K3s itself. The install script works out that it isn't
@@ -351,12 +335,13 @@ export const K3sCommands: CommandSpec[] = [
    */
   {
     name: "wait-for-k3s",
+    purpose: CommandPurpose.Settle,
     description: "Wait for the K3s service to come up",
     command: (config: CloudConfig, context: any) => {
       const service = getServiceName(context);
 
       return [
-        waitUntil(`systemctl is-active --quiet ${service}`),
+        waitUntil(`systemctl is-active --quiet ${service}`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
         `systemctl is-active --quiet ${service} || { echo "${service} didn't come up within ${READY_TIMEOUT_SECONDS}s" >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
         `echo "${service} is active"`,
       ];
@@ -375,13 +360,14 @@ export const K3sCommands: CommandSpec[] = [
    */
   {
     name: "verify-k3s",
+    purpose: CommandPurpose.Verify,
     description: "Verify the node has joined and is working",
     command: (config: CloudConfig, context: any) => {
       if (getInstallationType(context) === K3SInstallationType.Server) {
         const nodeName = getNodeName(context);
 
         return [
-          waitUntil("k3s kubectl get nodes >/dev/null 2>&1"),
+          waitUntil("k3s kubectl get nodes >/dev/null 2>&1", getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
           "k3s kubectl get nodes -o wide",
           nodeName !== undefined
             ? `k3s kubectl get node ${quoteForShell(nodeName)} >/dev/null || { echo "${nodeName} hasn't registered with the cluster" >&2; exit 1; }`
@@ -394,7 +380,7 @@ export const K3sCommands: CommandSpec[] = [
       const clientCert = "/var/lib/rancher/k3s/agent/client-kubelet.crt";
 
       return [
-        waitUntil(`sudo test -s ${kubeletConfig} && sudo test -s ${clientCert}`),
+        waitUntil(`sudo test -s ${kubeletConfig} && sudo test -s ${clientCert}`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
         `sudo test -s ${kubeletConfig} || { echo "The agent never got a kubelet config, so it hasn't joined the cluster" >&2; exit 1; }`,
         `sudo test -s ${clientCert} || { echo "The agent never got a signed client certificate, so the server hasn't accepted it" >&2; exit 1; }`,
         // The certificate is issued by the cluster CA and names the

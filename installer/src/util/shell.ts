@@ -124,3 +124,102 @@ export function buildSecretEnvScript(
     payload: `${lines.join("\n")}\n`,
   };
 }
+
+/**
+ * How to write a file.
+ *
+ * - mode: the permissions it ends up with. The default is what an
+ *   ordinary configuration file wants; anything holding a credential
+ *   should say 0600.
+ * - asRoot: whether the file belongs to root. Needed for anywhere
+ *   under /etc, and for anything only a service should read.
+ */
+export interface WriteFileOptions {
+  mode?: string;
+  asRoot?: boolean;
+}
+
+/**
+ * Build a command that writes a file from its standard input.
+ *
+ * The contents go over standard input rather than into the command,
+ * which is what keeps a password out of a process listing and a whole
+ * YAML document out of a shell quoting problem. The caller supplies
+ * them as the command's "stdin".
+ *
+ * The file is created empty with its permissions already set, then
+ * written into. Setting them afterwards leaves a window where the
+ * contents are on disk and readable by everyone, which for the files
+ * this is used for is the entire problem.
+ *
+ * sudo goes on each part rather than on the command as a whole,
+ * because the privileged half is the write at the end of a pipe: a
+ * leading sudo would leave the redirect running as the connecting
+ * user. That's also why a command using this doesn't set the sudo
+ * flag.
+ *
+ * @param filePath
+ * @param options
+ * @returns the lines of the command
+ */
+export function writeFileCommand(
+  filePath: string,
+  options: WriteFileOptions = {},
+): string[] {
+  const { mode = "0644", asRoot = false } = options;
+
+  const sudo = asRoot ? "sudo " : "";
+  const ownership = asRoot ? "-o root -g root " : "";
+  const quotedPath = quoteForShell(filePath);
+
+  return [
+    `${sudo}install ${ownership}-m ${mode} /dev/null ${quotedPath} || { echo "Couldn't create ${filePath}" >&2; exit 1; }`,
+    `${sudo}tee ${quotedPath} > /dev/null || { echo "Couldn't write ${filePath}" >&2; exit 1; }`,
+  ];
+}
+
+/**
+ * Poll a check until it passes, or until we've waited long enough.
+ *
+ * Written as one loop rather than joined with the commands around it,
+ * since "do" takes the body straight after it with no separator.
+ *
+ * A wait of nothing produces a command that does nothing, so a caller
+ * with no patience gets a command with no loop in it rather than a
+ * loop that runs once.
+ *
+ * @param check
+ * @param seconds
+ * @returns
+ */
+export function waitUntil(check: string, seconds: number): string {
+  if (seconds <= 0) {
+    return "true";
+  }
+
+  return `for attempt in $(seq ${seconds}); do ${check} && break; sleep 1; done`;
+}
+
+/**
+ * How long a command should be prepared to wait.
+ *
+ * Every wait in here exists for the same reason: directly after a
+ * change, the thing being checked may not have caught up yet. An
+ * agent has its certificate before the API server has a Node for it,
+ * a pool is accepted a moment after it's created. Waiting is right
+ * there, and wrong everywhere else — something only asking what is
+ * currently true has no race to lose, and a node with a real problem
+ * would make it sit through every timeout in turn before saying so.
+ *
+ * So the patience comes from the context, and anything that just
+ * wants an answer says it has none.
+ *
+ * @param context
+ * @param fallback what to wait when nothing says otherwise
+ * @returns
+ */
+export function getWaitSeconds(context: any, fallback: number): number {
+  return context !== undefined && context !== null && context.noWaiting === true
+    ? 0
+    : fallback;
+}

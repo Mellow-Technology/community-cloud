@@ -41,6 +41,78 @@ export enum CommandType {
 }
 
 /**
+ * What a command is for.
+ *
+ * Every command in here does one of four things, and the difference
+ * that matters most is whether it changes anything. A cluster people
+ * depend on should be safe to ask questions of, and that's only true
+ * if something knows which commands are questions.
+ *
+ * - Inspect: reads the node or the cluster and says what it found.
+ *   Every answer is a valid answer — a node with no GPU is a fine
+ *   node, K3s not being installed yet is a fine thing to discover —
+ *   and what it finds is usually for the commands after it.
+ * - Require: reads, and demands a particular answer. This is what has
+ *   to be true before the work can start: a kernel offering the
+ *   congestion control we're about to set, a cluster with Cilium in
+ *   it. A failure here means don't bother trying.
+ * - Verify: reads, and demands that a change actually took. Same
+ *   mechanics as Require, opposite assumption — Require expects
+ *   nothing to be installed, Verify expects everything to be.
+ * - Settle: waits for a change to finish taking effect. Changes
+ *   nothing itself, but only means anything directly after an Apply,
+ *   and it is the one kind that can block for a long time — the point
+ *   of it is to wait. On a healthy node it returns at once; on a
+ *   broken one it waits out its whole timeout before saying so, which
+ *   is right during an install and useless to anything just asking
+ *   questions.
+ * - Apply: changes something. Installs, writes, labels, restarts.
+ *
+ * All but the last change nothing, which is what makes them safe to
+ * run against a cluster in service. Apply is the default precisely
+ * because a command that hasn't said what it is should be treated as
+ * though it changes the world.
+ */
+export enum CommandPurpose {
+  Inspect = "inspect",
+  Require = "require",
+  Verify = "verify",
+  Settle = "settle",
+  Apply = "apply",
+}
+
+/**
+ * The purposes that change nothing, and so can be run against a
+ * cluster without asking anyone first.
+ *
+ * Safe is not the same as quick: Settle is in here because it changes
+ * nothing, and left out of anything that has to answer promptly.
+ */
+export const READ_ONLY_PURPOSES: CommandPurpose[] = [
+  CommandPurpose.Inspect,
+  CommandPurpose.Require,
+  CommandPurpose.Verify,
+  CommandPurpose.Settle,
+];
+
+/**
+ * The purposes that change nothing and answer without waiting.
+ */
+export const PROMPT_PURPOSES: CommandPurpose[] = READ_ONLY_PURPOSES.filter(
+  (purpose) => purpose !== CommandPurpose.Settle,
+);
+
+/**
+ * Whether a command changes anything.
+ *
+ * @param purpose
+ * @returns
+ */
+export function isReadOnly(purpose: CommandPurpose): boolean {
+  return READ_ONLY_PURPOSES.includes(purpose);
+}
+
+/**
  * Where a command runs.
  *
  * A bundle is aimed at one node and nearly everything in it belongs
@@ -102,6 +174,9 @@ export type ContextUpdates = Record<string, unknown>;
  *   commands to use. Either a map of context key to a path into this
  *   command's output ("parsed.token", "status"), or a function handed
  *   the output which returns the values to add.
+ * - purpose: what the command is for, and in particular whether it
+ *   changes anything. Defaults to Apply, so a command that doesn't say
+ *   is never run by anything that promised to only look.
  * - runOn: where the command runs. Defaults to the node the bundle is
  *   aimed at; set to the control plane for anything needing kubectl.
  * - skipWhen: a function saying this command has nothing to do, given
@@ -120,6 +195,7 @@ export interface BaseCommandSpec {
   parseFunction?: Function;
   saveToContext?: Record<string, string> | Function;
   skipWhen?: Function;
+  purpose?: CommandPurpose;
   runOn?: CommandTarget;
 }
 
@@ -249,6 +325,13 @@ export default abstract class Command {
   // Where the command runs
   runOn: CommandTarget;
 
+  // What the command is for, and so whether it changes anything
+  purpose: CommandPurpose;
+
+  // Whether to print the output as it goes. On by default, because a
+  // bundle being run by hand is something a person is watching.
+  quiet: boolean;
+
   constructor(
     {
       name,
@@ -259,6 +342,7 @@ export default abstract class Command {
       parseFunction = undefined,
       saveToContext = undefined,
       skipWhen = undefined,
+      purpose = CommandPurpose.Apply,
       runOn = CommandTarget.Node,
     }: BaseCommandSpec,
     defaultOutput: OutputType = OutputType.Raw,
@@ -271,6 +355,8 @@ export default abstract class Command {
     this.parseFunction = parseFunction;
     this.saveToContext = saveToContext;
     this.skipWhen = skipWhen;
+    this.purpose = purpose;
+    this.quiet = false;
     this.runOn = runOn;
     this.rawOutput = null;
     this.parsedOutput = {
@@ -297,6 +383,15 @@ export default abstract class Command {
    * @param commandResults
    * @returns
    */
+  /**
+   * Stop printing the output as it goes.
+   *
+   * @param quiet
+   */
+  setQuiet(quiet: boolean = true) {
+    this.quiet = quiet;
+  }
+
   shouldSkip(config, context, commandResults): boolean {
     if (typeof this.skipWhen !== "function") {
       return false;
@@ -345,7 +440,9 @@ export default abstract class Command {
       this.parsedOutput.contextUpdates = contextUpdates;
     }
 
-    console.log(this.parsedOutput);
+    if (!this.quiet) {
+      console.log(this.parsedOutput);
+    }
 
     return this.parsedOutput;
   }

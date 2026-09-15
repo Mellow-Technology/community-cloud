@@ -17,7 +17,7 @@
  * Requires:
  * - an API key with the roles:create, roles:list and networks:list scopes
  */
-import { CommandSpec, WebCommandSpec } from "./Command.ts";
+import { CommandPurpose, CommandSpec, WebCommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // Where the API lives
@@ -83,10 +83,28 @@ export interface NebulaConfig {
  * @returns
  */
 export function getNebulaConfig(config: CloudConfig): NebulaConfig {
-  const { network } = config.getConfig();
-  const nebula = network !== undefined && network !== null ? network.nebula : undefined;
+  return config.getNetworkSection("nebula");
+}
 
-  return nebula !== undefined && nebula !== null ? nebula : {};
+/**
+ * Whether this cluster uses Nebula at all.
+ *
+ * A cluster whose nodes all sit on one network doesn't need a mesh,
+ * and nothing about that is a problem. Worth being able to tell apart
+ * from a cluster that wants one and hasn't been given a key, which is.
+ *
+ * @param config
+ * @returns
+ */
+export function usesNebula(config: CloudConfig): boolean {
+  const { apiKey, network, id } = getNebulaConfig(config);
+
+  return (
+    (apiKey !== undefined && apiKey !== "") ||
+    process.env[API_KEY_ENV] !== undefined ||
+    network !== undefined ||
+    id !== undefined
+  );
 }
 
 /**
@@ -123,6 +141,8 @@ export function buildApiHeaders(config: CloudConfig): Record<string, string> {
  */
 export const findNetworkCommand: WebCommandSpec = {
   name: "find-nebula-network",
+  purpose: CommandPurpose.Inspect,
+  skipWhen: (config: CloudConfig) => !usesNebula(config),
   description: "Find the Defined Networking network for the cluster",
   url: `${DEFINED_API_URL}/v2/networks`,
   query: { pageSize: PAGE_SIZE },
@@ -170,6 +190,8 @@ export const findNetworkCommand: WebCommandSpec = {
  */
 export const listRolesCommand: WebCommandSpec = {
   name: "list-nebula-roles",
+  purpose: CommandPurpose.Inspect,
+  skipWhen: (config: CloudConfig) => !usesNebula(config),
   description: "List the roles already on the network",
   url: `${DEFINED_API_URL}/v1/roles`,
   query: { pageSize: PAGE_SIZE },
@@ -276,6 +298,8 @@ export function getRoleID(context: any, name: string): string | undefined {
  */
 const verifyRolesCommand: WebCommandSpec = {
   name: "verify-nebula-roles",
+  purpose: CommandPurpose.Verify,
+  skipWhen: (config: CloudConfig) => !usesNebula(config),
   description: "Verify the configured roles exist on the network",
   url: `${DEFINED_API_URL}/v1/roles`,
   query: { pageSize: PAGE_SIZE },

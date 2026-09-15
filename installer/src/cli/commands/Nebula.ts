@@ -30,11 +30,12 @@
  * - a Debian or Ubuntu node, since dnclient comes from an apt repository
  * - sudo
  */
-import { CommandSpec, OutputType, WebCommandSpec } from "./Command.ts";
+import { CommandPurpose, CommandSpec, OutputType, WebCommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import {
   DEFINED_API_URL,
+  usesNebula,
   buildApiHeaders,
   findNetworkCommand,
   getDefaultRoleName,
@@ -118,6 +119,7 @@ function getHostName(context: any): string {
  */
 const findHostCommand: WebCommandSpec = {
   name: "find-nebula-host",
+  purpose: CommandPurpose.Inspect,
   description: "Check whether the node is already registered on the network",
   url: `${DEFINED_API_URL}/v2/hosts`,
   query: (config: CloudConfig, context: any) => ({
@@ -260,6 +262,7 @@ export const NebulaCommands: CommandSpec[] = [
    */
   {
     name: "check-nebula-enrollment",
+    purpose: CommandPurpose.Inspect,
     description: "Check whether the node is already enrolled",
     command: [
       `if command -v ${SERVICE} > /dev/null 2>&1 && sudo ${SERVICE} info > /dev/null 2>&1`,
@@ -357,6 +360,8 @@ export const NebulaCommands: CommandSpec[] = [
    */
   {
     name: "verify-nebula-host",
+    purpose: CommandPurpose.Verify,
+    skipWhen: (config: CloudConfig) => !usesNebula(config),
     description: "Verify the node is on the Nebula network",
     command: (config: CloudConfig, context: any) => {
       const addresses = Array.isArray(context.nebulaIPAddresses)
@@ -379,7 +384,7 @@ export const NebulaCommands: CommandSpec[] = [
 
       const address = quoteForShell(addresses[0]);
       checks.push(
-        `for attempt in $(seq ${READY_TIMEOUT_SECONDS}); do ip -o addr show | grep -q ${address} && break; sleep 1; done`,
+        waitUntil(`ip -o addr show | grep -q ${address}`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
         `ip -o addr show | grep -q ${address} || { echo "The address ${addresses[0]} the network assigned never appeared on an interface, so the tunnel isn't up" >&2; exit 1; }`,
         `echo "on the mesh at ${addresses[0]}"`,
         `ip -o addr show | grep ${address}`,

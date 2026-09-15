@@ -1,4 +1,4 @@
-import{ CommandOutput, CommandSpec, OutputType } from "./Command.ts";
+import { CommandOutput, CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
 
 /**
  * @file
@@ -50,6 +50,7 @@ export const LvmCommands: CommandSpec[] = [
    */
   {
     name: "find-disks",
+    purpose: CommandPurpose.Inspect,
     description: "Find disks that can be used with LVM for node local storage.",
     sudo: true,
     command: "sfdisk -l",

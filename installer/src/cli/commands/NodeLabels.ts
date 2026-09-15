@@ -25,11 +25,11 @@
  * Requires:
  * - a node with a type of "server" in the configuration
  */
-import { CommandOutput, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { CommandOutput, CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { GpuVendor, NodeRole, VideoDevice } from "../../util/types.ts";
 import { getNodeName } from "./K3s.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
 
 // Where automatic hardware labels live. Namespaced, so it's obvious
@@ -328,6 +328,7 @@ export const NodeLabelCommands: CommandSpec[] = [
    */
   {
     name: "check-cluster-access",
+    purpose: CommandPurpose.Require,
     description: "Check the cluster is reachable and knows this node",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
@@ -336,7 +337,7 @@ export const NodeLabelCommands: CommandSpec[] = [
 
       return [
         'command -v kubectl > /dev/null 2>&1 || { echo "kubectl isn\'t on the control plane, so nothing can be labelled. Check K3s is installed there." >&2; exit 1; }',
-        `for attempt in $(seq ${REGISTRATION_TIMEOUT_SECONDS}); do kubectl get node ${name} > /dev/null 2>&1 && break; sleep 1; done`,
+        waitUntil(`kubectl get node ${name} > /dev/null 2>&1`, getWaitSeconds(context, REGISTRATION_TIMEOUT_SECONDS)),
         `kubectl get node ${name} -o json 2>/dev/null || { echo "The cluster still has no node called ${name} after ${REGISTRATION_TIMEOUT_SECONDS}s. Check K3s is installed on it and that it has joined." >&2; exit 1; }`,
       ];
     },
@@ -404,6 +405,7 @@ export const NodeLabelCommands: CommandSpec[] = [
    */
   {
     name: "verify-node-labels",
+    purpose: CommandPurpose.Verify,
     description: "Check the node ended up with the labels it was meant to",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,

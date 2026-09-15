@@ -19,6 +19,7 @@ import { parse } from "@ctrl/golang-template";
 
 import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode } from "./types.ts";
+import { asCiliumDevices } from "./interfaces.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 
 // Tags that @ctrl/golang-template handles on its own.
@@ -340,6 +341,14 @@ export function buildTemplateValues(config: CloudConfig) {
   // one renders as nothing and leaves Helm an empty setting.
   if (values.l2Announcements === undefined) {
     values.l2Announcements = announcesGatewayAddresses(rawConfig);
+  }
+
+  // Which interfaces Cilium's datapath attaches to. Taken from the one
+  // list rather than written out in the values file, so that Cilium
+  // and the gateway's ARP announcements agree about what counts as an
+  // interface on this node.
+  if (values.networkDevices === undefined) {
+    values.networkDevices = asCiliumDevices();
   }
 
   return { Values: values };

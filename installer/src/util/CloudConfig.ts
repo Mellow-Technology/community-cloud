@@ -45,6 +45,33 @@ export default class CloudConfig {
 
 
   /**
+   * The networking part of the configuration.
+   *
+   * @returns the section, or an empty one when there isn't any
+   */
+  getNetwork() {
+    const { network } = this.config;
+    return network !== undefined && network !== null ? network : {};
+  }
+
+  /**
+   * One piece of the networking configuration, by name.
+   *
+   * Nearly everything to do with networking is a section under
+   * "network" — cilium, gateway, nebula, externalIPs — and each was
+   * reaching in and checking for the same two kinds of missing. A
+   * section that isn't there reads as an empty one, so a caller can
+   * destructure what it wants and get undefined for anything unset.
+   *
+   * @param name
+   * @returns
+   */
+  getNetworkSection(name: string) {
+    const section = this.getNetwork()[name];
+    return section !== undefined && section !== null ? section : {};
+  }
+
+  /**
    * Retrieve configuration information
    * for a node.
    * @param nodeName

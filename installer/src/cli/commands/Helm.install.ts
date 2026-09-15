@@ -14,7 +14,7 @@
  * Requires:
  * - curl and sudo
  */
-import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // The official installer, which does its own checksum verification
@@ -47,6 +47,7 @@ export const HelmInstallCommands: CommandSpec[] = [
    */
   {
     name: "check-helm",
+    purpose: CommandPurpose.Inspect,
     description: "Check whether Helm is already installed",
     runOn: CommandTarget.ControlPlane,
     command: [
@@ -115,6 +116,7 @@ export const HelmInstallCommands: CommandSpec[] = [
    */
   {
     name: "verify-helm",
+    purpose: CommandPurpose.Verify,
     description: "Verify Helm is installed and can reach the cluster",
     runOn: CommandTarget.ControlPlane,
     env: (config: CloudConfig) => {

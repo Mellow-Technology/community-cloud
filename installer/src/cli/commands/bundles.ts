@@ -18,6 +18,7 @@ import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
 import { GatewayCommands } from "./GatewayNodes.ts";
+import { PreflightCommands } from "./Preflight.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
 import { HelmCommands } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
@@ -88,6 +89,11 @@ export const bundles: BundleDefinition[] = [
     name: "nebula-network",
     description: "Set up the Nebula network and the roles on it",
     commands: NebulaNetworkCommands,
+  },
+  {
+    name: "preflight",
+    description: "Check a node could be installed on, changing nothing",
+    commands: PreflightCommands,
   },
   {
     name: "registries",

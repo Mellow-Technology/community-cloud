@@ -28,6 +28,8 @@ import { listBundles } from "../runners/listBundles.ts";
 import { runPipeline } from "../runners/runPipeline.ts";
 import { configure } from "../runners/configure.ts";
 import { listEmbedded } from "../runners/listEmbedded.ts";
+import { doctor } from "../runners/doctor.ts";
+import { preflight } from "../runners/preflight.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -58,6 +60,8 @@ enum CliOperation {
   RunBundle = "run-bundle",
   ListBundles = "list-bundles",
   ListEmbedded = "list-embedded",
+  Doctor = "doctor",
+  Preflight = "preflight",
   RunPipeline = "run-pipeline",
   RunTemplate = "run-template"
 }
@@ -148,7 +152,29 @@ program
   .option("-c, --config <ccFilePath>", "Configuration file, needed for bundles whose commands come from one")
   .action(listBundles);
 
-// 7. ListEmbedded Command
+// 7. Preflight Command
+program
+  .command(CliOperation.Preflight)
+  .description("Check a configuration could be installed, before installing it")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("-n, --node <node>", "Check this node only")
+  .option("--timeout <seconds>", "How long to give a node to answer before calling it unreachable", "8")
+  .option("--verbose", "Print each command's output as well as the report")
+  .action(preflight);
+
+// 8. Doctor Command
+program
+  .command(CliOperation.Doctor)
+  .description("Ask a cluster how it's doing, without changing anything")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("-n, --node <node>", "Look at this node only")
+  .option("-b, --bundle <bundle>", "Run the checks from this bundle only")
+  .option("--verifications", "Only the checks that assert something, skipping the ones that just report")
+  .option("--wait", "Also run the checks that wait for something to settle, which are slow when anything is wrong")
+  .option("--verbose", "Print each command's output as well as the report")
+  .action(doctor);
+
+// 9. ListEmbedded Command
 program
   .command(CliOperation.ListEmbedded)
   .description("List the manifests that ship inside the installer")

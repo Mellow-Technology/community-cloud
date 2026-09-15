@@ -1,4 +1,9 @@
-import Command, { CommandSpec, CommandTarget, ContextUpdates } from "./Command.ts";
+import Command, {
+  CommandPurpose,
+  CommandSpec,
+  CommandTarget,
+  ContextUpdates,
+} from "./Command.ts";
 import TerminalCommand from "./TerminalCommand.ts";
 import WebCommand from "./WebCommand.ts";
 import { createCommand } from "./createCommand.ts";
@@ -55,6 +60,9 @@ export class CommandBundle {
   protected fetchFunction: Function | undefined;
   protected context: Record<string, unknown>;
   protected failed: boolean;
+  protected purposes: CommandPurpose[] | undefined;
+  protected continueOnFailure: boolean;
+  protected quiet: boolean;
 
   constructor(config: CloudConfig, commands?: CommandSpec[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
     this.config = config;
@@ -65,6 +73,9 @@ export class CommandBundle {
     this.fetchFunction = undefined;
     this.commandResults = {};
     this.failed = false;
+    this.purposes = undefined;
+    this.continueOnFailure = false;
+    this.quiet = false;
 
 
     // Have any subscribe hooks. Can be used for
@@ -116,6 +127,64 @@ export class CommandBundle {
   }
 
   /**
+   * Run only the commands that are for one of these purposes.
+   *
+   * This is how something can ask a bundle a question without letting
+   * it change anything: hand it the purposes that change nothing and
+   * the rest are never built, let alone run. The commands that do run
+   * still pass their findings along, so a check that depends on what
+   * an earlier one saw still works.
+   *
+   * @param purposes
+   * @returns
+   */
+  setPurposes(purposes: CommandPurpose[]): this {
+    this.purposes = purposes;
+    return this;
+  }
+
+  /**
+   * Keep going after a command fails.
+   *
+   * A bundle halts by default, because the commands in one build on
+   * each other and carrying on after a failed install means doing the
+   * next thing to a node that isn't ready for it. Somewhere only
+   * asking questions wants the opposite: one thing being wrong is the
+   * most likely reason to want to know what else is.
+   *
+   * @param value
+   * @returns
+   */
+  setContinueOnFailure(value: boolean = true): this {
+    this.continueOnFailure = value;
+    return this;
+  }
+
+  /**
+   * Stop the commands printing their output as they go.
+   *
+   * For a caller rendering its own report: the raw output of fifty
+   * commands buried underneath it helps nobody.
+   *
+   * @param value
+   * @returns
+   */
+  setQuiet(value: boolean = true): this {
+    this.quiet = value;
+    return this;
+  }
+
+  /**
+   * Whether a command is one this bundle was asked to run.
+   *
+   * @param command
+   * @returns
+   */
+  protected wants(command: Command): boolean {
+    return this.purposes === undefined || this.purposes.includes(command.purpose);
+  }
+
+  /**
    * Set the execution function for commands that asked to run on the
    * control plane rather than on the node this bundle is aimed at.
    *
@@ -161,6 +230,15 @@ export class CommandBundle {
       // the specification describes
       const command = createCommand(commandSpec);
 
+      // Not what this run was asked for. Left out entirely rather
+      // than skipped, since it was never going to happen and saying
+      // so would just be noise.
+      if (!this.wants(command)) {
+        continue;
+      }
+
+      command.setQuiet(this.quiet);
+
       // Hand over however this bundle runs things. A bundle can be
       // pointed at a remote host or at a stand-in, and only the kind
       // of command it applies to takes it.
@@ -187,8 +265,10 @@ export class CommandBundle {
         skip = command.shouldSkip(this.config, this.context, this.commandResults);
       }
       catch (e: any) {
-        console.log(`🔴 Error deciding whether to run: "${command.name}"`);
-        console.log(`🔴 Error Message: ${e.message}`);
+        if (!this.quiet) {
+          console.log(`🔴 Error deciding whether to run: "${command.name}"`);
+          console.log(`🔴 Error Message: ${e.message}`);
+        }
 
         this.commandResults[command.name] = {
           error: true,
@@ -197,12 +277,19 @@ export class CommandBundle {
           parsed: "",
         };
         this.failed = true;
-        console.log("== Halted execution ==");
-        break;
+
+        if (!this.continueOnFailure) {
+          if (!this.quiet) {
+            console.log("== Halted execution ==");
+          }
+          break;
+        }
       }
 
       if (skip) {
-        console.log(`⏭️  Skipped: "${command.name}" has nothing to do`);
+        if (!this.quiet) {
+          console.log(`⏭️  Skipped: "${command.name}" has nothing to do`);
+        }
         this.commandResults[command.name] = {
           stdout: "",
           stderr: "",
@@ -218,10 +305,15 @@ export class CommandBundle {
         res = await command.exec(this.config, this.context, this.commandResults);
       }
       catch (e: any) {
-        console.log(e);
-        console.log(`🔴 Error running command: "${command.name}"`)
-        console.log(`🔴 Generated Command: ${e.cmd}`)
-        console.log(`🔴 Error Message: ${e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message}`);
+        // A caller rendering its own report has the message in the
+        // result and doesn't want the stack and the whole command
+        // printed over the top of it
+        if (!this.quiet) {
+          console.log(e);
+          console.log(`🔴 Error running command: "${command.name}"`)
+          console.log(`🔴 Generated Command: ${e.cmd}`)
+          console.log(`🔴 Error Message: ${e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message}`);
+        }
 
         res = {
           error: true,
@@ -249,8 +341,13 @@ export class CommandBundle {
       // Stop executing the bundle
       if (res.error) {
         this.failed = true;
-        console.log("== Halted execution ==");
-        break;
+
+        if (!this.continueOnFailure) {
+          if (!this.quiet) {
+            console.log("== Halted execution ==");
+          }
+          break;
+        }
       }
     }
 
@@ -306,7 +403,15 @@ export class CommandBundle {
    * The name of the command that failed, when one did.
    */
   getFailedCommand(): string | undefined {
-    return Object.keys(this.commandResults).find(
+    return this.getFailedCommands()[0];
+  }
+
+  /**
+   * Every command that failed. More than one only when the bundle was
+   * told to keep going.
+   */
+  getFailedCommands(): string[] {
+    return Object.keys(this.commandResults).filter(
       (name) => this.commandResults[name]?.error === true,
     );
   }

@@ -36,9 +36,18 @@ export interface NodeConnection {
  * @param nodeName
  * @returns
  */
+export interface ConnectOptions {
+  // How long to wait for the connection, in milliseconds. Worth
+  // shortening for anything walking a list of nodes: the default is
+  // generous, and a node that's genuinely off holds up every node
+  // after it for the whole of it.
+  timeout?: number;
+}
+
 export async function connectToNode(
   config: CloudConfig,
   nodeName: string,
+  options: ConnectOptions = {},
 ): Promise<NodeConnection> {
   const node = config.getNode(nodeName);
   if (node === null) {
@@ -57,14 +66,15 @@ export async function connectToNode(
     };
   }
 
-  const options: RemoteHostOptions = {
+  const hostOptions: RemoteHostOptions = {
     host: node.address,
     username: node.username,
     keyFile: node.keyFile,
     port: node.port,
+    ...(options.timeout !== undefined ? { readyTimeout: options.timeout } : {}),
   };
 
-  const host = new RemoteHost(options);
+  const host = new RemoteHost(hostOptions);
   await host.connect();
 
   return {

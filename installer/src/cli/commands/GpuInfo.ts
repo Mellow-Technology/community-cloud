@@ -20,7 +20,8 @@
  * - the /dev/dri render nodes, which are what a container actually
  *   needs handed to it
  */
-import { CommandOutput, CommandSpec, OutputType } from "./Command.ts";
+import { CommandOutput, CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
+import { field, readLines, readRecords } from "./output.ts";
 import { GpuVendor, VideoDevice } from "../../util/types.ts";
 
 /**
@@ -108,21 +109,6 @@ const DETECT_SCRIPT = [
 ];
 
 /**
- * Read a field out of a split line, treating a missing one as empty.
- *
- * Every line here is written by the scripts above, but the compiler
- * has no way of knowing that and a truncated line shouldn't throw.
- *
- * @param fields
- * @param index
- * @returns
- */
-function field(fields: string[], index: number): string {
-  const value = fields[index];
-  return value !== undefined ? value : "";
-}
-
-/**
  * Turn the detection output into a list of devices.
  *
  * @param output
@@ -132,15 +118,13 @@ function parseDetection(output: CommandOutput) {
   const devices: VideoDevice[] = [];
   const renderNodes: string[] = [];
 
-  for (const line of readLines(output)) {
-    const fields = line.split("|");
-
-    if (fields[0] === "pci") {
-      const address = field(fields, 1);
-      const deviceClass = field(fields, 2);
-      const vendorId = field(fields, 3);
-      const deviceId = field(fields, 4);
-      const driver = field(fields, 5);
+  for (const { kind, fields } of readRecords(output)) {
+    if (kind === "pci") {
+      const address = field(fields, 0);
+      const deviceClass = field(fields, 1);
+      const vendorId = field(fields, 2);
+      const deviceId = field(fields, 3);
+      const driver = field(fields, 4);
       const known = PCI_VENDORS[vendorId];
 
       devices.push({
@@ -158,9 +142,9 @@ function parseDetection(output: CommandOutput) {
       continue;
     }
 
-    if (fields[0] === "platform") {
-      const address = field(fields, 1);
-      const driver = field(fields, 2);
+    if (kind === "platform") {
+      const address = field(fields, 0);
+      const driver = field(fields, 1);
       const known = driver !== "" ? PLATFORM_DRIVERS[driver] : undefined;
 
       devices.push({
@@ -172,8 +156,8 @@ function parseDetection(output: CommandOutput) {
       continue;
     }
 
-    if (fields[0] === "devnode") {
-      renderNodes.push(field(fields, 1));
+    if (kind === "devnode") {
+      renderNodes.push(field(fields, 0));
     }
   }
 
@@ -266,27 +250,13 @@ function mergeDevices(
   });
 }
 
-/**
- * Split output into non-empty lines.
- *
- * @param output
- * @returns
- */
-function readLines(output: CommandOutput): string[] {
-  const text = typeof output.parsed === "string" ? output.parsed : output.stdout;
-
-  return (text !== null && text !== undefined ? text : "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-}
-
 export const GpuInfoCommands: CommandSpec[] = [
   /**
    * Find the hardware.
    */
   {
     name: "detect-video-hardware",
+    purpose: CommandPurpose.Inspect,
     description: "Find the video hardware on the node and work out who made it",
     command: DETECT_SCRIPT,
     output: OutputType.Raw,
@@ -316,6 +286,7 @@ export const GpuInfoCommands: CommandSpec[] = [
    */
   {
     name: "name-video-hardware",
+    purpose: CommandPurpose.Inspect,
     description: "Name the detected hardware using lspci, when it's installed",
     skipWhen: (_config: any, context: any) => getDevices(context).length === 0,
     command:
@@ -364,6 +335,7 @@ export const GpuInfoCommands: CommandSpec[] = [
    */
   {
     name: "nvidia-gpu-details",
+    purpose: CommandPurpose.Inspect,
     description: "Read NVIDIA GPU details from nvidia-smi",
     skipWhen: (_config: any, context: any) => !hasGpuVendor(context, GpuVendor.Nvidia),
     command: [
@@ -428,6 +400,7 @@ export const GpuInfoCommands: CommandSpec[] = [
    */
   {
     name: "amd-gpu-details",
+    purpose: CommandPurpose.Inspect,
     description: "Read AMD GPU details from sysfs and check for ROCm",
     skipWhen: (_config: any, context: any) => !hasGpuVendor(context, GpuVendor.Amd),
     command: [
@@ -497,6 +470,7 @@ export const GpuInfoCommands: CommandSpec[] = [
    */
   {
     name: "intel-gpu-details",
+    purpose: CommandPurpose.Inspect,
     description: "Read Intel GPU details and check for the compute runtime",
     skipWhen: (_config: any, context: any) => !hasGpuVendor(context, GpuVendor.Intel),
     command: [

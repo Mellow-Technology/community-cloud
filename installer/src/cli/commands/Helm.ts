@@ -13,9 +13,9 @@
  * templates, so a chart can be handed the cluster's own domain or the
  * address of its API server without that being written down twice.
  */
-import { CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { quoteForShell, writeFileCommand } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
 import {
@@ -100,12 +100,9 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
     command: [
       `mkdir -p ${WORK_DIR}`,
       `chmod 0700 ${WORK_DIR}`,
-      // Created with its permissions already on it. Values carry
-      // database passwords and signing keys, and a file that starts
-      // out world-readable has already been read by the time a chmod
-      // after the fact catches up with it.
-      `install -m 0600 /dev/null ${path} || { echo "Couldn't create ${path}" >&2; exit 1; }`,
-      `cat > ${path} || { echo "Couldn't write ${path}" >&2; exit 1; }`,
+      // Values carry database passwords and signing keys, so the file
+      // is created with its permissions already on it
+      ...writeFileCommand(path, { mode: "0600" }),
       `echo "wrote ${path}"`,
     ],
     // The rendered values go over standard input rather than into the
@@ -170,6 +167,7 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
 
   return {
     name: `helm-verify-${definition.name}`,
+    purpose: CommandPurpose.Verify,
     description: `Verify ${definition.name} is deployed`,
     runOn: CommandTarget.ControlPlane,
     env: buildHelmEnv,
@@ -199,6 +197,7 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     return [
       {
         name: "no-packages-configured",
+        purpose: CommandPurpose.Inspect,
         description: "Report that no packages are configured",
         runOn: CommandTarget.ControlPlane,
         command:
@@ -213,6 +212,7 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   const commands: CommandSpec[] = [
     {
       name: "check-helm-available",
+      purpose: CommandPurpose.Require,
       description: "Check Helm is installed on the control plane",
       runOn: CommandTarget.ControlPlane,
       env: buildHelmEnv,

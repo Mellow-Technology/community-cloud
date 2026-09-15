@@ -44,11 +44,20 @@
  */
 import { stringify } from "yaml";
 
-import { CommandOutput, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { CommandOutput, CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import { field, readRecords } from "./output.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { GatewayMode, NodeRole } from "../../util/types.ts";
 import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
+import { InterfaceKind, asRegularExpressions } from "../../util/interfaces.ts";
+import {
+  NodeInterface,
+  findInterfacesHolding,
+  getInterfacesOfKind,
+  matchInterfaces,
+  readInterfacesCommand,
+} from "./Network.ts";
 import { getNodeName } from "./K3s.ts";
 
 // What the pool and the policy are called when the configuration
@@ -66,9 +75,9 @@ const CILIUM_CONFIGMAP = "cilium-config";
 const CILIUM_NAMESPACE = "kube-system";
 
 // The interfaces to answer ARP on when the configuration doesn't name
-// any. These are the predictable and unpredictable names Linux gives
-// physical interfaces, which is what a gateway's LAN side is.
-const DEFAULT_INTERFACES = ["^en[a-z0-9]+", "^eth[0-9]+"];
+// any. Local ones only: a mesh interface is a point to point tunnel,
+// and there is nobody on the other end of it to answer an ARP request.
+const DEFAULT_INTERFACES = asRegularExpressions(InterfaceKind.Local);
 
 // How long to wait for the pool to be accepted and report addresses
 const POOL_TIMEOUT_SECONDS = 60;
@@ -111,11 +120,7 @@ interface AddressBlock {
  * @returns
  */
 function getGatewayConfig(config: CloudConfig): GatewayConfiguration {
-  const { network } = config.getConfig();
-  const gateway =
-    network !== undefined && network !== null ? network.gateway : undefined;
-
-  return gateway !== undefined && gateway !== null ? gateway : {};
+  return config.getNetworkSection("gateway");
 }
 
 /**
@@ -130,13 +135,7 @@ function getGatewayConfig(config: CloudConfig): GatewayConfiguration {
  * @returns
  */
 function getNodeAddresses(config: CloudConfig): Record<string, string[]> {
-  const { network } = config.getConfig();
-  const external =
-    network !== undefined && network !== null ? network.externalIPs : undefined;
-
-  if (external === undefined || external === null) {
-    return {};
-  }
+  const external = config.getNetworkSection("externalIPs");
 
   const addresses: Record<string, string[]> = {};
   for (const [name, value] of Object.entries(external)) {
@@ -256,6 +255,57 @@ function announcesAddresses(config: CloudConfig): boolean {
 function getName(config: CloudConfig): string {
   const { name } = getGatewayConfig(config);
   return name !== undefined && name !== "" ? name : DEFAULT_NAME;
+}
+
+/**
+ * The interface patterns the announcement policy will select on.
+ *
+ * @param config
+ * @returns
+ */
+function getAnnouncementInterfaces(config: CloudConfig): string[] {
+  const { interfaces } = getGatewayConfig(config);
+
+  return Array.isArray(interfaces) && interfaces.length > 0
+    ? interfaces
+    : DEFAULT_INTERFACES;
+}
+
+/**
+ * Whether the node this bundle was aimed at is one of the gateways.
+ *
+ * @param config
+ * @param context
+ * @returns
+ */
+function isGatewayNode(config: CloudConfig, context: any): boolean {
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+
+  return getGatewayNodes(config).some(
+    (candidate: any) =>
+      candidate.name === node.name ||
+      (node.name !== undefined && getClusterName(candidate) === getClusterName(node)),
+  );
+}
+
+/**
+ * The addresses the configuration says this particular node holds.
+ *
+ * @param config
+ * @param context
+ * @returns
+ */
+function getAddressesForNode(config: CloudConfig, context: any): string[] {
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+  const byNode = getNodeAddresses(config);
+
+  for (const [name, addresses] of Object.entries(byNode)) {
+    if (name === node.name || (node.name !== undefined && name === getClusterName(node))) {
+      return addresses;
+    }
+  }
+
+  return [];
 }
 
 /**
@@ -418,9 +468,7 @@ export function buildIPPool(config: CloudConfig): string {
  * @returns
  */
 export function buildL2Policy(config: CloudConfig): string {
-  const { interfaces } = getGatewayConfig(config);
-  const wanted =
-    Array.isArray(interfaces) && interfaces.length > 0 ? interfaces : DEFAULT_INTERFACES;
+  const wanted = getAnnouncementInterfaces(config);
 
   const policy = {
     apiVersion: "cilium.io/v2alpha1",
@@ -534,33 +582,87 @@ function readCondition(conditions: Record<string, any>, ...names: string[]): any
 }
 
 /**
- * Read a field out of a split line, treating a missing one as empty.
+ * Look at the node this bundle was aimed at, and check the assumption
+ * the gateway rests on actually holds there.
  *
- * @param fields
- * @param index
- * @returns
- */
-function field(fields: string[], index: number): string {
-  const value = fields[index];
-  return value !== undefined ? value : "";
-}
-
-/**
- * Split output into non-empty lines.
+ * Both ways in depend on something being true of an interface, and
+ * neither says anything when it isn't. A floating address the node
+ * doesn't hold still gets handed to a Service, which still reports it,
+ * and the traffic still goes nowhere. An announcement policy whose
+ * patterns match no interface is accepted and announces on nothing.
+ * Reading the interfaces is what turns either into a sentence.
  *
- * @param output
- * @returns
+ * Built out of the shared interface reader with its own checks on the
+ * end, since what to do with the answer is the only part that's about
+ * gateways.
  */
-function readLines(output: CommandOutput): string[] {
-  const text = typeof output.parsed === "string" ? output.parsed : output.stdout;
+export const checkGatewayInterfacesCommand: CommandSpec = {
+  ...readInterfacesCommand,
+  name: "check-gateway-interfaces",
+  purpose: CommandPurpose.Require,
+  description: "Check this node can actually carry the gateway addresses",
 
-  return (text !== null && text !== undefined ? text : "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-}
+  // Only worth asking of a node that's meant to be a gateway. The rest
+  // of this bundle is about the cluster and runs anywhere.
+  skipWhen: (config: CloudConfig, context: any) =>
+    !hasGateway(config) || !isGatewayNode(config, context),
+
+  saveToContext: (output: any, context: any, config: CloudConfig) => {
+    const interfaces: NodeInterface[] = output.processed;
+    const local = getInterfacesOfKind(interfaces, InterfaceKind.Local);
+
+    if (announcesAddresses(config)) {
+      // Cilium answers ARP on whatever these match, so patterns that
+      // match nothing here mean nothing will ever answer
+      const patterns = getAnnouncementInterfaces(config);
+      const matched = matchInterfaces(local, patterns);
+
+      if (matched.length === 0) {
+        throw new Error(
+          `None of the interfaces on this node match what the announcement policy looks for (${patterns.join(", ")}). It has: ${local.map((entry) => entry.name).join(", ") || "nothing this recognises"}. Set "network.gateway.interfaces" to something that matches.`,
+        );
+      }
+
+      console.log(`  Will answer ARP on: ${matched.map((entry) => entry.name).join(", ")}`);
+      return { gatewayInterfaces: matched.map((entry) => entry.name) };
+    }
+
+    // The floating case, where the provider routes the address here
+    // and the node is expected to already hold it
+    const expected = getAddressesForNode(config, context);
+    const missing: string[] = [];
+
+    for (const address of expected) {
+      const holding = findInterfacesHolding(interfaces, address);
+
+      if (holding.length === 0) {
+        missing.push(address);
+        continue;
+      }
+
+      console.log(`  ${address} is on ${holding.map((entry) => entry.name).join(", ")}`);
+    }
+
+    if (missing.length > 0) {
+      throw new Error(
+        `This node doesn't hold ${missing.join(", ")} on any interface, so nothing sent there will arrive. Either configure the address on the node the way the provider expects, or use the "${GatewayMode.PortForward}" mode so Cilium answers for it.`,
+      );
+    }
+
+    if (expected.length === 0) {
+      console.log(
+        '  No address is pinned to this node under "network.externalIPs", so nothing to check against its interfaces.',
+      );
+    }
+
+    return { gatewayInterfaces: local.map((entry) => entry.name) };
+  },
+};
 
 export const GatewayCommands: CommandSpec[] = [
+  // Aimed at the node, unlike everything after it
+  checkGatewayInterfacesCommand,
+
   /**
    * Find out whether the cluster can do any of this.
    *
@@ -572,6 +674,7 @@ export const GatewayCommands: CommandSpec[] = [
    */
   {
     name: "check-gateway-support",
+    purpose: CommandPurpose.Require,
     description: "Check the cluster can hand out addresses from outside",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
@@ -609,15 +712,12 @@ export const GatewayCommands: CommandSpec[] = [
       (output: CommandOutput) => {
         const found: Record<string, string> = {};
 
-        for (const line of readLines(output)) {
-          const fields = line.split("|");
-
-          if (fields[0] === "crd" || fields[0] === "setting") {
-            found[`${field(fields, 0)}.${field(fields, 1)}`] = field(fields, 2);
-          }
-          else if (fields[0] === "gatewayclass" || fields[0] === "operator" || fields[0] === "tlsroute") {
-            found[field(fields, 0)] = field(fields, 1);
-          }
+        for (const { kind, fields } of readRecords(output)) {
+          // "crd|pool|present" and "setting|l2|true" name a thing
+          // within a kind, the rest are one value each
+          found[
+            kind === "crd" || kind === "setting" ? `${kind}.${field(fields, 0)}` : kind
+          ] = field(fields, kind === "crd" || kind === "setting" ? 1 : 0);
         }
 
         return found;
@@ -759,15 +859,16 @@ export const GatewayCommands: CommandSpec[] = [
    */
   {
     name: "verify-gateway",
+    purpose: CommandPurpose.Verify,
     description: "Check the pool is accepted and has addresses to hand out",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     skipWhen: (config: CloudConfig) => !hasGateway(config),
-    command: (config: CloudConfig) => {
+    command: (config: CloudConfig, context: any) => {
       const name = quoteForShell(getName(config));
 
       return [
-        `for attempt in $(seq ${POOL_TIMEOUT_SECONDS}); do [ -n "$(kubectl get ciliumloadbalancerippool ${name} -o jsonpath='{.status.conditions}' 2>/dev/null)" ] && break; sleep 1; done`,
+        waitUntil(`[ -n "$(kubectl get ciliumloadbalancerippool ${name} -o jsonpath='{.status.conditions}' 2>/dev/null)" ]`, getWaitSeconds(context, POOL_TIMEOUT_SECONDS)),
         `kubectl get ciliumloadbalancerippool ${name} -o json || { echo "The pool ${getName(config)} never appeared, so nothing will be given an address" >&2; exit 1; }`,
       ];
     },

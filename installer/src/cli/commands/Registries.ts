@@ -19,10 +19,11 @@
  */
 import { stringify } from "yaml";
 
-import { CommandOutput, CommandSpec, OutputType } from "./Command.ts";
+import { CommandOutput, CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
+import { field, readRecordOfKind, readRecordsOfKind } from "./output.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SRegistriesConfiguration, K3sRegistry } from "../../util/types.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { quoteForShell, waitUntil, writeFileCommand } from "../../util/shell.ts";
 
 // Where K3s looks for it
 const CONFIG_DIRECTORY = "/etc/rancher/k3s";
@@ -241,33 +242,6 @@ function buildConfig(name: string, registry: K3sRegistry): ContainerdConfig | un
   return Object.keys(entry).length > 0 ? entry : undefined;
 }
 
-/**
- * Read a field out of a split line, treating a missing one as empty.
- *
- * @param fields
- * @param index
- * @returns
- */
-function field(fields: string[], index: number): string {
-  const value = fields[index];
-  return value !== undefined ? value : "";
-}
-
-/**
- * Split output into non-empty lines.
- *
- * @param output
- * @returns
- */
-function readLines(output: CommandOutput): string[] {
-  const text = typeof output.parsed === "string" ? output.parsed : output.stdout;
-
-  return (text !== null && text !== undefined ? text : "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-}
-
 export const RegistryCommands: CommandSpec[] = [
   /**
    * Find out whether K3s is here yet, and under which unit.
@@ -279,6 +253,7 @@ export const RegistryCommands: CommandSpec[] = [
    */
   {
     name: "check-k3s-service",
+    purpose: CommandPurpose.Inspect,
     description: "Find out whether K3s is installed and running on this node",
     command: [
       `for service in ${SERVICES.join(" ")}`,
@@ -290,14 +265,12 @@ export const RegistryCommands: CommandSpec[] = [
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {
-        for (const line of readLines(output)) {
-          const fields = line.split("|");
-          if (fields[0] === "service") {
-            return { service: field(fields, 1), active: field(fields, 2) === "active" };
-          }
+        const service = readRecordOfKind(output, "service");
+        if (service === undefined) {
+          return { service: undefined, active: false };
         }
 
-        return { service: undefined, active: false };
+        return { service: field(service, 0), active: field(service, 1) === "active" };
       },
     ],
     saveToContext: (output: any, _context: any, config: CloudConfig) => {
@@ -339,12 +312,7 @@ export const RegistryCommands: CommandSpec[] = [
     skipWhen: (config: CloudConfig) => !hasRegistries(config),
     command: [
       `sudo mkdir -p ${CONFIG_DIRECTORY} || { echo "Couldn't create ${CONFIG_DIRECTORY}" >&2; exit 1; }`,
-      // Created empty with its permissions already set, so there's no
-      // moment where the file holds credentials and is readable by
-      // everyone. tee writes into it afterwards and leaves the mode
-      // alone.
-      `sudo install -o root -g root -m 0600 /dev/null ${CONFIG_FILE} || { echo "Couldn't create ${CONFIG_FILE}" >&2; exit 1; }`,
-      `sudo tee ${CONFIG_FILE} > /dev/null || { echo "Couldn't write ${CONFIG_FILE}" >&2; exit 1; }`,
+      ...writeFileCommand(CONFIG_FILE, { mode: "0600", asRoot: true }),
       `ls -l ${CONFIG_FILE}`,
     ],
     stdin: (config: CloudConfig) => buildRegistriesFile(config),
@@ -368,7 +336,7 @@ export const RegistryCommands: CommandSpec[] = [
 
       return [
         `sudo systemctl restart ${service} || { echo "Couldn't restart ${service}" >&2; exit 1; }`,
-        `for attempt in $(seq ${RESTART_TIMEOUT_SECONDS}); do systemctl is-active --quiet ${service} && break; sleep 1; done`,
+        waitUntil(`systemctl is-active --quiet ${service}`, RESTART_TIMEOUT_SECONDS),
         `systemctl is-active --quiet ${service} || { echo "${service} didn't come back within ${RESTART_TIMEOUT_SECONDS}s" >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
         `echo "${service} restarted and running"`,
       ];
@@ -393,6 +361,7 @@ export const RegistryCommands: CommandSpec[] = [
    */
   {
     name: "verify-registry-access",
+    purpose: CommandPurpose.Verify,
     description: "Check the node can reach each configured registry",
     skipWhen: (config: CloudConfig) => !hasRegistries(config),
     command: (config: CloudConfig) => {
@@ -414,22 +383,12 @@ export const RegistryCommands: CommandSpec[] = [
     },
     output: OutputType.Raw,
     postProcessHooks: [
-      (output: CommandOutput) => {
-        const results: { registry: string; status: string; scheme: string }[] = [];
-
-        for (const line of readLines(output)) {
-          const fields = line.split("|");
-          if (fields[0] === "registry") {
-            results.push({
-              registry: field(fields, 1),
-              status: field(fields, 2),
-              scheme: field(fields, 3),
-            });
-          }
-        }
-
-        return results;
-      },
+      (output: CommandOutput) =>
+        readRecordsOfKind(output, "registry").map((fields) => ({
+          registry: field(fields, 0),
+          status: field(fields, 1),
+          scheme: field(fields, 2),
+        })),
     ],
     saveToContext: (output: any) => {
       const results: { registry: string; status: string; scheme: string }[] =

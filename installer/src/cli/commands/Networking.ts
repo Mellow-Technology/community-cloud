@@ -17,9 +17,10 @@
  * - sudo
  * - a kernel offering the configured algorithm, as a module or built in
  */
-import { CommandSpec, OutputType } from "./Command.ts";
+import { CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell } from "../../util/shell.ts";
+import { quoteForShell, writeFileCommand } from "../../util/shell.ts";
+import { readInterfacesCommand } from "./Network.ts";
 
 // Where the settings are persisted. Both of these are drop-in
 // directories, so we own one file each and can rewrite it on every
@@ -64,8 +65,7 @@ interface NetworkConfig {
  * @returns
  */
 function getNetworkConfig(config: CloudConfig): NetworkConfig {
-  const { network } = config.getConfig();
-  return network !== undefined && network !== null ? network : {};
+  return config.getNetwork();
 }
 
 /**
@@ -129,24 +129,51 @@ function checkName(value: string, settingName: string): string {
 }
 
 /**
- * Build a command which writes a file as root.
+ * The contents of a managed file, as text ready for standard input.
  *
- * The sudo flag on a command only prefixes the command itself, which
- * is no help here: the privileged part is the write on the far end of
- * a pipe, so a leading sudo would leave the redirect running as the
- * connecting user. These commands carry their own sudo on the tee
- * instead, which is also why they don't set the flag.
- *
- * @param filePath
  * @param lines
  * @returns
  */
-function writeFileAsRoot(filePath: string, lines: string[]): string {
-  const contents = lines.map(quoteForShell).join(" ");
-  return `printf '%s\\n' ${contents} | sudo tee ${filePath} > /dev/null`;
+function fileContents(lines: string[]): string {
+  return ["# Managed by Community Cloud", ...lines].join("\n") + "\n";
 }
 
+/**
+ * Confirm the kernel can do what we're about to ask of it, before we
+ * write anything. Setting an algorithm the kernel doesn't have leaves
+ * the node quietly on whatever it was using before, and writing a
+ * sysctl key the kernel doesn't expose makes every later
+ * "sysctl --system" on that node fail, including for settings that
+ * have nothing to do with us.
+ *
+ * Exported because it's about the machine rather than about anything
+ * this installer did, which makes it a preflight check as much as a
+ * step in this bundle.
+ */
+export const checkNetworkSupportCommand: CommandSpec = {
+  name: "check-network-support",
+  purpose: CommandPurpose.Require,
+  description: "Check the kernel supports the configured congestion control and qdisc",
+  command: (config: CloudConfig) => {
+    const algorithm = getCongestionControl(config);
+
+    return [
+      "available=$(sysctl -n net.ipv4.tcp_available_congestion_control)",
+      'echo "available congestion control: $available"',
+      // The algorithms come back space separated, so split them onto
+      // their own lines and match one whole
+      `echo "$available" | tr ' ' '\\n' | grep -qx ${quoteForShell(algorithm)} || { echo "This kernel doesn't offer ${algorithm} congestion control. Available: $available" >&2; exit 1; }`,
+      `[ -e "${QDISC_SYSCTL_PATH}" ] || { echo "This kernel doesn't expose ${QDISC_SYSCTL_KEY}, so the default qdisc can't be set" >&2; exit 1; }`,
+    ];
+  },
+  output: OutputType.Raw,
+};
+
 export const NetworkingCommands: CommandSpec[] = [
+  // What the node's networking actually looks like, before anything
+  // is said about what it should be
+  readInterfacesCommand,
+
   /**
    * Load the module for this boot. A kernel with the algorithm built
    * in has nothing to load, and modprobe says so, so we let this one
@@ -169,22 +196,7 @@ export const NetworkingCommands: CommandSpec[] = [
    * "sysctl --system" on that node fail, including for settings that
    * have nothing to do with us.
    */
-  {
-    name: "check-network-support",
-    description: "Check the kernel supports the configured congestion control and qdisc",
-    command: (config: CloudConfig) => {
-      const algorithm = getCongestionControl(config);
-      return [
-        "available=$(sysctl -n net.ipv4.tcp_available_congestion_control)",
-        'echo "available congestion control: $available"',
-        // The algorithms come back space separated, so split them onto
-        // their own lines and match one whole
-        `echo "$available" | tr ' ' '\\n' | grep -qx ${quoteForShell(algorithm)} || { echo "This kernel doesn't offer ${algorithm} congestion control. Available: $available" >&2; exit 1; }`,
-        `[ -e "${QDISC_SYSCTL_PATH}" ] || { echo "This kernel doesn't expose ${QDISC_SYSCTL_KEY}, so the default qdisc can't be set" >&2; exit 1; }`,
-      ];
-    },
-    output: OutputType.Raw,
-  },
+  checkNetworkSupportCommand,
 
   /**
    * Load the module on every boot from here on.
@@ -192,11 +204,8 @@ export const NetworkingCommands: CommandSpec[] = [
   {
     name: "persist-congestion-module",
     description: "Load the congestion control module on boot",
-    command: (config: CloudConfig) =>
-      writeFileAsRoot(MODULES_FILE, [
-        "# Managed by Community Cloud",
-        getCongestionModule(config),
-      ]),
+    command: writeFileCommand(MODULES_FILE, { asRoot: true }),
+    stdin: (config: CloudConfig) => fileContents([getCongestionModule(config)]),
     output: OutputType.Raw,
   },
 
@@ -206,9 +215,9 @@ export const NetworkingCommands: CommandSpec[] = [
   {
     name: "write-sysctl-config",
     description: "Write the congestion control and qdisc sysctl settings",
-    command: (config: CloudConfig) =>
-      writeFileAsRoot(SYSCTL_FILE, [
-        "# Managed by Community Cloud",
+    command: writeFileCommand(SYSCTL_FILE, { asRoot: true }),
+    stdin: (config: CloudConfig) =>
+      fileContents([
         `${QDISC_SYSCTL_KEY} = ${getQdisc(config)}`,
         `net.ipv4.tcp_congestion_control = ${getCongestionControl(config)}`,
       ]),
@@ -233,6 +242,7 @@ export const NetworkingCommands: CommandSpec[] = [
    */
   {
     name: "verify-network-settings",
+    purpose: CommandPurpose.Verify,
     description: "Verify the node is using the configured congestion control and qdisc",
     command: (config: CloudConfig) => {
       const algorithm = getCongestionControl(config);

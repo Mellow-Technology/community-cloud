@@ -8,12 +8,12 @@ kubeProxyReplacement: true  # Enables eBPF-based kube-proxy replacement for bett
 routingMode: "tunnel"
 tunnelProtocol: "vxlan"
 
-# We attach eBPF datapath to the following
-# devices by default:
-# - enp+ All physical networking interfaces (predictable)
-# - eth+ All physical networking interfaces (unpredictable)
-# - defined+ Defined Network (Nebula) virtual mesh
-devices: "enp+,eth+,defined+"
+# The devices the eBPF datapath attaches to: every interface
+# Community Cloud treats as carrying traffic between nodes,
+# which is the wired and wireless ones plus the mesh tunnels.
+# The list is installer/src/util/interfaces.ts, so that this
+# and the gateway's ARP announcements can't drift apart.
+devices: {{ .Values.networkDevices | quote }}
 
 bpf:
   masquerade: true
