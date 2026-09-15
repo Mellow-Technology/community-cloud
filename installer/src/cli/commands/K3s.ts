@@ -12,6 +12,11 @@
  * and starting those alongside Cilium leaves two implementations
  * fighting over the same datapath.
  *
+ * The same goes further up the stack: Traefik and K3s's service load
+ * balancer are left out too, since Community Cloud serves everything
+ * through the Gateway API with Cilium's Envoy and hands out addresses
+ * with Cilium's own IP management. See ALWAYS_DISABLED below.
+ *
  * Requires:
  * - curl
  * - sudo, which the K3s install script uses itself for the privileged
@@ -35,6 +40,27 @@ const READY_TIMEOUT_SECONDS = 180;
 
 // A Kubernetes node name has to be a DNS label
 const NODE_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * K3s components Community Cloud always leaves out.
+ *
+ * Both are replaced by Cilium, and neither is a matter of taste:
+ *
+ * - traefik: Community Cloud serves everything through the Gateway API
+ *   and Cilium's own Envoy. K3s's Traefik brings its own Gateway API
+ *   CRDs, and a current bundle of those stops serving TLSRoute
+ *   v1alpha2, which Cilium's Gateway API controller needs. With them
+ *   in the cluster the Cilium operator either quietly turns Gateway
+ *   API off or, once it restarts, crashes outright.
+ * - servicelb: Cilium's load balancer IP management hands out the
+ *   addresses instead, which is what the gateway bundle sets up. Left
+ *   on, K3s puts a host-port DaemonSet in front of every LoadBalancer
+ *   Service and the two fight over the same ports.
+ *
+ * Anything a configuration disables is added to these rather than
+ * replacing them.
+ */
+const ALWAYS_DISABLED = ["traefik", "servicelb"];
 
 /**
  * The k3s section of a Community Cloud configuration.
@@ -198,8 +224,14 @@ function buildInstallExec(config: CloudConfig, context: any): string {
     args.push("--disable-kube-proxy");
   }
 
-  // Packaged components the cluster doesn't want
-  for (const component of disable !== undefined ? disable : []) {
+  // Packaged components the cluster doesn't want, and the ones it
+  // can't have alongside Cilium
+  const excluded = new Set([
+    ...ALWAYS_DISABLED,
+    ...(disable !== undefined ? disable : []),
+  ]);
+
+  for (const component of excluded) {
     args.push(`--disable=${component}`);
   }
 

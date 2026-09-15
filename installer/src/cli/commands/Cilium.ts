@@ -29,8 +29,14 @@ import { quoteForShell } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
 
-// Where the CLI says which of its releases is current
+// Where the CLI says which of its releases is current. Only consulted
+// when a configuration asks for it by name, since the whole point of
+// the pinning below is not to.
 const CLI_STABLE_URL = "https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt";
+
+// What a configuration writes to opt out of the pin and take whatever
+// the CLI currently calls stable
+const CLI_STABLE = "stable";
 
 // Where its release archives live
 const CLI_RELEASE_URL = "https://github.com/cilium/cilium-cli/releases/download";
@@ -38,12 +44,65 @@ const CLI_RELEASE_URL = "https://github.com/cilium/cilium-cli/releases/download"
 // Where the CLI is installed to
 const CLI_INSTALL_DIR = "/usr/local/bin";
 
-// The Cilium release to install. Pinned rather than tracking latest,
-// since the values below are written against it.
-const DEFAULT_CILIUM_VERSION = "1.19.6";
+/**
+ * The three versions this installs, and they are pinned together on
+ * purpose.
+ *
+ * Nothing here floats. A cluster built in March and a cluster built in
+ * September should be the same cluster, and the failures that come
+ * from these drifting apart are the quiet kind: Cilium 1.19 against a
+ * Gateway API that had stopped serving the TLSRoute version it wanted
+ * didn't report anything, it just never started a Gateway API
+ * controller. Moving any of these is a deliberate act — change the
+ * version, check the values file still matches what that release
+ * expects, and run it against a cluster you can throw away.
+ *
+ * - DEFAULT_CILIUM_VERSION: the release the values file is written for
+ * - DEFAULT_CLI_VERSION: the CLI that installs it. It carries its own
+ *   idea of a default Cilium version and its own flags, so it belongs
+ *   to a release rather than to whatever is current.
+ * - DEFAULT_GATEWAY_API_VERSION: below, next to the resources it
+ *   brings, since which of those are needed changes with it
+ */
+const DEFAULT_CILIUM_VERSION = "1.20.1";
+const DEFAULT_CLI_VERSION = "v0.20.0";
 
 // The values file that ships with the installer
 const DEFAULT_VALUES_FILE = "embed://networking/cilium/Cilium.values.yaml";
+
+// The Gateway API release to install, and the one the Cilium above
+// says it supports. Pinned rather than taken from latest: the pairing
+// is the thing that breaks, and it breaks quietly. Cilium 1.19 needed
+// TLSRoute v1alpha2, which a newer bundle had stopped serving, and the
+// symptom was a Gateway API that silently never started.
+const DEFAULT_GATEWAY_API_VERSION = "v1.6.1";
+
+// Where the Gateway API releases live
+const GATEWAY_API_URL =
+  "https://raw.githubusercontent.com/kubernetes-sigs/gateway-api";
+
+// The resources Cilium's Gateway API controller needs. All of these
+// are in the standard channel as of the release above, including the
+// two that used to be experimental:
+//
+// - tlsroutes, which Cilium requires rather than merely supports
+// - listenersets, which is what makes a Gateway's allowedListeners
+//   mean anything. Optional to Cilium, but the Gateway that ships with
+//   Community Cloud uses it to say which namespaces may attach
+//   listeners, so it isn't optional here.
+const GATEWAY_API_CRDS = [
+  "gatewayclasses",
+  "gateways",
+  "httproutes",
+  "grpcroutes",
+  "referencegrants",
+  "backendtlspolicies",
+  "tlsroutes",
+  "listenersets",
+];
+
+// The channel the resources above are published in
+const GATEWAY_API_CHANNEL = "standard";
 
 // Where the rendered values are put on the node. Only the installer
 // reads it, and it holds nothing secret.
@@ -56,16 +115,21 @@ const READY_TIMEOUT = "10m";
  * The cilium section of a Community Cloud configuration.
  *
  * - version: the Cilium release to install
- * - cliVersion: pin the cilium CLI, otherwise the current stable one
+ * - cliVersion: the cilium CLI release, which is pinned by default.
+ *   Set it to "stable" to take whatever the CLI currently calls
+ *   current, which is deliberately something you have to write.
  * - valuesFile: override the values file that ships with the repo
  * - kubeProxyReplacement: whether Cilium takes over from kube-proxy,
  *   which K3s also reads when it decides whether to start one
+ * - gatewayApiVersion: the Gateway API release to install, which has
+ *   to be one this Cilium supports
  */
 interface CiliumConfig {
   version?: string;
   cliVersion?: string;
   valuesFile?: string;
   kubeProxyReplacement?: boolean;
+  gatewayApiVersion?: string;
 }
 
 /**
@@ -79,6 +143,50 @@ function getCiliumConfig(config: CloudConfig): CiliumConfig {
   const cilium = network !== undefined && network !== null ? network.cilium : undefined;
 
   return cilium !== undefined && cilium !== null ? cilium : {};
+}
+
+/**
+ * The Cilium release to install.
+ *
+ * @param config
+ * @returns
+ */
+function getCiliumVersion(config: CloudConfig): string {
+  const { version } = getCiliumConfig(config);
+
+  return version !== undefined && version !== "" ? version : DEFAULT_CILIUM_VERSION;
+}
+
+/**
+ * The Cilium CLI release to install.
+ *
+ * The pin unless a configuration says otherwise. "stable" is how a
+ * configuration asks for whatever is current instead, which is a thing
+ * worth having to write down.
+ *
+ * @param config
+ * @returns
+ */
+function getCliVersion(config: CloudConfig): string {
+  const { cliVersion } = getCiliumConfig(config);
+
+  return cliVersion !== undefined && cliVersion !== ""
+    ? cliVersion
+    : DEFAULT_CLI_VERSION;
+}
+
+/**
+ * The Gateway API release to install.
+ *
+ * @param config
+ * @returns
+ */
+function getGatewayApiVersion(config: CloudConfig): string {
+  const { gatewayApiVersion } = getCiliumConfig(config);
+
+  return gatewayApiVersion !== undefined && gatewayApiVersion !== ""
+    ? gatewayApiVersion
+    : DEFAULT_GATEWAY_API_VERSION;
 }
 
 /**
@@ -119,16 +227,18 @@ export const CiliumCommands: CommandSpec[] = [
    */
   {
     name: "get-cilium-cli-version",
-    description: "Find the version of the Cilium CLI to install",
+    description: "Work out which version of the Cilium CLI to install",
     runOn: CommandTarget.ControlPlane,
     command: (config: CloudConfig) => {
+      const version = getCliVersion(config);
 
-      const { cliVersion } = getCiliumConfig(config);
-      if (cliVersion !== undefined) {
-        return `echo ${quoteForShell(cliVersion)}`;
+      // Asked for by name rather than reached for by default, so a
+      // repeated install is a repeated install
+      if (version === CLI_STABLE) {
+        return `curl -fsSL ${CLI_STABLE_URL} || { echo "Couldn't ask ${CLI_STABLE_URL} which Cilium CLI is current" >&2; exit 1; }`;
       }
 
-      return `curl -fsSL ${CLI_STABLE_URL}`;
+      return `echo ${quoteForShell(version)}`;
     },
     output: OutputType.Raw,
   },
@@ -195,6 +305,50 @@ export const CiliumCommands: CommandSpec[] = [
   },
 
   /**
+   * Put the Gateway API resources in the cluster.
+   *
+   * Before Cilium, and that ordering is the whole point. The operator
+   * builds its Gateway API controller once, at startup, from what it
+   * finds then: installed afterwards and Cilium has already decided
+   * Gateway API is unavailable and turned it off, with nothing to say
+   * so except a line in a log nobody reads.
+   *
+   * K3s would otherwise bring these itself, as part of Traefik. That
+   * is why the K3s install leaves Traefik out: the bundle it ships
+   * stops serving TLSRoute v1alpha2, and Cilium needs that version.
+   */
+  {
+    name: "install-gateway-api",
+    description: "Install the Gateway API resources Cilium's Envoy serves",
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: (config: CloudConfig) => {
+      const version = getGatewayApiVersion(config);
+
+      return [
+        // Server-side, which is what the Gateway API's own
+        // instructions use. These schemas are large enough that the
+        // annotation a client-side apply leaves behind runs into the
+        // API server's limit on one.
+        ...GATEWAY_API_CRDS.map((name) => {
+          const url = `${GATEWAY_API_URL}/${version}/config/crd/${GATEWAY_API_CHANNEL}/gateway.networking.k8s.io_${name}.yaml`;
+          return `kubectl apply --server-side -f ${quoteForShell(url)} || { echo "Couldn't install the ${name} resource from ${url}" >&2; exit 1; }`;
+        }),
+
+        // The Gateway that ships with Community Cloud names the
+        // namespaces its listeners may come from, and a Gateway schema
+        // without that field rejects the whole manifest rather than
+        // ignoring the part it doesn't know. Checked here, where it
+        // can say what to do about it, rather than at the apply.
+        `listeners=$(kubectl get crd gateways.gateway.networking.k8s.io -o jsonpath='{range .spec.versions[?(@.name=="v1")]}{.schema.openAPIV3Schema.properties.spec.properties.allowedListeners.type}{end}' 2>/dev/null)`,
+        `[ -n "$listeners" ] || { echo "The Gateway API ${version} in this cluster has no allowedListeners on a Gateway, so ListenerSets can't attach. Pin \"network.cilium.gatewayApiVersion\" to a release that has it." >&2; exit 1; }`,
+        `echo "Gateway API ${version} installed"`,
+      ];
+    },
+    output: OutputType.Raw,
+  },
+
+  /**
    * Install Cilium itself.
    */
   {
@@ -203,10 +357,7 @@ export const CiliumCommands: CommandSpec[] = [
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     command: (config: CloudConfig) => {
-
-      const { version } = getCiliumConfig(config);
-
-      return `cilium install --version ${quoteForShell(version !== undefined ? version : DEFAULT_CILIUM_VERSION)} --values ${REMOTE_VALUES_PATH}`;
+      return `cilium install --version ${quoteForShell(getCiliumVersion(config))} --values ${REMOTE_VALUES_PATH}`;
     },
     output: OutputType.Raw,
   },

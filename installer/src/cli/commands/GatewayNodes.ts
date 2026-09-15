@@ -475,17 +475,19 @@ function describeGatewayClass(found: Record<string, string>): string[] {
   if (found["crd.gatewayapi"] !== "present") {
     return [
       headline,
-      "The Gateway API resources aren't installed in this cluster, so Cilium had nothing to build a controller from.",
+      'The Gateway API resources aren\'t installed in this cluster, so Cilium had nothing to build a controller from. The "cilium" bundle installs them; run it again.',
     ];
   }
 
-  // Served is what counts: the kind can exist with the version Cilium
-  // wants turned off, which is what a current Gateway API bundle does
+  // Cilium requires TLSRoute rather than merely supporting it, and
+  // won't build its controller without one it can serve. Which version
+  // that is has changed between Cilium releases, so what's checked is
+  // that something is served rather than which.
   if (found["tlsroute"] !== "true") {
     return [
       headline,
-      `Cilium's Gateway API controller needs TLSRoute v1alpha2, and this cluster's Gateway API ${found["tlsroute"] === "missing" ? "doesn't have TLSRoute at all" : "has it but doesn't serve that version"}. The Cilium operator can't start its controller, so it either disables Gateway API or crashes on restart.`,
-      'This is what K3s\'s bundled Traefik installs. Disable it with "k3s.disable": ["traefik"] and install a Gateway API release Cilium supports.',
+      `Cilium's Gateway API controller needs TLSRoute, and this cluster's Gateway API ${found["tlsroute"] === "missing" ? "doesn't have it" : "has it but serves no version this Cilium can use"}. The operator can't start its controller, so it either disables Gateway API or crashes on restart.`,
+      "That's the shape K3s's Traefik leaves behind. Community Cloud leaves Traefik out and pins its own Gateway API, so this is a cluster built before that or one where Traefik was put back. Remove the Gateway API resources and run the \"cilium\" bundle again.",
     ];
   }
 
@@ -596,10 +598,11 @@ export const GatewayCommands: CommandSpec[] = [
       `printf "crd|gatewayapi|%s\\n" "$(kubectl get crd gatewayclasses.gateway.networking.k8s.io > /dev/null 2>&1 && echo present || echo missing)"`,
       `printf "operator|%s\\n" "$(kubectl -n ${CILIUM_NAMESPACE} get pods -l io.cilium/app=operator -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null || echo unknown)"`,
 
-      // Cilium's Gateway API controller wants TLSRoute v1alpha2, and a
-      // recent Gateway API bundle ships the kind without serving that
-      // version. The operator can't build its controller and dies.
-      `printf "tlsroute|%s\\n" "$(kubectl get crd tlsroutes.gateway.networking.k8s.io -o jsonpath='{range .spec.versions[?(@.name=="v1alpha2")]}{.served}{end}' 2>/dev/null || echo missing)"`,
+      // Cilium's Gateway API controller requires TLSRoute, and a
+      // Gateway API bundle can ship the kind while serving no version
+      // this Cilium knows — which is how 1.19 met a v1.5 bundle. The
+      // operator can't build its controller and dies.
+      `printf "tlsroute|%s\\n" "$(kubectl get crd tlsroutes.gateway.networking.k8s.io -o jsonpath='{.spec.versions[*].served}' 2>/dev/null | grep -q true && echo true || echo missing)"`,
     ],
     output: OutputType.Raw,
     postProcessHooks: [

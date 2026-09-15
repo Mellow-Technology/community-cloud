@@ -27,7 +27,13 @@ spec:
   # on the namespace. This allows some
   # default control at the cluster level
   # if there's a desire to prevent ingress/egress
-  # outside of the cluster
+  # outside of the cluster.
+  #
+  # This needs ListenerSet support on both sides:
+  # a Gateway API with the listenersets resource
+  # (standard channel as of v1.6.1) and a Cilium
+  # that reconciles them, which is 1.20 and later.
+  # The installer pins both.
   allowedListeners:
     namespaces:
       from: Selector
