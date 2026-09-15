@@ -20,7 +20,16 @@ The Community Cloud Installer is a command-line interface (CLI) tool designed to
 
 ## Getting Started
 
-For detailed instructions on how to use the Community Cloud Installer, please refer to the [Documentation](./docs/).
+Build a configuration and check it, then install:
+
+```bash
+community-cloud                              # build a configuration
+community-cloud preflight cc.config.json     # check it could work
+community-cloud run-bundle k3s server-1 cc.config.json
+community-cloud doctor cc.config.json        # ask the cluster how it's doing
+```
+
+For how the pieces fit together, see the [documentation index](../docs/index.md).
 
 ## Configuration
 
@@ -432,8 +441,8 @@ while it runs.
 
 ## Contributing
 
-We welcome contributions from the community! Please see our [Contributing Guide](./CONTRIBUTING.md) for more information on how to get involved.
+Contributions are welcome. The one thing worth knowing before writing a command: see [Writing commands](#writing-commands) and [Secrets in commands](#secrets-in-commands) above.
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+This project is licensed under the [MIT License](../LICENSE.md).
