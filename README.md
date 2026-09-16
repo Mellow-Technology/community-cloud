@@ -10,6 +10,16 @@ Community Cloud is currently in Alpha but is usable. We're currently going under
 
 While currently on Github we're actively expecting to migrate away at the earliest convenient time. More soon!
 
+## Using AI
+
+AI is the hot topic right now in anything technology related, and naturally Community Cloud is no different. Our policy towards using AI is simple, it's completely fine to use. That being said, if you would like to contribute please keep the following in mind: 
+
+1. _You_ are responsible for your contribution and ensuring its quality
+2. You fullly understand what you're contributing. If you can't explain it to someone with reasonable knowledge of what you're trying to do then it won't be accepted.
+3. AI can write your code, but it should never speak on your behalf. Write your PRs, and make sure corresponding documentation is accurate.
+4. Try not to waste our time and your time 🕰️
+
+
 ## Architecture Overview
 
 Community Cloud deploys a K3s cluster across heterogeneous hardware, organizing nodes into functional roles:
