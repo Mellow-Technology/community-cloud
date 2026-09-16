@@ -15,9 +15,18 @@
  */
 import { CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell, writeFileCommand } from "../../util/shell.ts";
+import {
+  getWaitSeconds,
+  quoteForShell,
+  waitUntil,
+  writeFileCommand,
+} from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
+import {
+  buildCreateSecretCommand,
+  buildVerifySecretsCommand,
+} from "./Secrets.ts";
 import {
   PackageDefinition,
   resolveInstallOrder,
@@ -29,6 +38,11 @@ const WORK_DIR = "/tmp/cc-helm";
 
 // How long to give a chart to come up
 const READY_TIMEOUT = "10m";
+
+// How long to keep trying a manifest that belongs to a chart just
+// installed. The resource types it uses arrive with that chart, and
+// an operator's webhook is ready a moment after its deployment is.
+const MANIFEST_TIMEOUT_SECONDS = 120;
 
 /**
  * The release name for a package, which is its own name unless it
@@ -110,6 +124,75 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
     // on the control plane or in an error quoting the command back
     stdin: (config: CloudConfig) =>
       renderInstallerFile(config, definition.valuesFile as string),
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * The name a manifest goes by, from its path.
+ *
+ * @param manifest
+ * @returns
+ */
+function getManifestName(manifest: string): string {
+  const file = manifest.split("/").pop() ?? manifest;
+  return file.replace(/\.ya?ml$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+/**
+ * Apply a manifest that belongs to a package but isn't in its chart.
+ *
+ * Charts don't cover everything. An application needs a database
+ * before it starts, and the database is a resource belonging to an
+ * operator installed earlier — which no chart of the application's own
+ * would know how to ask for.
+ *
+ * It's written to a file first rather than piped straight in, because
+ * this is a thing worth retrying and standard input can only be read
+ * once. The resource types these use arrive with the chart installed
+ * moments earlier, and an operator's admission webhook is reachable a
+ * little after its deployment reports ready, so the first apply can
+ * lose that race. Retrying costs nothing; failing on it costs an
+ * install.
+ *
+ * @param definition
+ * @param manifest
+ * @param when
+ * @returns
+ */
+function buildManifestCommand(
+  definition: PackageDefinition,
+  manifest: string,
+  when: string,
+): CommandSpec {
+  const path = `${WORK_DIR}/${definition.name}-${getManifestName(manifest)}.yaml`;
+  const quoted = quoteForShell(path);
+
+  return {
+    name: `helm-manifest-${when}-${definition.name}-${getManifestName(manifest)}`,
+    description: `Apply ${manifest.split("/").pop()} for ${definition.name}`,
+    purpose: CommandPurpose.Apply,
+    runOn: CommandTarget.ControlPlane,
+    env: buildHelmEnv,
+    command: (_config: CloudConfig, context: any) => [
+      `mkdir -p ${WORK_DIR}`,
+      `chmod 0700 ${WORK_DIR}`,
+      // These carry the credentials an application connects with
+      ...writeFileCommand(path, { mode: "0600" }),
+      // Retried quietly, then once more in the open so a real failure
+      // says why rather than just running out of attempts. The flag is
+      // what stops a successful apply being done twice, which would
+      // report every resource as "unchanged" the moment after
+      // creating it.
+      "applied=",
+      waitUntil(
+        `{ kubectl apply -f ${quoted} && applied=yes; }`,
+        getWaitSeconds(context, MANIFEST_TIMEOUT_SECONDS),
+      ),
+      `[ "$applied" = "yes" ] || kubectl apply -f ${quoted} || { echo "Couldn't apply ${manifest} for ${definition.name}" >&2; rm -f ${quoted}; exit 1; }`,
+      `rm -f ${quoted}`,
+    ],
+    stdin: (config: CloudConfig) => renderInstallerFile(config, manifest),
     output: OutputType.Raw,
   };
 }
@@ -223,6 +306,14 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   ];
 
   for (const definition of ordered) {
+    // What the chart needs to find already there. Authentik's database
+    // is the example: the chart won't come up without one, and the
+    // resource type it's written in arrives with CloudNativePG, which
+    // the ordering above has already installed.
+    for (const manifest of definition.manifests?.before ?? []) {
+      commands.push(buildManifestCommand(definition, manifest, "before"));
+    }
+
     commands.push(buildAddRepoCommand(definition));
 
     if (definition.valuesFile !== undefined) {
@@ -230,6 +321,27 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     }
 
     commands.push(buildInstallCommand(definition));
+
+    // The credentials the manifests below refer to. Ahead of them,
+    // because a role whose Secret isn't there yet is a role that
+    // doesn't get made, and behind the chart, because the namespaces
+    // these go in belong to the package rather than to this step.
+    const secrets = definition.secrets ?? [];
+    for (const secret of secrets) {
+      commands.push(buildCreateSecretCommand(secret, definition.namespace));
+    }
+
+    // And what belongs with it but isn't in it
+    for (const manifest of definition.manifests?.after ?? []) {
+      commands.push(buildManifestCommand(definition, manifest, "after"));
+    }
+
+    if (secrets.length > 0) {
+      commands.push(
+        buildVerifySecretsCommand(secrets, definition.namespace, definition.name),
+      );
+    }
+
     commands.push(buildVerifyCommand(definition));
   }
 

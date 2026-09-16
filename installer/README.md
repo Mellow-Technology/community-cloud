@@ -123,7 +123,7 @@ gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
 | `token` | — | The cluster token. The server and every agent need the same one. Required. |
 | `version` / `channel` | current stable | Pin the K3s release. |
 | `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
-| `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik` and `servicelb` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API and Cilium's own IP management hands out load balancer addresses. |
+| `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik`, `servicelb` and `local-storage` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API, Cilium's own IP management hands out load balancer addresses, and TopoLVM provisions local volumes. K3s's local-path provisioner also claims to be the default storage class, and Kubernetes allows only one. |
 | `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
 | `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
 
@@ -221,6 +221,11 @@ it enables that too.
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
 the working directory) and `requires`.
+
+Some packages bring credentials with them — the database passwords the
+applications connect with, for instance. Those aren't configured here;
+they're made up during the install. See
+[Generated credentials](#generated-credentials).
 
 ### `registries`
 
@@ -438,6 +443,68 @@ stdin: (config, context) => context.enrollmentCode,
 That keeps the value out of the command this installer builds and out
 of what SSH carries, though it still reaches the tool's own arguments
 while it runs.
+
+## Generated credentials
+
+Some of what the cluster needs is a password that nothing outside the
+cluster has any reason to know. The database roles under
+`k8s/apps/office/Office.roles.yaml` are the case that drives this:
+each reads its password from a Secret, and the Secret can't be checked
+into the repository next to the manifest that names it.
+
+So the installer invents them. A package declares what it needs and
+the credentials are created between its chart and the manifests that
+refer to them:
+
+```ts
+{
+  name: "cloudnative-pg",
+  // ...
+  secrets: [
+    {
+      name: "twenty-crm",
+      description: "the Twenty CRM database role",
+      namespace: "cc-office",
+      username: "twenty_crm",
+      labels: { "cnpg.io/reload": "true" },
+    },
+  ],
+}
+```
+
+Each becomes a `kubernetes.io/basic-auth` Secret with a three-word
+username and a five-word password, hyphen separated, drawn from a word
+list seeded out of `node:crypto` — five words is about fifty-five bits,
+and a phrase survives being read down a telephone in a way a string of
+punctuation doesn't. `username` is only needed where something
+downstream insists on a particular one; left out, it's generated too.
+CloudNativePG is why it's set on all three database roles: a
+`DatabaseRole`'s Secret has to carry the role's own Postgres name,
+underscores and all, and the role is refused outright if it doesn't.
+
+**A password is created once and never rewritten.** The command looks
+first and does nothing if the Secret is there, so running an install
+again doesn't rotate the credentials half the cluster is already using.
+Nothing records what was generated, either — it exists in the cluster
+and nowhere else:
+
+```bash
+kubectl -n cc-office get secret twenty-crm \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+To rotate one deliberately, change it in the Secret — or delete the
+Secret and install again for a fresh one. The role's password follows
+within a few seconds, so anything holding a live connection will need
+restarting.
+
+That last part is what the `cnpg.io/reload` label above buys. The part
+of CloudNativePG that talks to Postgres can't read Secrets on purpose,
+since the permission to read one is the permission to read all of them
+in the namespace; the operator watches them instead and pokes the role
+when one changes. It only watches Secrets carrying that label. Without
+it the first password is applied — the role is retried until its Secret
+appears — and no later one ever is.
 
 ## Contributing
 

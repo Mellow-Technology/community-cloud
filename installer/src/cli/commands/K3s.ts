@@ -56,11 +56,16 @@ const NODE_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
  *   addresses instead, which is what the gateway bundle sets up. Left
  *   on, K3s puts a host-port DaemonSet in front of every LoadBalancer
  *   Service and the two fight over the same ports.
+ * - local-storage: TopoLVM provisions node local volumes, and
+ *   Community Cloud ships its own default storage class. K3s's
+ *   local-path provisioner also marks itself the default, and
+ *   Kubernetes allows exactly one — with two, a claim that names no
+ *   class gets neither and waits forever.
  *
  * Anything a configuration disables is added to these rather than
  * replacing them.
  */
-const ALWAYS_DISABLED = ["traefik", "servicelb"];
+const ALWAYS_DISABLED = ["traefik", "servicelb", "local-storage"];
 
 /**
  * The k3s section of a Community Cloud configuration.

@@ -18,7 +18,7 @@ import { isAbsolute, join } from "node:path";
 import { parse } from "@ctrl/golang-template";
 
 import CloudConfig from "./CloudConfig.ts";
-import { GatewayMode } from "./types.ts";
+import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 
@@ -351,7 +351,37 @@ export function buildTemplateValues(config: CloudConfig) {
     values.networkDevices = asCiliumDevices();
   }
 
+  // How many storage controllers there can be. TopoLVM's controller
+  // spreads its replicas across nodes and insists on it, so a cluster
+  // with fewer storage nodes than replicas has one that can never be
+  // scheduled — and an install that waits for it never finishes.
+  if (values.storageControllerReplicas === undefined) {
+    values.storageControllerReplicas = countStorageNodes(rawConfig);
+  }
+
   return { Values: values };
+}
+
+/**
+ * How many nodes can run a storage controller, up to the two that
+ * make it redundant.
+ *
+ * A single node cluster is a real thing to want — it's where most
+ * people start — and it shouldn't be told to wait for a second
+ * replica that has nowhere to go.
+ *
+ * @param rawConfig
+ * @returns
+ */
+function countStorageNodes(rawConfig: any): number {
+  const nodes = Array.isArray(rawConfig.nodes) ? rawConfig.nodes : [];
+
+  const storage = nodes.filter(
+    (node: any) =>
+      Array.isArray(node.roles) && node.roles.includes(NodeRole.StorageLocal),
+  );
+
+  return Math.max(1, Math.min(2, storage.length));
 }
 
 /**

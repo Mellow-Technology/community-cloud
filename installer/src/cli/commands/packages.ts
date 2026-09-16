@@ -17,6 +17,7 @@
  * whether or not anyone remembered to ask for it.
  */
 import CloudConfig from "../../util/CloudConfig.ts";
+import { SecretDefinition } from "./Secrets.ts";
 
 /**
  * Something that can be installed.
@@ -35,8 +36,14 @@ import CloudConfig from "../../util/CloudConfig.ts";
  *   Pulled in automatically when this package is enabled.
  * - manifests: manifests belonging to this package that aren't part of
  *   its chart, such as the CloudNativePG Database an application needs
- *   before it can start. Recorded here so the ordering is written
- *   down; applying them isn't wired up yet.
+ *   before it can start. Those in "before" are applied ahead of the
+ *   chart and those in "after" once it's installed. Rendered as
+ *   templates, like everything else in k8s/.
+ * - secrets: credentials the package's manifests refer to but which
+ *   can't be written down in them. Generated and created between the
+ *   chart and the "after" manifests, so a manifest naming one finds it
+ *   already there. Created once and then left alone, so re-running an
+ *   install doesn't change the password half the cluster is using.
  */
 export interface PackageDefinition {
   name: string;
@@ -48,6 +55,7 @@ export interface PackageDefinition {
   valuesFile?: string;
   requires?: string[];
   manifests?: { before?: string[]; after?: string[] };
+  secrets?: SecretDefinition[];
 }
 
 /**
@@ -90,8 +98,12 @@ export const packageCatalogue: PackageDefinition[] = [
     name: "cert-manager",
     description: "Issues and renews TLS certificates",
     chart: { repo: "https://charts.jetstack.io", name: "cert-manager" },
-    // The version k8s/certs and K3sInstallation.ts were written against
-    version: "v1.19.2",
+    // 1.21 or later. The values file configures Gateway API support
+    // under "config.gatewayAPI", and that nested shape only exists
+    // from 1.21 — 1.20 and earlier take a flat "enableGatewayAPI" and
+    // reject the nested one outright, failing to parse their own
+    // configuration and crashlooping with "unknown field gatewayAPI".
+    version: "v1.21.2",
     namespace: "cert-manager",
     valuesFile: "embed://certs/CertManager.values.yaml",
   },
@@ -100,6 +112,70 @@ export const packageCatalogue: PackageDefinition[] = [
     description: "The Postgres operator every database in the cluster runs on",
     chart: { repo: "https://cloudnative-pg.github.io/charts", name: "cloudnative-pg" },
     namespace: "cnpg-system",
+
+    // The shared cluster asks for "cc-local-ssd-fast", so the storage
+    // has to be there first or its volume waits forever
+    requires: ["topolvm"],
+
+    // The namespace and the shared Postgres cluster every application
+    // connects to. They belong here rather than in each application's
+    // list: three of them need "cc-postgres", and it should be made
+    // once, by whatever put the operator there.
+    manifests: {
+      // The namespace is ahead of the chart because nothing about it
+      // needs the chart, and the credentials below have to go
+      // somewhere before the roles that use them are applied
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/office/Office.database.yaml",
+
+        // After the cluster, since a role belongs to one
+        "embed://apps/office/Office.roles.yaml",
+      ],
+    },
+
+    // What the roles in Office.roles.yaml authenticate with. One per
+    // role, named as that role's manifest says to look for it.
+    //
+    // The username isn't generated for these. CloudNativePG compares
+    // the username in the Secret against the role's own name and
+    // refuses the role if they differ, so it has to be the Postgres
+    // name — "twenty_crm" and not "twenty-crm", underscores and all.
+    // Only the password is invented.
+    //
+    // The label is what makes changing one of these afterwards work.
+    // The part of CloudNativePG that talks to Postgres deliberately
+    // can't read Secrets — that would mean reading every Secret in
+    // the namespace — so the operator watches them on its behalf and
+    // pokes the role when one changes. It only watches the ones
+    // carrying "cnpg.io/reload". Without it the first password is
+    // applied, because the role is being retried until its Secret
+    // turns up, and no later one ever is: the role is settled, and
+    // nothing tells it otherwise.
+    secrets: [
+      {
+        name: "twenty-crm",
+        description: "the Twenty CRM database role",
+        namespace: "cc-office",
+        username: "twenty_crm",
+        labels: { "cnpg.io/reload": "true" },
+      },
+      {
+        name: "mattermost",
+        description: "the Mattermost database role",
+        namespace: "cc-office",
+        username: "mattermost",
+        labels: { "cnpg.io/reload": "true" },
+      },
+      {
+        name: "authentik-db",
+        description: "the Authentik database role",
+        namespace: "cc-office",
+        username: "authentik",
+        labels: { "cnpg.io/reload": "true" },
+      },
+    ],
   },
   {
     name: "authentik",
@@ -113,12 +189,19 @@ export const packageCatalogue: PackageDefinition[] = [
     // CloudNativePG is there first.
     requires: ["cloudnative-pg"],
 
-    // The database, its owner and the secret the chart mounts. Not
-    // applied yet, recorded so the ordering is known.
+    // The database, its owner and the secret the chart mounts. The
+    // resource types are CloudNativePG's, which "requires" above has
+    // already put in place by the time these are applied.
     manifests: {
       before: [
         "embed://apps/authentik/Authentik.database.yaml",
-        "embed://apps/authentik/Authentik.storage.yaml",
+
+        // Authentik.storage.yaml is deliberately not here. It's an
+        // ObjectBucketClaim against the "cc-s3-storage" class, which
+        // needs an object bucket provisioner — Garage or Rook — and
+        // nothing in this catalogue installs one. Applying it would
+        // fail on a missing resource type. Put it back when object
+        // storage becomes a package.
       ],
     },
   },
@@ -129,6 +212,16 @@ export const packageCatalogue: PackageDefinition[] = [
     namespace: "topolvm-system",
     valuesFile: "embed://storage/TopoLVM/TopoLVM.values.yaml",
     requires: ["cert-manager"],
+
+    // The chart installs the driver; the classes that expose it are
+    // ours. Without them a PVC asking for "cc-local-ssd-fast" waits
+    // for a class nothing will ever create.
+    manifests: {
+      after: [
+        "embed://storage/StorageClass/cc-local-ssd-fast.yaml",
+        "embed://storage/StorageClass/cc-local-ssd-sata.yaml",
+      ],
+    },
   },
   {
     name: "headlamp",
