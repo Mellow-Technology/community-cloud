@@ -20,7 +20,9 @@ community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
 | File | What it is |
 |---|---|
 | `Office.namespace.yaml` | The `cc-office` namespace, labelled so its listeners may attach to the cluster Gateway. |
-| `Office.gateway.yaml` | The Gateway listeners for the office applications. |
+
+The applications reach the outside through the cluster's own Gateway
+in `networking/gateway/`, rather than one of their own.
 | `Office.issuer.yaml` | A Let's Encrypt issuer scoped to the namespace. |
 | `Office.database.yaml` | The shared CloudNativePG cluster. |
 | `RedisStandalone.yaml` | Redis, for the applications that want a cache. |

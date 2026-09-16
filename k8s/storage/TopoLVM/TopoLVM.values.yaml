@@ -1,5 +1,11 @@
 # Only run controller pods on storage-local nodes
 controller:
+  # The controller spreads its replicas across nodes and requires it,
+  # so asking for more than there are storage nodes leaves one pending
+  # forever and an install waiting on it. Derived from the node list:
+  # two where there are two storage nodes to put them on, one where
+  # there's only one.
+  replicaCount: {{ .Values.storageControllerReplicas }}
   nodeSelector:
     node-role.kubernetes.io/storage-local: storage-local
 lvmd:

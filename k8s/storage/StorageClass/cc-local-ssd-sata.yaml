@@ -16,8 +16,9 @@ kind: StorageClass
 #   is not a heavy burden
 metadata:
   name: cc-local-ssd-sata
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "true"
+  # Not the default. Kubernetes allows exactly one default storage
+  # class, and more than one means a claim that doesn't name a class
+  # gets none of them — "cc-local-ssd-fast" is the one.
 
 # We use XFS and SSD storage
 parameters:

@@ -16,30 +16,6 @@ spec:
   instances: 1
   # We're not actually using PostGIS capabilities (yet)
   imageName: ghcr.io/cloudnative-pg/postgis:18-3.6-system-trixie
-  # Enable the PgVector extension
-  extensions:
-    - name: vector
-  managed:
-    roles:
-      # TODO: Automate the addition of these
-      # rather than having them set statically
-      # For Twenty CRM
-      - name: twenty_crm
-        ensure: present
-        login: true
-        passwordSecret:
-          name: twenty-crm
-      - name: mattermost
-        ensure: present
-        login: true
-        passwordSecret:
-          name: mattermost
-      - name: authentik
-        ensure: present
-        login: true
-        passwordSecret:
-          name: authentik-db
-
   # Generally speaking for databasess we use fast SSDs
   storage:
     size: 30Gi
