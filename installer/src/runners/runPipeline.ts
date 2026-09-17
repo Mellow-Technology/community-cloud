@@ -17,6 +17,7 @@ import chalk from "chalk";
 
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import {
   BundleDefinition,
   getBundle,
@@ -54,6 +55,7 @@ export async function runPipeline(
 ) {
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
 
   // Work out the whole pipeline before running any of it, so a name
   // misspelled at the end doesn't come to light three bundles in

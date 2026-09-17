@@ -217,23 +217,53 @@ Which Helm charts to install. `true` is shorthand for enabled.
 "packages": {
   "cert-manager": true,
   "cloudnative-pg": true,
-  "authentik": { "enabled": true, "version": "2024.10.1" }
+  "topolvm": { "enabled": true, "version": "15.5.2" }
 }
 ```
 
-In the catalogue: `cert-manager`, `cloudnative-pg`, `authentik`,
-`topolvm`, `headlamp`, `tailscale-operator`. Dependencies are worked
-out and installed first — Authentik needs CloudNativePG, so enabling
-it enables that too.
+In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
+`headlamp`, `tailscale-operator`. Dependencies are worked out and
+installed first — TopoLVM needs cert-manager, so enabling it enables
+that too.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
 the working directory) and `requires`.
 
+Applications live in plugins rather than in the catalogue. Authentik is
+the worked example — see [`plugins`](#plugins) below.
+
 Some packages bring credentials with them — the database passwords the
 applications connect with, for instance. Those aren't configured here;
 they're made up during the install. See
 [Generated credentials](#generated-credentials).
+
+### `plugins`
+
+Which plugins to load, from `~/.community-cloud/plugins/`. Being in that
+directory is not enough: a plugin loads only when the configuration
+names it, and only when its fingerprint matches.
+
+```jsonc
+"plugins": {
+  "authentik": {
+    "enabled": true,
+    "sha256": "481ec17bce6555d9ea01cb23ec1bdf6290bb0b7644be562a0fdc298b8bfbd4c2"
+  }
+}
+```
+
+Enable one without a `sha256` and the installer prints everything it
+would add — the charts, the manifests, the credentials, and the actual
+shell of every command — then refuses to run and gives you the line to
+paste. It won't ask again until the plugin changes.
+
+A plugin's packages and bundles are prefixed with its name, so a
+plugin called `mastodon` adding a `media` bundle contributes
+`mastodon:media`. A thing named after its own plugin isn't doubled:
+Authentik's package is `authentik`, not `authentik:authentik`.
+
+Plugins are covered properly in [docs/plugins.md](../docs/plugins.md).
 
 ### `registries`
 

@@ -13,6 +13,7 @@ import {
 } from "../cli/commands/KubeCtl.ts";
 import RemoteHost from "../remote/RemoteHost.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import { exec } from "../util/exec.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { isEmbeddedPath } from "../util/embedded.ts";
@@ -52,6 +53,7 @@ export async function runTemplate(
   // Load the configuration
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
 
   // Substitute the configured values into the template
   const manifest = await renderTemplateFile(yamlFilePath, config);

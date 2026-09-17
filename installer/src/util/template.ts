@@ -22,6 +22,7 @@ import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
+import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import {
   STORAGE_NODE_SELECTOR,
   buildShape,
@@ -378,7 +379,57 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   const built = { Values: values };
   Object.assign(values, buildLvmdValues(built, context));
 
+  // And what the plugins add, after everything the installer derives,
+  // so that a plugin can build its values out of them
+  Object.assign(values, buildPluginValues(built));
+
   return built;
+}
+
+/**
+ * The values loaded plugins contribute.
+ *
+ * A plugin's templates are no use if they can only substitute what the
+ * configuration happens to hold: the interesting values are derived
+ * ones, and only the plugin knows how to derive its own. So a manifest
+ * can declare values, and those values are themselves templates —
+ * rendered against everything above, which is why this runs last.
+ *
+ * A plugin may not overwrite a value the installer derived or the
+ * configuration set. Letting one quietly redefine "k8sApiServer" for
+ * every other chart in the cluster is not extensibility, it is a very
+ * confusing afternoon.
+ *
+ * @param built the values so far
+ * @returns
+ */
+function buildPluginValues(built: any): Record<string, unknown> {
+  const added: Record<string, unknown> = {};
+
+  for (const { name, values: contributed } of getValueContributors()) {
+    for (const [key, value] of Object.entries(contributed)) {
+      if (built.Values[key] !== undefined) {
+        console.warn(
+          `⚠️  "${name}" wanted to set the value "${key}", which is already set. Keeping the existing one.`,
+        );
+        continue;
+      }
+
+      if (added[key] !== undefined) {
+        console.warn(`⚠️  Two plugins both set the value "${key}". Keeping the first.`);
+        continue;
+      }
+
+      try {
+        added[key] =
+          typeof value === "string" ? renderTemplate(value, built) : value;
+      } catch (error: any) {
+        throw new Error(`"${name}" couldn't work out its value "${key}": ${error.message}`);
+      }
+    }
+  }
+
+  return added;
 }
 
 /**
@@ -546,11 +597,19 @@ function getControlPlaneHost(config: CloudConfig) {
 }
 
 /**
- * Read a file, from inside the installer or from this machine.
+ * Read a file, from inside the installer, from a plugin, or from this
+ * machine.
  *
- * An "embed://" path means one of the manifests the installer ships
- * with; anything else is a path on disk, relative to wherever the
- * command was run from.
+ * Three sources behind one function, which is what lets a plugin's
+ * templates work everywhere the installer's own do — as a package's
+ * values file, as a manifest applied before or after a chart, as the
+ * argument to run-template, as any command's standard input. None of
+ * those callers knows there is more than one kind of path.
+ *
+ * - embed://  one of the manifests compiled into this binary
+ * - plugin:// a file inside a loaded plugin
+ * - anything else, a path on this machine, relative to where the
+ *   command was run from
  *
  * @param filePath
  * @returns
@@ -558,6 +617,13 @@ function getControlPlaneHost(config: CloudConfig) {
 export function readInstallerFile(filePath: string): string {
   if (isEmbeddedPath(filePath)) {
     return readEmbeddedFile(filePath);
+  }
+
+  // Anything a subsystem taught the renderer to read — plugin:// is
+  // the one that exists, and it registers itself when it loads
+  const contributed = resolveFile(filePath);
+  if (contributed !== undefined) {
+    return contributed;
   }
 
   const resolved = isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);

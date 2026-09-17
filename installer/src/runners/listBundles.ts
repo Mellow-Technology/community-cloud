@@ -5,6 +5,7 @@
 import chalk from "chalk";
 
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import { getCommandType } from "../cli/commands/createCommand.ts";
 import { CommandSpec, CommandTarget, CommandType } from "../cli/commands/Command.ts";
 import { getConfiguredPipelines } from "./runPipeline.ts";
@@ -207,5 +208,6 @@ async function loadConfig(configPath?: string): Promise<CloudConfig | null> {
 
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
   return config;
 }

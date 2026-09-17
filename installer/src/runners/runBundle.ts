@@ -1,5 +1,6 @@
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import { connectToControlPlane, connectToNode } from "./nodeConnection.ts";
 import { getBundle, getBundleCommands, getBundleNames } from "../cli/commands/bundles.ts";
 
@@ -24,6 +25,7 @@ export async function runBundle(bundleName: string, nodeName: string, configPath
   // Load the configuration
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
 
   // Connect to the node, which may be this machine
   const connection = await connectToNode(config, nodeName);

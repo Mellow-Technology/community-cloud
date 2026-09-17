@@ -34,6 +34,7 @@ import {
   getBundleNames,
 } from "../cli/commands/bundles.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import { connectToControlPlane, connectToNode, NodeConnection } from "./nodeConnection.ts";
 import chalk from "chalk";
 
@@ -238,6 +239,7 @@ async function askBundle(
 export async function doctor(configPath: string, options: DoctorOptions = {}) {
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
 
   const nodes = getNodes(config, options);
   const wanted = getBundles(options);

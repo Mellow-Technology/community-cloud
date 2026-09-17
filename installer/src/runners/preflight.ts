@@ -22,6 +22,7 @@ import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
 import CloudConfig from "../util/CloudConfig.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 import { K3SInstallationType, NodeRole } from "../util/types.ts";
 import { connectToNode, NodeConnection } from "./nodeConnection.ts";
 
@@ -167,6 +168,7 @@ function getConnectTimeout(options: PreflightOptions): number {
 export async function preflight(configPath: string, options: PreflightOptions = {}) {
   const config = new CloudConfig();
   await config.loadConfigFromFile(configPath);
+  loadPlugins(config);
 
   const problems: Problem[] = [];
   let checks = 0;

@@ -121,7 +121,29 @@ const readStorageShapesCommand: CommandSpec = {
  * @returns
  */
 function getReleaseName(definition: PackageDefinition): string {
-  return definition.releaseName !== undefined ? definition.releaseName : definition.name;
+  return toKubernetesName(
+    definition.releaseName !== undefined ? definition.releaseName : definition.name,
+  );
+}
+
+/**
+ * Turn a package name into something Helm and Kubernetes will accept.
+ *
+ * A package from a plugin carries the plugin's name and a colon, which
+ * is right for telling two packages apart and is not a character
+ * allowed in a release name, a repository alias or a label value. The
+ * colon becomes a hyphen and everything else unacceptable goes the
+ * same way.
+ *
+ * @param name
+ * @returns
+ */
+function toKubernetesName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, "-")
+    .replace(/^[^a-z0-9]+/, "")
+    .replace(/[^a-z0-9]+$/, "");
 }
 
 /**
@@ -133,7 +155,7 @@ function getReleaseName(definition: PackageDefinition): string {
  * @returns
  */
 function getRepoName(definition: PackageDefinition): string {
-  return `cc-${definition.chart.name}`;
+  return toKubernetesName(`cc-${definition.chart.name}`);
 }
 
 /**
@@ -143,7 +165,7 @@ function getRepoName(definition: PackageDefinition): string {
  * @returns
  */
 function getValuesPath(definition: PackageDefinition): string {
-  return `${WORK_DIR}/${definition.name}.values.yaml`;
+  return `${WORK_DIR}/${toKubernetesName(definition.name)}.values.yaml`;
 }
 
 /**
@@ -234,7 +256,7 @@ function buildManifestCommand(
   manifest: string,
   when: string,
 ): CommandSpec {
-  const path = `${WORK_DIR}/${definition.name}-${getManifestName(manifest)}.yaml`;
+  const path = `${WORK_DIR}/${toKubernetesName(definition.name)}-${getManifestName(manifest)}.yaml`;
   const quoted = quoteForShell(path);
 
   return {
@@ -346,6 +368,13 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
 export function HelmCommands(config: CloudConfig): CommandSpec[] {
   const ordered = resolveInstallOrder(config);
 
+  // Credentials are identified by where they go, not by who asked for
+  // them, so two packages naming the same one mean one secret and not
+  // two. Without this they produce two commands of the same name — and
+  // a command's name is the key its result is kept under, so the
+  // second would quietly replace the first.
+  const madeSecrets = new Set<string>();
+
   if (ordered.length === 0) {
     return [
       {
@@ -399,6 +428,13 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     // these go in belong to the package rather than to this step.
     const secrets = definition.secrets ?? [];
     for (const secret of secrets) {
+      const where = `${secret.namespace ?? definition.namespace}/${secret.name}`;
+
+      if (madeSecrets.has(where)) {
+        continue;
+      }
+
+      madeSecrets.add(where);
       commands.push(buildCreateSecretCommand(secret, definition.namespace));
     }
 

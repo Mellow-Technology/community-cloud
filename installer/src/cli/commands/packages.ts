@@ -56,6 +56,9 @@ export interface PackageDefinition {
   requires?: string[];
   manifests?: { before?: string[]; after?: string[] };
   secrets?: SecretDefinition[];
+
+  // Which plugin contributed this, when one did
+  plugin?: string;
 }
 
 /**
@@ -93,7 +96,7 @@ export interface PackageSelection {
  * guessing on behalf of every cluster, and an unpinned chart is at
  * least honest about tracking the newest release.
  */
-export const packageCatalogue: PackageDefinition[] = [
+const builtInPackages: PackageDefinition[] = [
   {
     name: "cert-manager",
     description: "Issues and renews TLS certificates",
@@ -178,34 +181,6 @@ export const packageCatalogue: PackageDefinition[] = [
     ],
   },
   {
-    name: "authentik",
-    description: "Single sign on",
-    chart: { repo: "https://charts.goauthentik.io", name: "authentik" },
-    namespace: "cc-office",
-    valuesFile: "embed://apps/authentik/Authentik.values.yaml",
-
-    // Its chart ships a Postgres and a Redis; the values file turns
-    // both off and points it at the cluster's own. That only works if
-    // CloudNativePG is there first.
-    requires: ["cloudnative-pg"],
-
-    // The database, its owner and the secret the chart mounts. The
-    // resource types are CloudNativePG's, which "requires" above has
-    // already put in place by the time these are applied.
-    manifests: {
-      before: [
-        "embed://apps/authentik/Authentik.database.yaml",
-
-        // Authentik.storage.yaml is deliberately not here. It's an
-        // ObjectBucketClaim against the "cc-s3-storage" class, which
-        // needs an object bucket provisioner — Garage or Rook — and
-        // nothing in this catalogue installs one. Applying it would
-        // fail on a missing resource type. Put it back when object
-        // storage becomes a package.
-      ],
-    },
-  },
-  {
     name: "topolvm",
     description: "Node local storage, backed by LVM",
     chart: { repo: "https://topolvm.github.io/topolvm", name: "topolvm" },
@@ -237,6 +212,40 @@ export const packageCatalogue: PackageDefinition[] = [
     namespace: "tailscale",
   },
 ];
+
+/**
+ * Everything that can be installed: what shipped, plus what plugins
+ * added.
+ */
+export const packageCatalogue: PackageDefinition[] = [...builtInPackages];
+
+/**
+ * Add a package from a plugin.
+ *
+ * @param definition
+ * @param plugin the plugin adding it
+ */
+export function registerPackage(definition: PackageDefinition, plugin: string) {
+  const existing = getPackage(definition.name);
+
+  if (existing !== undefined) {
+    throw new Error(
+      existing.plugin === undefined
+        ? `The plugin "${plugin}" tried to add a package called "${definition.name}", which is one this installer ships. A plugin can add packages and can't replace them.`
+        : `The plugin "${plugin}" has two packages called "${definition.name}".`,
+    );
+  }
+
+  packageCatalogue.push({ ...definition, plugin });
+}
+
+/**
+ * Forget every package a plugin added.
+ */
+export function resetPackages() {
+  packageCatalogue.length = 0;
+  packageCatalogue.push(...builtInPackages);
+}
 
 /**
  * Read the packages section of a configuration.

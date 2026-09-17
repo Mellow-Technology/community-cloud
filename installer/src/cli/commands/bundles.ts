@@ -38,9 +38,20 @@ export interface BundleDefinition {
   name: string;
   description: string;
   commands: CommandSpec[] | Function;
+
+  // Which plugin contributed this, when one did. Built-in bundles
+  // leave it unset, and the listing says where a bundle came from so
+  // that what a node will run can be traced to who asked for it.
+  plugin?: string;
 }
 
-export const bundles: BundleDefinition[] = [
+/**
+ * The bundles this installer was built with.
+ *
+ * Kept separate from the registry below so that a plugin can add to
+ * the list without being able to take anything out of it.
+ */
+const builtInBundles: BundleDefinition[] = [
   {
     name: "base",
     description: "Install the base packages every node needs",
@@ -117,6 +128,48 @@ export const bundles: BundleDefinition[] = [
     commands: NodeLabelCommands,
   },
 ];
+
+/**
+ * Everything that can be run: what shipped, plus what plugins added.
+ *
+ * A live array rather than a snapshot, because the listing and the
+ * runners both read it and plugins are loaded after the module is.
+ */
+export const bundles: BundleDefinition[] = [...builtInBundles];
+
+/**
+ * Add a bundle from a plugin.
+ *
+ * A plugin can't replace a built-in, and two plugins can't both claim
+ * a name — the names are already prefixed with the plugin's own, so a
+ * collision here means one plugin has two bundles called the same
+ * thing.
+ *
+ * @param definition
+ * @param plugin the plugin adding it
+ */
+export function registerBundle(definition: BundleDefinition, plugin: string) {
+  const existing = getBundle(definition.name);
+
+  if (existing !== undefined) {
+    throw new Error(
+      existing.plugin === undefined
+        ? `The plugin "${plugin}" tried to add a bundle called "${definition.name}", which is one this installer ships. A plugin can add bundles and can't replace them.`
+        : `The plugin "${plugin}" has two bundles called "${definition.name}".`,
+    );
+  }
+
+  bundles.push({ ...definition, plugin });
+}
+
+/**
+ * Forget every bundle a plugin added. For tests, and for a process
+ * that loads more than one configuration.
+ */
+export function resetBundles() {
+  bundles.length = 0;
+  bundles.push(...builtInBundles);
+}
 
 /**
  * Find a bundle by name.
