@@ -31,6 +31,7 @@ import { GpuVendor, NodeRole, VideoDevice } from "../../util/types.ts";
 import { getNodeName } from "./K3s.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
+import { CLASSES_LABEL, buildShape, isUsableShape } from "../../util/storage.ts";
 
 // Where automatic hardware labels live. Namespaced, so it's obvious
 // which labels this installer owns and which came from elsewhere.
@@ -147,15 +148,14 @@ function getAutomaticRoles(context: any): string[] {
  * @returns
  */
 function getAutomaticLabels(context: any): Record<string, string> {
+  const labels: Record<string, string> = { ...getStorageLabels(context) };
   const gpus = getComputeGpus(context);
 
   if (gpus.length === 0) {
-    return {};
+    return labels;
   }
 
-  const labels: Record<string, string> = {
-    [`${GPU_PREFIX}/count`]: String(gpus.length),
-  };
+  labels[`${GPU_PREFIX}/count`] = String(gpus.length);
 
   // One vendor is the common case and the useful one to select on. A
   // node with cards from two vendors gets neither, rather than an
@@ -166,6 +166,41 @@ function getAutomaticLabels(context: any): Record<string, string> {
   }
 
   return labels;
+}
+
+/**
+ * The label saying which device classes this node can serve.
+ *
+ * What the lvm bundle found, rather than what the configuration hoped
+ * for: a node is labelled with the classes it actually has volume
+ * groups for. TopoLVM's values are rendered from these labels, so a
+ * node that serves three of the four classes gets an lvmd that asks
+ * for three rather than one that refuses to start.
+ *
+ * Nothing is said when the lvm bundle hasn't run. An unlabelled node
+ * falls back to being offered every class, which is what happened
+ * before any of this existed.
+ *
+ * @param context
+ * @returns
+ */
+function getStorageLabels(context: any): Record<string, string> {
+  const classes = context.storageClassesPresent;
+
+  if (!Array.isArray(classes) || classes.length === 0) {
+    return {};
+  }
+
+  const shape = buildShape(classes);
+
+  if (!isUsableShape(shape)) {
+    console.warn(
+      `⚠️  "${shape}" is too long or has characters Kubernetes won't take in a label, so this node won't be told which device classes it serves. It will be offered all of them.`,
+    );
+    return {};
+  }
+
+  return { [CLASSES_LABEL]: shape };
 }
 
 /**

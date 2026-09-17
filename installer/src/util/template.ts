@@ -16,11 +16,19 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import { parse } from "@ctrl/golang-template";
+import { parse as parseYaml } from "yaml";
 
 import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
+import {
+  STORAGE_NODE_SELECTOR,
+  buildShape,
+  buildShapeSelector,
+  getStorageShapes,
+  readShape,
+} from "./storage.ts";
 
 // Tags that @ctrl/golang-template handles on its own.
 // A tag opening with any of these is left untouched.
@@ -295,6 +303,11 @@ function isEmpty(value: any): boolean {
 // to do otherwise
 const DEFAULT_K8S_API_PORT = "6443";
 
+// Where the device classes are declared. Read here to work out which
+// nodes can serve which of them, and read again by the LVM bundle to
+// know which volume groups to create.
+const TOPOLVM_VALUES_FILE = "embed://storage/TopoLVM/TopoLVM.values.yaml";
+
 /**
  * Build the value set handed to the template renderer.
  *
@@ -308,7 +321,7 @@ const DEFAULT_K8S_API_PORT = "6443";
  * @param config
  * @returns
  */
-export function buildTemplateValues(config: CloudConfig) {
+export function buildTemplateValues(config: CloudConfig, context?: any) {
   const rawConfig = config.getConfig();
   const values = {
     ...rawConfig,
@@ -359,7 +372,118 @@ export function buildTemplateValues(config: CloudConfig) {
     values.storageControllerReplicas = countStorageNodes(rawConfig);
   }
 
-  return { Values: values };
+  // Which lvmd serves which nodes. Worked out last, because doing it
+  // means rendering the TopoLVM values with everything above already
+  // in place to find out what device classes there are.
+  const built = { Values: values };
+  Object.assign(values, buildLvmdValues(built, context));
+
+  return built;
+}
+
+/**
+ * How to divide the device classes up between the nodes that can
+ * serve them.
+ *
+ * lvmd won't start unless every volume group it's told about is on
+ * the node it landed on, so a cluster of unlike machines needs one
+ * lvmd configuration per combination of classes rather than one for
+ * everybody. The combinations come from the cluster itself: nodes are
+ * labelled with what they serve once their volume groups exist, and
+ * an earlier command reads those labels back.
+ *
+ * Two values come out of this, both as JSON. YAML is a superset of
+ * JSON, so a flow mapping or sequence drops into the values file on
+ * one line and there is no indentation to get wrong:
+ *
+ * - lvmdBaseSelector: the nodeSelector for the configuration already
+ *   written in the values file, which names every class
+ * - lvmdAdditionalConfigs: one configuration per other shape found,
+ *   each naming only the classes that shape has
+ *
+ * Nothing found means nothing to divide, and every node is offered
+ * every class — which is what happened before any of this existed,
+ * and what a first install does.
+ *
+ * @param built the values so far, used to render the TopoLVM values
+ * @param context
+ * @returns
+ */
+function buildLvmdValues(built: any, context?: any): Record<string, string> {
+  const everyNode = {
+    lvmdBaseSelector: JSON.stringify(STORAGE_NODE_SELECTOR),
+    lvmdAdditionalConfigs: "[]",
+  };
+
+  const shapes = [...new Set(Object.values(getStorageShapes(context)))];
+
+  if (shapes.length === 0) {
+    return everyNode;
+  }
+
+  const catalogue = readDeviceClasses(built);
+
+  if (catalogue.length === 0) {
+    return everyNode;
+  }
+
+  // The shape of a node that has everything. The configuration in the
+  // values file names every class, so it's the one that serves those
+  // nodes, and the others are added alongside it.
+  const complete = buildShape(catalogue.map((entry: any) => String(entry.name)));
+
+  const additional = shapes
+    .filter((shape) => shape !== complete)
+    .map((shape) => {
+      const wanted = readShape(shape);
+
+      return {
+        nodeSelector: buildShapeSelector(shape),
+
+        // Kept in the catalogue's order rather than the shape's, so
+        // that whichever class was marked default stays default when
+        // the node has it. A shape without that class has no default
+        // at all, which is fine: every StorageClass in k8s/ names the
+        // device class it wants, so nothing relies on there being one.
+        deviceClasses: catalogue.filter((entry: any) =>
+          wanted.includes(String(entry.name)),
+        ),
+      };
+    })
+    .filter((entry) => entry.deviceClasses.length > 0);
+
+  return {
+    lvmdBaseSelector: JSON.stringify(buildShapeSelector(complete)),
+    lvmdAdditionalConfigs: JSON.stringify(additional),
+  };
+}
+
+/**
+ * The device classes the TopoLVM values name.
+ *
+ * Read out of the file being rendered rather than written down here,
+ * so that adding a class over there is all it takes — the same reason
+ * the LVM bundle reads them rather than keeping its own list.
+ *
+ * Rendered with the values built so far, which don't yet include the
+ * two this is working out. Those render as nothing, leaving the keys
+ * empty, and the device classes are plain YAML either way.
+ *
+ * @param built
+ * @returns
+ */
+function readDeviceClasses(built: any): any[] {
+  try {
+    const rendered = renderTemplate(readInstallerFile(TOPOLVM_VALUES_FILE), built);
+    const classes = parseYaml(rendered)?.lvmd?.deviceClasses;
+
+    return Array.isArray(classes) ? classes : [];
+  } catch {
+    // A values file that can't be read is a problem, but not this
+    // function's problem: the LVM bundle reads the same file and says
+    // so properly. Here it just means there's nothing to divide up.
+    return [];
+  }
 }
 
 /**
@@ -460,11 +584,15 @@ export function readInstallerFile(filePath: string): string {
  * @param fromConfiguration
  * @returns
  */
-export function renderInstallerFile(config: CloudConfig, filePath: string): string {
+export function renderInstallerFile(
+  config: CloudConfig,
+  filePath: string,
+  context?: any,
+): string {
   const contents = readInstallerFile(filePath);
 
   try {
-    return renderTemplate(contents, buildTemplateValues(config));
+    return renderTemplate(contents, buildTemplateValues(config, context));
   } catch (e: any) {
     throw new Error(`Couldn't render "${filePath}": ${e.message}`);
   }

@@ -201,6 +201,14 @@ touched if it is demonstrably unused: no partitions, no filesystem
 signature, not mounted, nothing holding it, not removable, not
 read-only. Anything else is reported and left alone.
 
+A node doesn't have to have a disk of every class. What it ends up
+serving is recorded on the node by `nodeLabels`, and the TopoLVM values
+are rendered from those labels so that a node is never offered a volume
+group it hasn't got — which lvmd treats as fatal. That means running
+`lvm` and `nodeLabels` before `helm-charts`, and re-running
+`helm-charts` when a node's disks change. See
+[Nodes that can't serve every class](../k8s/storage/README.md#nodes-that-cant-serve-every-class).
+
 ### `packages`
 
 Which Helm charts to install. `true` is shorthand for enabled.

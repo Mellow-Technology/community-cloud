@@ -22,6 +22,9 @@ import {
   writeFileCommand,
 } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
+import { buildKubeEnv } from "../../util/kube.ts";
+import { CLASSES_LABEL, STORAGE_ROLE_SELECTOR, readShape } from "../../util/storage.ts";
+import { readLines } from "./output.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
 import {
   buildCreateSecretCommand,
@@ -43,6 +46,72 @@ const READY_TIMEOUT = "10m";
 // installed. The resource types it uses arrive with that chart, and
 // an operator's webhook is ready a moment after its deployment is.
 const MANIFEST_TIMEOUT_SECONDS = 120;
+
+/**
+ * Ask the cluster which device classes each storage node can serve.
+ *
+ * TopoLVM's values are rendered from the answer: lvmd refuses to
+ * start unless every volume group it's told about is on the node it
+ * landed on, so a cluster of unlike machines needs one lvmd per
+ * combination of classes. The combinations can't come from the
+ * configuration, which knows what disks were asked for rather than
+ * what was found, so they come from the labels the lvm bundle left on
+ * the nodes.
+ *
+ * A cluster with no labels yet is the ordinary first install, not a
+ * failure. Every node is then offered every class, which is what
+ * happened before this existed.
+ */
+const readStorageShapesCommand: CommandSpec = {
+  name: "read-storage-shapes",
+  description: "Find out which device classes each storage node can serve",
+  purpose: CommandPurpose.Inspect,
+  runOn: CommandTarget.ControlPlane,
+  env: buildKubeEnv,
+  command: [
+    `kubectl get nodes -l ${quoteForShell(STORAGE_ROLE_SELECTOR)} -o jsonpath='{range .items[*]}{.metadata.name}|{.metadata.labels.${CLASSES_LABEL.replace(/\./g, "\\.")}}{"\\n"}{end}' 2>/dev/null || true`,
+  ],
+  output: OutputType.Raw,
+  saveToContext: (output: any) => {
+    const shapes: Record<string, string> = {};
+    const unlabelled: string[] = [];
+
+    for (const line of readLines(output)) {
+      const [name, shape] = line.split("|");
+
+      if (name === undefined || name === "") {
+        continue;
+      }
+
+      if (shape === undefined || shape === "") {
+        unlabelled.push(name);
+        continue;
+      }
+
+      shapes[name] = shape;
+    }
+
+    const found = Object.entries(shapes);
+
+    if (found.length === 0) {
+      console.log(
+        "  No storage node says which device classes it serves, so every one will be offered all of them. Run the lvm and nodeLabels bundles against a node to narrow that down.",
+      );
+    } else {
+      for (const [name, shape] of found) {
+        console.log(`  ${name}: ${readShape(shape).join(", ")}`);
+      }
+
+      if (unlabelled.length > 0) {
+        console.log(
+          `  Offered every device class, because nothing has said otherwise: ${unlabelled.join(", ")}`,
+        );
+      }
+    }
+
+    return { storageShapes: shapes };
+  },
+};
 
 /**
  * The release name for a package, which is its own name unless it
@@ -122,8 +191,8 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
     // The rendered values go over standard input rather than into the
     // command, so nothing secret in them turns up in a process listing
     // on the control plane or in an error quoting the command back
-    stdin: (config: CloudConfig) =>
-      renderInstallerFile(config, definition.valuesFile as string),
+    stdin: (config: CloudConfig, context: any) =>
+      renderInstallerFile(config, definition.valuesFile as string, context),
     output: OutputType.Raw,
   };
 }
@@ -192,7 +261,8 @@ function buildManifestCommand(
       `[ "$applied" = "yes" ] || kubectl apply -f ${quoted} || { echo "Couldn't apply ${manifest} for ${definition.name}" >&2; rm -f ${quoted}; exit 1; }`,
       `rm -f ${quoted}`,
     ],
-    stdin: (config: CloudConfig) => renderInstallerFile(config, manifest),
+    stdin: (config: CloudConfig, context: any) =>
+      renderInstallerFile(config, manifest, context),
     output: OutputType.Raw,
   };
 }
@@ -303,6 +373,7 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
         'command -v helm > /dev/null 2>&1 || { echo "Helm isn\'t installed on the control plane. Run the \\"helm\\" bundle first." >&2; exit 1; }\nhelm version --short',
       output: OutputType.Raw,
     },
+    readStorageShapesCommand,
   ];
 
   for (const definition of ordered) {

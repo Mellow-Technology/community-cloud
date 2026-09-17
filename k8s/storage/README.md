@@ -115,3 +115,55 @@ nodes labelled `node-role.kubernetes.io/storage-local=storage-local`,
 which the installer applies from the `roles` on a node. A node without
 that role isn't running out of storage — it simply doesn't offer any,
 and TopoLVM won't schedule volumes there.
+
+### Nodes that can't serve every class
+
+Not every machine has one of each kind of disk in it, and a Community
+Cloud is usually built out of whatever hardware people have. A node
+with SSDs and nothing spinning is a perfectly good node for the classes
+it does have.
+
+lvmd disagrees. It's handed a list of device classes and refuses to
+start unless every volume group in that list is on the node it landed
+on, so one missing group means the node serves none of them and
+CrashLoopBackOffs:
+
+```
+"msg":"volume group not found","volume_group":"cc-hdd-vg","error":"not found"
+```
+
+This is stricter than the rest of lvmd needs — its capacity reporting
+already iterates the volume groups that exist and skips device classes
+it can't place, so a class with no group would simply never be offered.
+Only the startup check objects. The exact lines are cited in
+`TopoLVM/TopoLVM.values.yaml`, and the real fix is upstream.
+
+Until then the installer works around it. Once a node's volume groups
+exist, the `lvm` bundle records which device classes it can serve and
+`nodeLabels` puts them on the node as a single label:
+
+```
+storage.community-cloud.technology/classes=hdd.ssd
+```
+
+Installing the charts then reads those labels back and renders one lvmd
+configuration per distinct combination — TopoLVM's `additionalConfigs`
+— each offering only the classes those nodes actually have. One per
+combination rather than one per class, because a node can only use one
+lvmd: `topolvm-node` is given a single socket path. A single label
+holding the whole set, rather than one per class, is what keeps the
+selectors non-overlapping, which the chart requires.
+
+So run the bundles in that order, and re-run `helm-charts` after the
+storage on a node changes:
+
+```bash
+community-cloud run-pipeline lvm,nodeLabels <node> cc.config.json
+community-cloud run-bundle helm-charts <node> cc.config.json
+```
+
+A cluster where nothing has been labelled yet — a first install —
+offers every node every class, which is the behaviour from before this
+existed. When a node's shape does change it moves between lvmd
+DaemonSets, and `topolvm-node` will crash once or twice while the
+socket is absent before reconnecting on its own.
