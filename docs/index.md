@@ -316,6 +316,16 @@ Build one with `community-cloud` and no arguments, and check it with
 
 ---
 
+## Design documents
+
+Proposals, not descriptions of what exists. Each says so at the top.
+
+| Document | What it covers |
+|---|---|
+| [Plugins](plugins.md) | Packaging commands, manifests and charts as loadable plugins — the seams in the installer, single-file distribution, and the trust model. **Draft, nothing built.** |
+
+---
+
 ## Tech Stack
 
 | Category | Technology |
