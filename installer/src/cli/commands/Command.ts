@@ -531,7 +531,13 @@ export default abstract class Command {
           this.parsedOutput = this.rawOutput;
       }
     } catch (error) {
-      console.error(`Failed to parse ${this.outputType} output:`, error);
+      // Quiet means quiet. A command whose output didn't parse still
+      // reports that through its return value, and a caller that asked
+      // not to be narrated at shouldn't get this on the way past.
+      if (!this.quiet) {
+        console.error(`Failed to parse ${this.outputType} output:`, error);
+      }
+
       this.parsedOutput = null;
       return false;
     }

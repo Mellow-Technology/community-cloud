@@ -327,6 +327,47 @@ itself as a ConfigMap in `kube-system`, with the secrets stripped.
 `doctor` compares that against your file and reports anywhere they've
 drifted apart.
 
+## Tests
+
+```bash
+bun run test           # everything
+bun run test:watch     # on change
+bun test src/test/plugins.test.ts
+```
+
+They live in `src/test`, use the `node:test` API with `node:assert`,
+and reach nothing outside the repository — no live node, no cluster, no
+`cc.config.json`. The configuration they work against is the fixture in
+`src/test/fixtures`, which sets every value the manifests reference and
+holds no real credentials.
+
+Nothing under `src/test` reaches a shipped binary: the build compiles
+from `src/cli/installer.ts` and the bundler only follows imports, so a
+file nothing imports is never seen.
+
+**On the runner.** The tests are written against Node's own test API,
+and `node --test` cannot currently run them:
+
+- the codebase uses `enum` in nine modules, and Node's type stripping
+  refuses non-erasable syntax — `--experimental-transform-types` used
+  to handle it and is gone as of Node 26
+- `src/util/embedded.ts` needs `bun:sqlite` to read the manifests
+  compiled into the binary
+
+So `bun test` is the runner, and it implements `node:test` faithfully.
+Writing against the standard API rather than `bun:test` costs nothing
+today and means the tests move if the runtime ever does.
+
+### Scripts that need a real node
+
+`src/test/manual` holds two that talk to a live machine, so they are
+run by hand rather than by `bun test`:
+
+```bash
+bun src/test/manual/cliInstall.ts cc.config.json phoenix
+bun src/test/manual/K3sInstall.ts cc.config.json phoenix
+```
+
 ## Building
 
 The installer ships as a single executable. It needs nothing on the
