@@ -730,4 +730,9 @@ Contributions are welcome. The one thing worth knowing before writing a command:
 
 ## License
 
-This project is licensed under the [MIT License](../LICENSE.md).
+The installer is licensed under the **GNU Lesser General Public
+License, version 3 or later** (LGPL-3.0-or-later). See
+[LICENSE.md](./LICENSE.md), with the licence texts themselves in
+[COPYING.LESSER](./COPYING.LESSER) and [COPYING](./COPYING).
+
+The rest of the repository is [MIT](../LICENSE.md).

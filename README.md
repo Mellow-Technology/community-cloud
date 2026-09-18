@@ -92,7 +92,7 @@ community-cloud/
 | `cc.config.json` | The cluster's configuration — nodes, networking, storage, packages, registries. Gitignored, since it holds secrets. See the [installer README](./installer/README.md#configuration) |
 | `Vagrantfile` | Local dev environment — 3 Ubuntu 24.04 VMs with 3x 25GB disks each |
 | `.gitignore` | Ignored files — `*.config.json` among them |
-| `LICENSE.md` | License information |
+| `LICENSE.md` | License information. MIT, except the installer, which is LGPL-3.0-or-later |
 | `cc-headlamp/` | The Community Cloud plugin for Headlamp |
 | `docs/index.md` | Documentation index |
 
