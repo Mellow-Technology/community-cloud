@@ -1,63 +1,102 @@
 # Community Cloud Applications
 
-This directory contains Kubernetes configurations for the back-office applications that form the core of a Community Cloud instance. All applications are deployed in the `cc-office` namespace.
+The applications a Community Cloud instance runs. Most live in the
+`cc-office` namespace, created by `office/Office.namespace.yaml`.
 
-## Directory Structure
+Each application is split by what each piece is, so they can be
+applied in order and read one at a time: `.database.yaml` before the
+application that needs it, `.storage.yaml` before anything that writes,
+`.cert.yaml` and `.route.yaml` for how it's reached. A
+`.values.yaml` is Helm values rather than a manifest.
 
+All of them are templates, rendered against `cc.config.json`:
+
+```bash
+community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
 ```
-apps/
-├── office/                    # Office namespace (cc-office)
-├── twenty/                    # Twenty CRM application
-├── umami/                     # Umami analytics (template)
-└── README.md
-```
 
-## Applications
+## The shared namespace (`office/`)
 
-### Twenty CRM (`twenty/`)
-
-[Twenty](https://twenty.com) is an open-source CRM deployed as a full-stack application with server and worker deployments.
-
-| File | Purpose |
+| File | What it is |
 |---|---|
-| `Twenty.yaml` | Server deployment (1 replica) + worker deployment (1 replica), both on `worker` nodes |
-| `TwentyDatabase.yaml` | CloudNative-PG `Database` CRD — creates `twenty_crm` database with `twenty_crm` owner |
-| `Twenty.secret.yaml` | Base64-encoded encryption key, DB credentials, and database password |
-| `Twenty.storage.yaml` | `ObjectBucketClaim` for Garage S3 storage (20 Gi limit, `cc-s3-storage` class) |
-| `Twenty.config.yaml` | ConfigMap with server URL |
-| `Twenty.install.yaml` | One-time init Job — runs `yarn database:init:prod` to bootstrap the database |
-| `Twenty.route.yaml` | Gateway API `HTTPRoute` — routes  to the `twenty-crm` service |
+| `Office.namespace.yaml` | The `cc-office` namespace, labelled so its listeners may attach to the cluster Gateway. |
 
-**Architecture:**
+The applications reach the outside through the cluster's own Gateway
+in `networking/gateway/`, rather than one of their own.
+| `Office.issuer.yaml` | A Let's Encrypt issuer scoped to the namespace. |
+| `Office.database.yaml` | The shared CloudNativePG cluster. |
+| `RedisStandalone.yaml` | Redis, for the applications that want a cache. |
 
-- **Server** (port 3000): Frontend + API, session affinity (ClientIP, 3h timeout)
-- **Worker** (background jobs): Runs `yarn worker:prod` for async task processing
-- **Database**: CloudNative-PG cluster (`cc-postgres`) with PostGIS support, 30Gi SSD
-- **Cache**: Redis (Opstree) in the `cc-office` namespace
-- **Storage**: Garage S3-compatible object storage via `ObjectBucketClaim`
+## Twenty CRM (`twenty/`)
 
-### Office (`office/`)
+[Twenty](https://twenty.com) is an open-source CRM, deployed as a
+server and a worker.
 
-| File | Purpose |
+| File | What it is |
 |---|---|
-| `OfficeNamespace.yaml` | Creates the `cc-office` namespace with managed-by labels |
+| `Twenty.yaml` | The server and worker deployments. |
+| `Twenty.install.yaml` | The one-off database setup job. |
+| `Twenty.database.yaml` | Its CloudNativePG database. |
+| `Twenty.storage.yaml` | Volumes for uploads. |
+| `Twenty.config.yaml` | Configuration and secrets. |
+| `Twenty.cert.yaml` | Its certificate. |
+| `Twenty.route.yaml` | The HTTPRoute that reaches it. |
+| `Twenty.network.yaml` | Network policy. |
 
-### Umami (`umami/`)
+## Authentik (`authentik/`)
 
-Template directory prepared for [Umami](https://umami.is) analytics. No manifests yet.
+[Authentik](https://goauthentik.io) is the identity provider, and what
+everything else authenticates against.
 
-## Namespace: `cc-office`
+| File | What it is |
+|---|---|
+| `Authentik.values.yaml` | Helm values. |
+| `Authentik.database.yaml` | A CloudNativePG database. |
+| `Authentik.storage.yaml` | Media and template volumes. |
+| `Authentik.config.yaml` | Configuration and secrets. |
+| `Authentik.cert.yaml` | Its certificate. |
 
-The `cc-office` namespace provides a policy boundary for all back-office resources:
+The chart bundles its own PostgreSQL. Community Cloud turns that off
+and points it at CloudNativePG instead — one way of running Postgres
+across the cluster is easier to back up, upgrade and reason about.
 
-- **Managed by**: Community Cloud (`app.kubernetes.io/managed-by: community-cloud`)
-- **Purpose**: Isolated namespace for business/team applications with dedicated network policies
+## Mattermost (`mattermost/`)
 
-## Deployment Order
+[Mattermost](https://mattermost.com) is team chat.
 
-1. Create namespace (`office/OfficeNamespace.yaml`)
-2. Deploy database (`database/Postgres/PostgresCCDefault.yaml` — `cc-postgres` cluster)
-3. Deploy Redis (`database/Redis/RedisStandalone.yaml`)
-4. Deploy Twenty server + workers (`twenty/Twenty.yaml`)
-5. Run init job (`twenty/Twenty.install.yaml`)
-6. Apply route (`twenty/Twenty.route.yaml`)
+| File | What it is |
+|---|---|
+| `Mattermost.yaml` | The installation. |
+| `Mattermost.values.yaml` | Helm values for the operator. |
+| `Mattermost.database.yaml` | Its CloudNativePG database. |
+| `Mattermost.storage.yaml` | Volumes for uploads. |
+
+## Headlamp (`headlamp/`)
+
+[Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
+
+| File | What it is |
+|---|---|
+| `Headlamp.values.yaml` | Helm values. |
+| `Headlamp.plugins.yaml` | The plugins it loads, including Community Cloud's own. |
+
+## Picoclaw (`picoclaw/`)
+
+| File | What it is |
+|---|---|
+| `Picoclaw.deployment.yaml` | The deployment. |
+| `Picoclaw.config.yaml` | Its configuration. |
+| `Picoclaw.storage.yaml` | Its volumes. |
+| `Picoclaw.route.yaml` | The HTTPRoute that reaches it. |
+
+See [picoclaw/README.md](./picoclaw/README.md).
+
+## What they share
+
+- **Databases** are CloudNativePG, never a chart's bundled one
+- **Storage** is TopoLVM through `cc-local-ssd-fast`
+- **Certificates** are cert-manager and Let's Encrypt
+- **Ingress** is the Gateway API, served by Cilium's Envoy, through a
+  listener on the cluster Gateway
+- **Domains** come from `values.domain.*` in the configuration, so an
+  instance is rehomed by changing one file

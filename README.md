@@ -26,7 +26,7 @@ Community Cloud deploys a K3s cluster across heterogeneous hardware, organizing 
 
 | Role | Purpose |
 |---|---|
-| `gateway` | Publicly routable nodes serving as cluster ingress/egress via Traefik (Gateway API) |
+| `gateway` | Publicly routable nodes serving as cluster ingress/egress, via the Gateway API on Cilium's Envoy |
 | `worker` | General-purpose workload nodes |
 | `worker-gpu` | GPU-equipped nodes for AI/ML inference (AMD MI300, NVIDIA, Intel) |
 | `storage-local` | Nodes with local block devices for TopoLVM CSI provisioning |
@@ -46,17 +46,19 @@ TopoLVM supports four device classes mapped to LVM volume groups:
 |---|---|---|
 | `ssd` | `cc-ssd-vg` | M.2 NVMe (fastest) |
 | `ssd-sata` | `cc-ssd-sata-vg` | SATA SSD |
-| `ssd-cache` | `cc-ssd-cache` | SSD cache tier |
+| `ssd-cache` | `cc-ssd-cache-vg` | SSD cache fronting spinning disks (reserved — see [storage](./k8s/storage/README.md#on-ssd-cache)) |
 | `hdd` | `cc-hdd-vg` | Spinning disk (capacity) |
 
 Object storage is provided by [Garage](https://garagehq.deuxfleurs.fr) (S3-compatible), deployed as a single-node StatefulSet with NodePort access.
 
 ### Networking
 
-- **Gateway**: Traefik via Kubernetes Gateway API (`cc-gateway-class`)
+- **CNI**: Cilium, with its eBPF datapath replacing kube-proxy
+- **Gateway**: the Kubernetes Gateway API, served by Cilium's own Envoy. K3s is installed with `--disable=traefik --disable=servicelb`, since Cilium replaces both
+- **Load balancer addresses**: Cilium IP address management, with L2 announcements on networks where a router forwards to an address nothing holds
 - **Certificates**: cert-manager with Let's Encrypt (HTTP-01 challenges via Gateway API)
-- **Cross-Site**: Tailscale integration for zero-trust networking between distributed nodes
-- **Ingress**: Dedicated gateway nodes with node affinity scheduling
+- **Cross-Site**: a Nebula mesh through Defined Networking, or Tailscale, for nodes that can't reach each other directly
+- **Ingress**: dedicated gateway nodes, selected by the `gateway` role
 
 ### Database Services
 
@@ -84,9 +86,9 @@ community-cloud/
 │   ├── certs/          # cert-manager issuers & certificates
 │   ├── crd/            # Custom Resource Definitions (Webapp, Sites)
 │   ├── database/       # PostgreSQL, PostGIS, Redis clusters
-│   ├── gateway/        # Gateway API resources & Traefik config
+│   ├── gateway/        # The default application Gateway
 │   ├── k3s-config/     # K3s node configuration (registries)
-│   ├── networking/     # Networking (Tailscale cross-site)
+│   ├── networking/     # Cilium, the cluster Gateway, Tailscale
 │   └── storage/        # TopoLVM, Garage, StorageClasses
 ├── cc-headlamp/        # Headlamp Kubernetes UI plugin
 ├── docs/               # Documentation
@@ -97,13 +99,11 @@ community-cloud/
 
 | File | Purpose |
 |---|---|
-| `cc.json` | Cluster host inventory — nodes, regions, registries, and config |
+| `cc.config.json` | The cluster's configuration — nodes, networking, storage, packages, registries. Gitignored, since it holds secrets. See the [installer README](./installer/README.md#configuration) |
 | `Vagrantfile` | Local dev environment — 3 Ubuntu 24.04 VMs with 3x 25GB disks each |
-| `install-k3s.sh` | K3s server/agent bootstrap with Tailscale integration |
-| `.gitignore` | Ignored files (secrets, cc.json, registries.yaml, etc.) |
-| `LICENSE.md` | License information |
-| `registries.yaml` | K3s private registry auth (GitLab) |
-| `cc/` | Placeholder for future tooling |
+| `.gitignore` | Ignored files — `*.config.json` among them |
+| `LICENSE.md` | License information. MIT, except the installer, which is LGPL-3.0-or-later |
+| `cc-headlamp/` | The Community Cloud plugin for Headlamp |
 | `docs/index.md` | Documentation index |
 
 ## Installer
@@ -157,7 +157,7 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 
 ### AI Inference
 
-- **vLLM** on AMD MI300 GPUs (`k8s/ai/vllm-amd.yaml`): Mistral-7B deployment with ROCm, host network/IPC, 8Gi shared memory, Hugging Face model access via secret.
+- **vLLM** on AMD MI300 GPUs (`k8s/ai/vLLM/vllm-amd.yaml`): Mistral-7B deployment with ROCm, host network/IPC, 8Gi shared memory, Hugging Face model access via secret.
 
 ## Quick Start
 
@@ -171,6 +171,6 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 - **Languages**: TypeScript, YAML
 - **CLI Framework**: Ink (React), Commander.js, Inquirer
 - **Storage**: TopoLVM, Garage
-- **Networking**: Traefik, Gateway API, cert-manager, Tailscale
+- **Networking**: Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale
 - **Databases**: CloudNative-PG (PostgreSQL/PostGIS), Redis (Opstree)
 - **AI**: vLLM (ROCm/AMD GPU)

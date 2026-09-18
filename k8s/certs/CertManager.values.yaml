@@ -1,6 +1,30 @@
-# Enable Gateway API support for cert manager
+# Enable Gateway API support for cert manager.
+#
+# Needs cert-manager 1.21 or later. The nested "gatewayAPI" block
+# below only exists from 1.21; 1.20 and earlier take a flat
+# "enableGatewayAPI" instead and reject this one, failing to decode
+# their own configuration and crashlooping with "unknown field
+# gatewayAPI".
+#
+# ExperimentalGatewayAPISupport defaults on from 1.21, but ListenerSets
+# is still alpha and off, so the feature gate below is required.
 config:
-  enableGatewayAPI: true
-  enableGatewayAPIListenerSet: true
+  gatewayAPI:
+    enabled: true
+    enableListenerSet: true
   featureGates:
     ListenerSets: true
+
+# Install the custom resources as part of the release.
+#
+# The chart leaves this off by default, and without it cert-manager
+# installs and does nothing: there is no Certificate or Issuer kind
+# for it to act on, and its own startup check spins until the Helm
+# timeout waiting for CRDs that are never coming.
+#
+# "keep" means uninstalling the release leaves the CRDs behind. That
+# is the safe default — removing them deletes every Certificate and
+# Issuer in the cluster along with them.
+crds:
+  enabled: true
+  keep: true

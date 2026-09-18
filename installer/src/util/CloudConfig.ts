@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 // For now we're just loading a file in the current
 // working directory and using that for host defintions
-const HOSTS_FILE_NAME = "cc.json";
+// const HOSTS_FILE_NAME = "cc.json";
 
 export default class CloudConfig {
   /**
@@ -15,21 +15,60 @@ export default class CloudConfig {
    */
   protected config: any;
 
-  constructor(config: any) {
+  constructor(config: any = {}) {
     this.config = config;
   }
 
+
   /**
-   * Retrieve hosts that are available for install.
+   * Load configuration from a file
+   * @param configFilePath
    */
-  async getAvailableHosts() {
-    const cwd = process.cwd();
-    const filePath = join(cwd, HOSTS_FILE_NAME);
+  async loadConfigFromFile(configFilePath: string) {
+    // Relative paths are resolved against the working directory,
+    // absolute ones are already where they need to be
+    const filePath = isAbsolute(configFilePath)
+      ? configFilePath
+      : join(process.cwd(), configFilePath);
 
     const fileContents = await readFile(filePath, { encoding: "utf8" });
-    const data = JSON.parse(fileContents);
+    this.config = JSON.parse(fileContents);
+  }
 
-    return data;
+  /**
+   * Get the entire configuration
+   * @returns
+   */
+  getConfig() {
+    return this.config;
+  }
+
+
+  /**
+   * The networking part of the configuration.
+   *
+   * @returns the section, or an empty one when there isn't any
+   */
+  getNetwork() {
+    const { network } = this.config;
+    return network !== undefined && network !== null ? network : {};
+  }
+
+  /**
+   * One piece of the networking configuration, by name.
+   *
+   * Nearly everything to do with networking is a section under
+   * "network" — cilium, gateway, nebula, externalIPs — and each was
+   * reaching in and checking for the same two kinds of missing. A
+   * section that isn't there reads as an empty one, so a caller can
+   * destructure what it wants and get undefined for anything unset.
+   *
+   * @param name
+   * @returns
+   */
+  getNetworkSection(name: string) {
+    const section = this.getNetwork()[name];
+    return section !== undefined && section !== null ? section : {};
   }
 
   /**
@@ -38,17 +77,35 @@ export default class CloudConfig {
    * @param nodeName
    * @returns
    */
-  getNode(nodeName) {
+  getNode(nodeName: string) {
     const { config } = this;
-    const nodes = config.nodes.filter((node) => nodeName === node.name);
-    return nodes[0];
+    const name = nodeName.toLowerCase();
+
+    // Node names carry capitals and spaces ("Mamoru BKK") while the
+    // address is what people actually type at a terminal, so a node
+    // answers to either.
+    const nodes = config.nodes.filter((node: any) => {
+      return (
+        node.name?.toLowerCase() === name || node.address?.toLowerCase() === name || node.sshHost?.toLowerCase() === name
+      );
+    });
+
+    return nodes[0] !== undefined ? nodes[0] : null;
   }
 
   /**
    * On K3s
    */
   getControlPlaneUrl() {
-    const planeAddress = getControlPlaneHost().address;
+    const controlPlane = this.getControlPlaneHost();
+
+    // Agents have to reach the API themselves, and the address we
+    // administer a node through won't always get them there
+    const planeAddress =
+      controlPlane.apiAddress !== undefined
+        ? controlPlane.apiAddress
+        : controlPlane.address;
+
     return `https://${planeAddress}:6443`;
   }
 
@@ -60,7 +117,7 @@ export default class CloudConfig {
    */
   getControlPlaneHost() {
     const { config } = this;
-    const controlPlaneNodes = config.hosts.filter((host) => {
+    const controlPlaneNodes = config.nodes.filter((host: any) => {
       return host.type === "server";
     });
 

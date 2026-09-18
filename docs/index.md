@@ -8,126 +8,112 @@ Community Cloud is a multi-node, multi-site Kubernetes platform built on K3s. It
 
 ## Installer
 
-The installer (`installer/`) is a Bun-based CLI tool that automates K3s cluster deployment across remote hosts.
+The installer (`installer/`) is a Bun CLI that builds and inspects
+clusters. It ships as a single executable with every manifest under
+`k8s/` compiled into it, so it needs nothing on the machine it runs
+from — no Bun, no Node, no checkout.
+
+Full configuration reference: [installer/README.md](../installer/README.md#configuration).
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `configure` | Build or edit a configuration, interactively. The default when no command is given. |
+| `preflight <config>` | Say whether a configuration could be installed, before installing it. Changes nothing. |
+| `doctor <config>` | Ask a running cluster how it's doing, every node at once. Changes nothing. |
+| `install <config>` | Build the whole cluster, every node in lock step. |
+| `add-node <node> <config>` | Add an agent to a cluster that already exists. |
+| `run-bundle <bundle> <node\|all> <config>` | Run one bundle against one node or every node. |
+| `run-pipeline <pipeline> <node\|all> <config>` | Run several bundles in order, passing findings along. |
+| `run-template <manifest> <config>` | Render a manifest and apply or delete it with kubectl. |
+| `list-bundles`, `list-embedded` | What there is to run, and what the binary carries. |
 
 ### Architecture
 
 ```
 installer/
-├── src/
-│   ├── cli/                    # Interactive CLI
-│   │   ├── index.tsx           # Entry point — renders Ink app
-│   │   ├── App.tsx             # Root component — displays "Community Cloud" title + HostList
-│   │   └── components/         # Reusable Ink components
-│   │       ├── HostList.tsx    # Lists available hosts from cc.json
-│   │       └── List.tsx        # Generic ordered/unordered list component
-│   ├── commands/               # Node-level setup commands
-│   │   ├── Command.ts          # Base command class with output parsing
-│   │   ├── CommandBundle.ts    # XState-powered command execution engine
-│   │   ├── GatewayNodes.ts     # Gateway node configuration
-│   │   ├── GpuInfo.ts          # GPU detection command
-│   │   ├── K8SPackage.ts       # K8s package management
-│   │   ├── LVM.ts              # LVM volume group setup
-│   │   ├── Network.ts          # Network interface discovery
-│   │   ├── Registries.ts       # Private registry configuration
-│   │   ├── base.yaml           # Base command definitions
-│   │   └── lmv2.yaml           # LVM2 install definitions
-│   ├── controller/             # Application controllers
-│   │   └── WebappController.ts # Generates K8s manifests from Webapp CRD spec
-│   ├── remote/                 # Remote host management
-│   │   ├── RemoteAgent.ts      # K3s agent install + GPU labeling
-│   │   └── RemoteHost.ts       # SSH connection with key/password/agent auth
-│   └── util/                   # Utilities
-│       ├── K3sInstallation.ts  # Server/agent install step definitions
-│       ├── chalk.ts            # Styled console output helpers
-│       ├── exec.ts             # Promise-based exec + JSON parsing
-│       ├── gpu.ts              # GPU detection engine (NVIDIA/AMD/Intel)
-│       ├── hosts.ts            # Host inventory loading (cc.json)
-│       └── installer/          # Standalone installer utilities
-│           ├── InstallRunner.ts
-│           ├── chalk-test.ts
-│           ├── inquirer-test.ts
-│           ├── installer-test.ts
-│           └── installer.ts
-└── package.json
+├── scripts/
+│   ├── build.ts               # Cross-compiles for eight targets
+│   └── generateEmbedded.ts    # Compiles k8s/ into a SQLite database
+└── src/
+    ├── cli/
+    │   ├── installer.ts       # Entry point, commander definitions
+    │   ├── commands/          # What can be done to a node or cluster
+    │   └── configure/         # The interactive configuration builder
+    ├── runners/               # What drives the commands
+    ├── remote/                # SSH, and ~/.ssh/config resolution
+    ├── topology/              # The fixed region list
+    ├── util/                  # Config, templating, shell, redaction
+    └── generated/             # The embedded manifest database
 ```
 
-### CLI Entry Point
+### Commands and bundles
 
-**Usage:** `community-cloud <operation> <ccFilePath>`
+A **command** is one step: a shell command on a node, or an HTTP call
+to an API. A **bundle** is an ordered list of them aimed at one node,
+sharing a context so that what one finds is available to the next —
+the GPU bundle detects hardware, and the labelling bundle puts the
+right role on the node because of it.
 
-| Operation | Description |
+Every command declares two things about itself.
+
+**Where it runs.** Most belong on the node the bundle is aimed at.
+Anything using kubectl doesn't, because only a server has a
+kubeconfig, so it says `runOn: ControlPlane` and the runner opens the
+connection it needs. That's what lets a bundle read the hardware on an
+agent and then label it — impossible from the agent itself.
+
+**What it's for**, which is mostly whether it changes anything:
+
+| Purpose | Meaning |
 |---|---|
-| `install` | Run the Community Cloud installation process |
-| `uninstall` | Uninstall Community Cloud |
-| `clean` | Clean up various install steps |
+| `Inspect` | Reads and reports. Every answer is a valid answer. |
+| `Require` | Reads, and demands a particular answer before work starts. |
+| `Verify` | Reads, and demands that a change took. |
+| `Settle` | Waits for a change to finish. Changes nothing, but can block. |
+| `Apply` | Changes something. The default, so an unlabelled command is never run by anything that promised only to look. |
 
-The config file (e.g., `cc.json`) provides host definitions, regions, and registry credentials.
+`doctor` and `preflight` are built on that: they ask a bundle for only
+the purposes that change nothing, so they're safe to point at a
+cluster in service.
 
-### Command Execution Engine
+### Bundles
 
-The installer uses a state machine powered by [XState](https://xstate.js.org/) (`CommandBundleMachine`) to execute commands sequentially:
+| Bundle | What it does |
+|---|---|
+| `preflight` | Whether a node could be installed on at all |
+| `base` | The packages every node needs |
+| `network` | Kernel networking — BBR congestion control, fair queueing |
+| `k3s` | K3s, as a server or an agent depending on the node |
+| `cilium` | The Gateway API resources, then Cilium as the CNI |
+| `gateway` | A way into the cluster from outside |
+| `lvm` | Volume groups for TopoLVM to carve volumes from |
+| `gpu` | What video hardware a node has, and whether its tooling is installed |
+| `nodeLabels` | Roles, labels, and what was detected |
+| `cluster-online` | Whether the cluster is up, before joining a node to it |
+| `node-joined` | Whether a node has joined the cluster and gone Ready |
+| `registries` | Credentials for private registries |
+| `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
+| `nebula`, `nebula-network` | A Defined Networking mesh |
+| `cluster` | Records the configuration in the cluster itself |
 
-- **States**: `idle` → `running` → `next` → `completed` / `error`
-- **Context**: Tracks commands array, current index, results, and error state
-- **Commands**: Each command declares its output type (`Json`, `Csv`, `Yaml`, `CommandParser`, `Custom`) and optional post-process hooks
-- **Remote execution**: Commands can target a `RemoteHost` via SSH with automatic key discovery
+### Secrets
 
-### Remote Host Abstraction
+Anything on a command line is readable by every user on a node through
+a process listing, and is quoted back in error messages. So a command
+can take a payload on `stdin` — a registry password, a rendered
+manifest — or declare `secretEnv`, which travels over standard input
+and is exported by a preamble on the far side. The K3s token, registry
+credentials and Nebula enrolment codes all go that way.
 
-`RemoteHost` provides SSH connectivity with three authentication strategies:
+### What the cluster knows about itself
 
-1. **Private key** — explicit path or auto-discovery from `~/.ssh/` (ed25519, rsa, ecdsa)
-2. **Password** — direct password authentication
-3. **SSH agent** — falls back to system ssh-agent
-
-Key methods:
-- `connect()` — establishes SSH connection
-- `exec(cmd, args?)` — execute command, returns `{ stdout, stderr, parsed }`
-- `execJSON<T>()` — execute and parse JSON output
-- `upload(localPath, remotePath)` — file transfer
-- `disconnect()` — cleanup
-
-### Remote Agent
-
-`RemoteAgent` extends `RemoteHost` with K3s-specific operations:
-
-- **`installAgent(config)`** — installs K3s agent, detects GPU remotely, applies labels (`nvidia.com/gpu`, `nvidia.com/gpu.model`)
-- **`applyLabels(labels)`** — labels the node via `kubectl`, with retry on kubelet not ready
-- **GPU detection** — checks NVIDIA (`nvidia-smi`), AMD (`lspci` + `rocm-smi`), Intel (`lspci`) in priority order
-
-### GPU Detection Engine
-
-`gpu.ts` provides a pluggable detection system that discovers GPU vendor, model, count, and driver status:
-
-| Vendor | Detection Method | Driver Check |
-|---|---|---|
-| **NVIDIA** | `nvidia-smi --query-gpu=name,driver_version` | Driver version present |
-| **AMD** | `lspci` + `rocm-smi --version` | ROCm version string |
-| **Intel** | `lspci` for Intel VGA/Display | — |
-
-Priority order: NVIDIA > AMD > Intel. Returns `{ type, model?, count?, driversInstalled? }`.
-
-### Command Bundle Examples
-
-**LVM Setup** (`LVM.ts`): Discovers disks → creates physical volumes → creates volume groups, with post-process hook to filter out loop devices.
-
-**Rook Cleanup** (`Rook.ts`): Removes `/var/lib/rook` directory and related data.
-
-### K3s Installation Steps
-
-**Server install sequence:**
-1. Install K3s server
-2. Extract K3s token
-3. Configure Traefik
-4. Write registries file
-5. Install Gateway API CRDs (v1.4.0)
-6. Label gateway nodes
-7. Install cert-manager (v1.19.2)
-
-**Agent install sequence:** (defined in `K3sInstallation.ts`, populated at runtime)
-
----
+The `cluster` bundle writes the configuration into the cluster as a
+ConfigMap in `kube-system` called `community-cloud`, with the secrets
+stripped out. Finding it is how anything can tell this is a Community
+Cloud cluster; reading it is how `doctor` reports where a cluster has
+drifted from the file it was built from.
 
 ## Kubernetes Manifests
 
@@ -136,8 +122,9 @@ Priority order: NVIDIA > AMD > Intel. Returns `{ type, model?, count?, driversIn
 ```
 k8s/
 ├── ai/                          # AI/ML workloads
-│   ├── vllm-amd.yaml            # vLLM deployment (Mistral-7B, AMD MI300)
-│   └── vllm-amd-pvc.yaml        # 50Gi PVC for model weights
+│   └── vLLM/
+│       ├── vllm-amd.yaml        # vLLM deployment (Mistral-7B, AMD MI300)
+│       └── vllm-amd-pvc.yaml    # PVC for model weights
 ├── apps/                        # Application deployments
 │   ├── authentik/               # Authentik auth server (6 manifests)
 │   ├── headlamp/                # Headlamp K8s UI plugin
@@ -161,8 +148,7 @@ k8s/
 │   ├── Redis/
 │   │   └── RedisStandalone.yaml # Redis (5Gi SSD)
 │   └── MariaDB/                 # Prepared (no manifests yet)
-├── gateway/                     # Gateway API / Traefik
-│   ├── GatewayClass.yaml        # cc-gateway-class (Traefik)
+├── gateway/                     # The default application Gateway
 │   └── Gateway.yaml             # community-cloud de gateway
 ├── k3s-config/                  # K3s node config
 │   ├── registries.yaml          # GitLab registry auth
@@ -173,8 +159,7 @@ k8s/
     ├── StorageClass/
     │   └── cc-local-ssd-fast.yaml  # Default SSD storage class
     ├── TopoLVM/
-    │   ├── TopoLVMValues.yaml        # Production TopoLVM config
-    │   └── TopoLVM-defaultValues.yaml  # Upstream defaults
+    │   └── TopoLVM.values.yaml       # TopoLVM values, and the device classes
     ├── Garage/
     │   └── GarageValues.yaml         # Garage S3-compatible object storage
     └── README.md
@@ -204,11 +189,13 @@ Open-source CRM with server + worker architecture:
 | File | Purpose |
 |---|---|
 | `Twenty.yaml` | Server (1 replica, port 3000) + Worker (1 replica, `yarn worker:prod`) deployments |
-| `TwentyDatabase.yaml` | CloudNative-PG `Database` CRD for `twenty_crm` database |
+| `Twenty.database.yaml` | CloudNativePG `Database` for the `twenty_crm` database |
 | `Twenty.storage.yaml` | `ObjectBucketClaim` for Garage S3 (20 Gi limit) |
 | `Twenty.config.yaml` | ConfigMap with server URL |
 | `Twenty.install.yaml` | Init Job — runs `yarn database:init:prod` |
-| `Twenty.route.yaml` | Gateway API HTTPRoute  |
+| `Twenty.route.yaml` | Gateway API HTTPRoute |
+| `Twenty.cert.yaml` | Its certificate |
+| `Twenty.network.yaml` | Network policy |
 
 #### Authentik (`apps/authentik/`)
 
@@ -265,33 +252,42 @@ TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cac
 
 ## Configuration
 
-### Host Inventory (`cc.json`)
+### The configuration file
 
-Defines the cluster topology:
+A cluster is described by one JSON file, conventionally
+`cc.config.json` — nodes, networking, storage, packages, registries.
+It holds secrets (the cluster token, registry passwords, a Nebula API
+key) and is gitignored as `*.config.json`.
+
+**The full reference is in [installer/README.md](../installer/README.md#configuration)**,
+which documents every key the installer reads. A sketch:
 
 ```jsonc
 {
-  "config": {
-    "adminEmail": "[ADMIN_EMAIL]",     // cert-manager admin contact
-    "letsencryptEmail": "[ACME_ACCOUNT_EMAIL]" // ACME account
+  "config": { "adminEmail": "you@example.com" },
+  "k3s": { "token": "a-long-shared-secret" },
+  "values": { "domain": { "main": "example.com" } },
+  "network": {
+    "gateway": { "mode": "port-forward", "addresses": ["192.168.1.240-192.168.1.250"] }
   },
-  "regions": [
-    { "name": "Southeast Asia", "value": "se-asia" },
-    { "name": "Europe", "value": "europe" }
-  ],
-  "registries": { /* private registry auth */ },
-  "hosts": [
+  "packages": { "cert-manager": true, "cloudnative-pg": true },
+  "nodes": [
     {
-      "name": "node-1",
+      "name": "server-1",
+      "address": "server-1.local",
+      "username": "kyle",
       "type": "server",
-      "labels": ["worker", "worker-gpu", "storage-local"],
-      "useTailscale": true,
-      "region": "se-asia", "zone": "th-1"
-    },
-    // ... more hosts
+      "gateway": true,
+      "roles": ["worker", "storage-local"],
+      "region": "eur",
+      "zone": "eur-de-1"
+    }
   ]
 }
 ```
+
+Build one with `community-cloud` and no arguments, and check it with
+`community-cloud preflight cc.config.json` before installing anything.
 
 ### Node Roles
 
@@ -305,7 +301,7 @@ Defines the cluster topology:
 
 ### AI Inference
 
-- **vLLM** on AMD MI300 GPUs (`k8s/ai/vllm-amd.yaml`)
+- **vLLM** on AMD MI300 GPUs (`k8s/ai/vLLM/vllm-amd.yaml`)
 - Mistral-7B model, ROCm image, host network/IPC, 8Gi shared memory
 - Hugging Face Hub token via secret (`hf-token-secret`)
 - ClusterIP service on port 80 → container port 8888
@@ -314,13 +310,23 @@ Defines the cluster topology:
 
 ## Deployment Order
 
-1. **Provision nodes** — run installer with `cc.json`
+1. **Provision nodes** — `community-cloud preflight`, then the `k3s` bundle
 2. **Storage** — TopoLVM → Garage
-3. **Networking** — GatewayClass → Gateways → cert-manager
+3. **Networking** — Cilium → Gateway API → the cluster Gateway → cert-manager
 4. **CRDs** — Webapp, Site
 5. **Databases** — cc-postgres → Redis
 6. **Applications** — Twenty CRM → Authentik → Mattermost → Headlamp
 7. **Routes** — Gateway API HTTPRoutes for each domain
+
+---
+
+## Design documents
+
+Proposals, not descriptions of what exists. Each says so at the top.
+
+| Document | What it covers |
+|---|---|
+| [Plugins](plugins.md) | Packaging commands, manifests and charts as loadable plugins — the seams in the installer, single-file distribution, and the trust model. **Draft, nothing built.** |
 
 ---
 
@@ -335,7 +341,7 @@ Defines the cluster topology:
 | **SSH** | node-ssh, ssh2 |
 | **K8s Client** | @kubernetes/client-node |
 | **Storage** | TopoLVM, Garage |
-| **Networking** | Traefik, Gateway API, cert-manager, Tailscale |
+| **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
 | **Databases** | CloudNative-PG, Redis (Opstree) |
 | **AI** | vLLM (ROCm/AMD GPU) |
 | **Apps** | Twenty CRM, Authentik, Mattermost, Headlamp, Umami |

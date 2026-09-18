@@ -7,4 +7,10 @@
     "erasableSyntaxOnly": false,
   },
   "include": ["src"],
+
+  // Not part of the codebase, and says so in its own README: ideas
+  // being worked out, and old approaches kept for reference. Excluded
+  // so a half-finished sketch can't fail the typecheck of the thing
+  // that ships.
+  "exclude": ["src/runners/scratch"],
 }
