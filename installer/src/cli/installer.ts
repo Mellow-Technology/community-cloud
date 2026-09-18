@@ -22,10 +22,11 @@ process.on("unhandledRejection", (reason: any) => {
 
   process.exit(1);
 });
-import { runBundle } from "../runners/runBundle.ts";
+import { addNode } from "../runners/addNode.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
 import { listBundles } from "../runners/listBundles.ts";
-import { runPipeline } from "../runners/runPipeline.ts";
+import { runBundle, runPipeline } from "../runners/runPipeline.ts";
+import { install } from "../runners/install.ts";
 import { configure } from "../runners/configure.ts";
 import { listEmbedded } from "../runners/listEmbedded.ts";
 import { doctor } from "../runners/doctor.ts";
@@ -47,16 +48,16 @@ const COMMAND_NAME = "community-cloud";
  * line installer.
  *
  * - install -> run the Community Cloud install process
+ * - add-node -> add a node to a cluster that already exists
  * - uninstall -> uninstall Community Cloud
  * - clean -> clean up various install steps
- *
- * TODO: Switch this to use commander sub-commands
  */
 enum CliOperation {
   Configure = "configure",
   Install = "install",
   Uninstall = "uninstall",
   Clean = "clean",
+  AddNode = "add-node",
   RunBundle = "run-bundle",
   ListBundles = "list-bundles",
   ListEmbedded = "list-embedded",
@@ -91,7 +92,7 @@ program
   .description("Community Cloud Installer CLI utility.")
   .showHelpAfterError()
 
-// 0. Configure Command
+// Configure
 // The default, because a configuration file is what every other
 // command takes and this is where one comes from
 program
@@ -102,49 +103,72 @@ program
   .option("--section <name>", "Go straight to one section")
   .action(configure);
 
-// 1. Install Command (Primary Operation)
+// Install
 program
   .command(CliOperation.Install)
-  .description("Run the Community Cloud installation process.")
-  .option("--force", "Force install even if dependencies seem met.")
-  .argument("<ccFilePath>", "Path to the Community Cloud configuration file");
+  .description("Install Community Cloud across every node in a configuration")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("-n, --node <node>", "Install onto one node only. To add a machine to a cluster that exists, use add-node")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--timeout <seconds>", "How long to give a node to answer when connecting")
+  .action(install);
 
-// 2. Uninstall Command
+// Add a node
+// An install with the cluster-wide half taken out: everything that
+// makes one machine a member, and nothing that rebuilds the cluster
+program
+  .command(CliOperation.AddNode)
+  .description("Add a node to a cluster that already exists")
+  .argument("<node>", "The node to add, as it is named in the configuration")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--timeout <seconds>", "How long to give the node to answer when connecting")
+  .option("--verbose", "Print each command's output as well as the report")
+  .action(addNode);
+
+// Uninstall
 program
   .command(CliOperation.Uninstall)
   .description("Uninstall existing Community Cloud components.")
   .option("--skip-cleanup", "Skip cleanup of related directories and files.")
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file");
 
-// 3. Clean Command
+// Clean
 program
   .command(CliOperation.Clean)
   .description("Clean up various install steps, removing residual files.")
   .option("--full", "Perform a deep clean of all possible installation artifacts.")
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file");
 
-// 4. RunBundle Command
+// Run one bundle
 program
   .command(CliOperation.RunBundle)
-  .description("Run a specific command bundle")
+  .description("Run a specific command bundle against one node or every node, in lock step")
   .argument("<bundleName>", "The name of the bundle to run")
-  .argument("<node>", "The name of the node to run the bundle on")
-  // .option("--profile", "Specify a profile (e.g., staging, production).")
+  .argument("<node>", 'The node to run against, or "all" for every node in the configuration')
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--timeout <seconds>", "How long to give a node to answer when connecting")
+  .option("--verbose", "Print each command's output as well as the report")
   .action(runBundle);
 
-// 5. Apply variables to a template and apply or delete it with kubectl
-// 5. RunPipeline Command
+// Run several bundles
 program
   .command(CliOperation.RunPipeline)
-  .description("Run several bundles against a node, one after another, sharing their context")
+  .description("Run several bundles against one node or every node, in lock step")
   .argument("<pipeline>", "A comma separated list of bundles, or a pipeline named in the configuration")
-  .argument("<node>", "The name of the node to run the pipeline on")
+  .argument("<node>", 'The node to run against, or "all" for every node in the configuration')
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
-  .option("--keep-going", "Carry on after a bundle fails instead of stopping")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--timeout <seconds>", "How long to give a node to answer when connecting")
+  .option("--verbose", "Print each command's output as well as the report")
   .action(runPipeline);
 
-// 6. ListBundles Command
+// List bundles
 program
   .command(CliOperation.ListBundles)
   .description("List the command bundles that can be run")
@@ -152,7 +176,7 @@ program
   .option("-c, --config <ccFilePath>", "Configuration file, needed for bundles whose commands come from one")
   .action(listBundles);
 
-// 7. Preflight Command
+// Preflight
 program
   .command(CliOperation.Preflight)
   .description("Check a configuration could be installed, before installing it")
@@ -162,7 +186,7 @@ program
   .option("--verbose", "Print each command's output as well as the report")
   .action(preflight);
 
-// 8. Doctor Command
+// Doctor
 program
   .command(CliOperation.Doctor)
   .description("Ask a cluster how it's doing, without changing anything")
@@ -174,7 +198,7 @@ program
   .option("--verbose", "Print each command's output as well as the report")
   .action(doctor);
 
-// 9. ListEmbedded Command
+// List embedded manifests
 program
   .command(CliOperation.ListEmbedded)
   .description("List the manifests that ship inside the installer")
@@ -190,13 +214,11 @@ program
     .option("-n, --node <node>", "Run kubectl on this node over SSH rather than locally")
     .option("--namespace <namespace>", "Namespace to scope the operation to")
     .option("--dry-run", "Render the template and print it without running kubectl")
-    .action(runTemplate);
-
-// TODO: This is kind of ugly. Would much rather have dynamically generated
-// options so that we have a specific mapping
-// .argument("[params]...", "Parameters to supply to the command")
-// .option("--dry-run", "Simluate a command run and show constructed commands")
-// .action(runBundle);
+    // Wrapped because run-template hands back the rendered manifest
+    // for anything calling it directly, and commander wants nothing
+    .action(async (yamlFile: string, ccFilePath: string, options: any) => {
+      await runTemplate(yamlFile, ccFilePath, options);
+    });
 
 // Parse arguments and exit
 program.parse(process.argv);

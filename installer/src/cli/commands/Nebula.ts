@@ -32,6 +32,7 @@
  */
 import { CommandPurpose, CommandSpec, OutputType, WebCommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
+import { APT_LOCK_TIMEOUT_SECONDS } from "./BasePackages.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import {
   DEFINED_API_URL,
@@ -122,14 +123,14 @@ const findHostCommand: WebCommandSpec = {
   purpose: CommandPurpose.Inspect,
   description: "Check whether the node is already registered on the network",
   url: `${DEFINED_API_URL}/v2/hosts`,
-  query: (config: CloudConfig, context: any) => ({
+  query: (_config: CloudConfig, context: any) => ({
     "filter.networkID": context.nebulaNetworkID,
     pageSize: HOST_PAGE_SIZE,
   }),
   headers: buildApiHeaders,
 
   // Nothing to look up for a node that's already on the mesh
-  skipWhen: (config: CloudConfig, context: any) => context.dnclientEnrolled === true,
+  skipWhen: (_config: CloudConfig, context: any) => context.dnclientEnrolled === true,
 
   saveToContext: (output: any, context: any) => {
     const hosts = output.parsed !== undefined && output.parsed !== null
@@ -179,7 +180,7 @@ const createHostCommand: WebCommandSpec = {
   // Enrolling a node that's already on the mesh would register a
   // second host for it and orphan the first, and a host the network
   // already knows about can't be created a second time at all
-  skipWhen: (config: CloudConfig, context: any) =>
+  skipWhen: (_config: CloudConfig, context: any) =>
     context.dnclientEnrolled === true || context.nebulaHostID !== undefined,
 
   body: (config: CloudConfig, context: any) => {
@@ -236,14 +237,14 @@ function getNodeRoleName(config: CloudConfig, context: any): string {
 const createEnrollmentCodeCommand: WebCommandSpec = {
   name: "create-nebula-enrollment-code",
   description: "Issue a fresh enrollment code for an already registered host",
-  url: (config: CloudConfig, context: any) =>
+  url: (_config: CloudConfig, context: any) =>
     `${DEFINED_API_URL}/v1/hosts/${context.nebulaHostID}/enrollment-code`,
   method: "POST",
   headers: buildApiHeaders,
 
   // Only needed when the host wasn't just created, since creating one
   // hands back a code of its own
-  skipWhen: (config: CloudConfig, context: any) =>
+  skipWhen: (_config: CloudConfig, context: any) =>
     context.dnclientEnrolled === true || context.nebulaEnrollmentCode !== undefined,
 
   saveToContext: {
@@ -303,7 +304,7 @@ export const NebulaCommands: CommandSpec[] = [
       `echo "deb [signed-by=${APT_KEYRING}] ${APT_REPO}" | sudo tee ${APT_LIST} > /dev/null`,
       `if command -v ${SERVICE} > /dev/null 2>&1`,
       `then echo "${SERVICE} is already installed"`,
-      `else sudo apt-get update -o Dir::Etc::sourcelist=${APT_LIST} -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ${SERVICE} || { echo "Couldn't install ${SERVICE}" >&2; exit 1; }`,
+      `else sudo apt-get -o DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT_SECONDS} update -o Dir::Etc::sourcelist=${APT_LIST} -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT_SECONDS} install -y ${SERVICE} || { echo "Couldn't install ${SERVICE}" >&2; exit 1; }`,
       "fi",
       `sudo systemctl enable --now ${SERVICE} || { echo "Couldn't start ${SERVICE}" >&2; exit 1; }`,
       // dnclient has no version subcommand, so we ask the package
@@ -329,14 +330,14 @@ export const NebulaCommands: CommandSpec[] = [
   {
     name: "enroll-nebula-host",
     description: "Enroll the node into the Nebula network",
-    skipWhen: (config: CloudConfig, context: any) => context.dnclientEnrolled === true,
+    skipWhen: (_config: CloudConfig, context: any) => context.dnclientEnrolled === true,
     command: [
       // Reads to end of input, and drops the trailing newline with it
       "code=$(cat)",
       '[ -n "$code" ] || { echo "No enrollment code arrived on standard input" >&2; exit 1; }',
       `sudo ${SERVICE} enroll -code "$code"`,
     ],
-    stdin: (config: CloudConfig, context: any) => {
+    stdin: (_config: CloudConfig, context: any) => {
       const { nebulaEnrollmentCode } = context;
 
       if (typeof nebulaEnrollmentCode !== "string" || nebulaEnrollmentCode === "") {
@@ -363,7 +364,7 @@ export const NebulaCommands: CommandSpec[] = [
     purpose: CommandPurpose.Verify,
     skipWhen: (config: CloudConfig) => !usesNebula(config),
     description: "Verify the node is on the Nebula network",
-    command: (config: CloudConfig, context: any) => {
+    command: (_config: CloudConfig, context: any) => {
       const addresses = Array.isArray(context.nebulaIPAddresses)
         ? context.nebulaIPAddresses
         : [];

@@ -21,9 +21,11 @@ Full configuration reference: [installer/README.md](../installer/README.md#confi
 |---|---|
 | `configure` | Build or edit a configuration, interactively. The default when no command is given. |
 | `preflight <config>` | Say whether a configuration could be installed, before installing it. Changes nothing. |
-| `doctor <config>` | Ask a running cluster how it's doing. Changes nothing. |
-| `run-bundle <bundle> <node> <config>` | Run one bundle against one node. |
-| `run-pipeline <pipeline> <node> <config>` | Run several bundles in order, passing findings along. |
+| `doctor <config>` | Ask a running cluster how it's doing, every node at once. Changes nothing. |
+| `install <config>` | Build the whole cluster, every node in lock step. |
+| `add-node <node> <config>` | Add an agent to a cluster that already exists. |
+| `run-bundle <bundle> <node\|all> <config>` | Run one bundle against one node or every node. |
+| `run-pipeline <pipeline> <node\|all> <config>` | Run several bundles in order, passing findings along. |
 | `run-template <manifest> <config>` | Render a manifest and apply or delete it with kubectl. |
 | `list-bundles`, `list-embedded` | What there is to run, and what the binary carries. |
 
@@ -89,6 +91,8 @@ cluster in service.
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
 | `nodeLabels` | Roles, labels, and what was detected |
+| `cluster-online` | Whether the cluster is up, before joining a node to it |
+| `node-joined` | Whether a node has joined the cluster and gone Ready |
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `nebula`, `nebula-network` | A Defined Networking mesh |

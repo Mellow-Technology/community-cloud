@@ -1,16 +1,20 @@
-import { runRemoteBundle } from "../runners/runBundle.ts";
-import CloudConfig from "../util/CloudConfig.ts";
-
 /**
- * Run a test of a K3s installation.
+ * @file
+ * Run a K3s install against a node, by hand.
+ *
+ * Not a test: it needs a real node, so it is run directly rather than
+ * by "bun test".
+ *
+ *   bun src/test/manual/K3sInstall.ts cc.config.json <node>
  */
+import { runBundle } from "../../runners/runPipeline.ts";
 
-async function runK3sInstall() {
-  const config = new CloudConfig();
+const configPath = process.argv[2];
+const nodeName = process.argv[3];
 
-  config.loadConfigFromFile(configFilePath);
-
-  runRemoteBundle("k3s", );
+if (configPath === undefined || nodeName === undefined) {
+  console.error("Usage: bun src/test/manual/K3sInstall.ts <config> <node>");
+  process.exit(1);
 }
 
-await runK3sInstall();
+await runBundle("k3s", nodeName, configPath);

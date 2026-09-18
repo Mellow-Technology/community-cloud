@@ -2,7 +2,8 @@
  * @file
  * Allows running of kubectl
  */
-import { CommandSpec, OutputType } from "./Command.ts";
+import { CommandContext, CommandSpec, OutputType } from "./Command.ts";
+import CloudConfig from "../../util/CloudConfig.ts";
 
 /**
  * The kubectl operations that can be run against a
@@ -38,7 +39,7 @@ export const KubeCtlCommands: CommandSpec[] = [
   {
     name: KUBECTL_MANIFEST_COMMAND,
     description: "Apply or delete a rendered manifest with kubectl",
-    command: (config, context) => {
+    command: (_config: CloudConfig, context: CommandContext) => {
       const operation =
         context.operation !== undefined
           ? context.operation

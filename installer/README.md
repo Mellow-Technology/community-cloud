@@ -25,7 +25,7 @@ Build a configuration and check it, then install:
 ```bash
 community-cloud                              # build a configuration
 community-cloud preflight cc.config.json     # check it could work
-community-cloud run-bundle k3s server-1 cc.config.json
+community-cloud install cc.config.json       # build the cluster
 community-cloud doctor cc.config.json        # ask the cluster how it's doing
 ```
 
@@ -326,6 +326,145 @@ Once a cluster exists, its configuration is recorded in the cluster
 itself as a ConfigMap in `kube-system`, with the secrets stripped.
 `doctor` compares that against your file and reports anywhere they've
 drifted apart.
+
+### Asking a cluster how it is
+
+```bash
+community-cloud doctor cc.config.json                  # everything, every node
+community-cloud doctor cc.config.json --verifications  # only what asserts
+community-cloud doctor cc.config.json -n phoenix       # one node
+community-cloud doctor cc.config.json -b lvm           # one bundle
+```
+
+Every command in every bundle says what it's for, and `doctor` runs
+only the purposes that change nothing. That is what makes it safe to
+point at a cluster people depend on.
+
+It runs on the same machinery as an install, and asks every node at
+once. A cluster is several machines: asking them one after another
+makes the report a description of six different moments, and the first
+slow node delays every answer behind it.
+
+Two things are relaxed, because the questions are read-only. A node
+that can't be reached doesn't stop the others being asked — a cluster
+with a machine down is exactly the case you'd run this for — and one
+failure doesn't stop the run, because one thing being broken is the
+most likely reason to want to know what else is.
+
+## Installing a cluster
+
+```bash
+community-cloud install cc.config.json            # every node
+community-cloud install cc.config.json --dry-run  # every step, nothing run
+community-cloud install cc.config.json -n node-4  # one node, to add a machine
+```
+
+Everything happens in lock step: **every node finishes a step before any
+node starts the next.** Within a step the nodes work at once, so
+installing K3s on six agents takes about as long as installing it on
+one.
+
+The barrier is the point. Without it a failure leaves the cluster
+smeared across the install — one machine with storage and a CNI,
+another three steps behind with half a package list. With it, a failure
+means every node is at the same place, which is a state you can look
+at, reason about, and resume from by fixing the cause and running the
+install again.
+
+### Which nodes a step runs on
+
+Two different questions, which look like one on a single node:
+
+| | |
+|---|---|
+| `runOn` | Which machine executes the shell — the node itself, or a server with kubectl. |
+| `scope` | How many times, and for which nodes. |
+
+Labelling a node shows they're separate: the shell is kubectl so it has
+to run on a server, and it is nevertheless one command per node.
+
+| Scope | Runs | For |
+|---|---|---|
+| `cluster` | Once | Anything addressing Kubernetes rather than a machine. The API is shared, so doing it per node would be doing it again. |
+| `each-node` | Once per node | System configuration, hardware, storage. |
+| `each-server` | Once per server | The K3s server install. |
+| `each-agent` | Once per agent | The K3s agent install, which needs a server to join. |
+
+A command that says nothing gets `cluster` if it runs on the control
+plane and `each-node` otherwise, which is right for almost everything
+already written.
+
+### Running part of it
+
+```bash
+community-cloud run-pipeline base,network all cc.config.json
+community-cloud run-pipeline lvm phoenix cc.config.json
+community-cloud run-bundle nodeLabels all cc.config.json
+community-cloud run-bundle k3s phoenix cc.config.json --dry-run
+```
+
+`all` is every node in the configuration; a name is one node. A single
+node is a cluster of one rather than a separate code path — the
+interesting multi-node bugs are the ones that only appear with more
+than one machine, and a separate path is how those hide.
+
+`run-bundle` is `run-pipeline` with one bundle in it, and it is the
+same code: the barrier between steps, the refusal to start when two
+nodes turn out to be one machine, and the per-node reporting are all
+there whichever you ask for.
+
+Running a bundle against a single agent still works when something in
+it needs kubectl. The agent has no kubeconfig, so the run borrows a
+server from the configuration to talk to the cluster with. The borrowed
+node is reachable and is not one of the nodes being worked on — no step
+runs on its behalf.
+
+## Adding a node
+
+```bash
+community-cloud add-node node-4 cc.config.json
+community-cloud add-node node-4 cc.config.json --dry-run
+```
+
+Add the node to `nodes` in the configuration first: that file is the
+record of what the cluster is, and a node added without being written
+down is one that vanishes from the next install.
+
+This is the install with the cluster-wide half taken out. Cilium, the
+Gateway, Helm and the charts have already happened and would either be
+re-applied for nothing or re-applied differently, because the
+configuration has moved on since. What's left is everything that makes
+one machine a member:
+
+```
+cluster-online → preflight → base → network → gpu
+              → registries → lvm → k3s → nodeLabels → node-joined
+```
+
+`cluster-online` fails first if there is no cluster to join, which is
+worth catching early — every step after it would fail in a way that
+blames the new node for a problem the cluster already had.
+`node-joined` is the cluster's own word that it worked: the node is
+registered and its kubelet reports `Ready`, which it doesn't do until
+the CNI has set the node up.
+
+Agents only, for now. Growing the control plane means bringing the
+cluster's datastore from one member to several, which isn't something
+to do halfway, so `add-node` refuses a node whose type is `server`
+rather than half-doing it.
+
+### Before it connects to anything
+
+The whole plan is worked out first, so a misspelled bundle at the end
+of a pipeline fails now rather than twenty minutes in. `--dry-run`
+never opens a connection at all, so it works against a cluster that
+doesn't exist yet.
+
+Two nodes that turn out to be the same machine stop the run before it
+starts. That is an easy configuration mistake — a copied block with the
+address changed and the port left alone, a `username` that overrides
+what `~/.ssh/config` would have resolved — and without the check the
+first sign of it is a cluster missing a node nobody can account for.
 
 ## Tests
 

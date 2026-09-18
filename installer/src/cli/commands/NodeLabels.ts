@@ -25,10 +25,17 @@
  * Requires:
  * - a node with a type of "server" in the configuration
  */
-import { CommandOutput, CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
+import {
+  CommandOutput,
+  CommandPurpose,
+  CommandScope,
+  CommandSpec,
+  CommandTarget,
+  OutputType,
+} from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { GpuVendor, NodeRole, VideoDevice } from "../../util/types.ts";
-import { getNodeName } from "./K3s.ts";
+import { getClusterNodeName } from "./K3s.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
 import { CLASSES_LABEL, buildShape, isUsableShape } from "../../util/storage.ts";
@@ -48,27 +55,6 @@ const REGISTRATION_TIMEOUT_SECONDS = 120;
 // poor way to find out a configuration has a typo in it.
 const LABEL_NAME = /^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$/;
 const LABEL_PREFIX = /^[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?$/;
-
-/**
- * The name this node is registered under in the cluster.
- *
- * Taken from the same place the K3s install takes it, so the two
- * always agree about what the node is called.
- *
- * @param context
- * @returns
- */
-function getClusterNodeName(context: any): string {
-  const name = getNodeName(context);
-
-  if (name === undefined) {
-    throw new Error(
-      `Couldn't work out what "${context.nodeName}" is called in the cluster. Give the node a name or address that can be a DNS label, or set "nodeName" on it.`,
-    );
-  }
-
-  return name;
-}
 
 /**
  * The roles configured for this node.
@@ -366,6 +352,10 @@ export const NodeLabelCommands: CommandSpec[] = [
     purpose: CommandPurpose.Require,
     description: "Check the cluster is reachable and knows this node",
     runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it has to run on a server — and it is nevertheless
+    // one command per node, because it labels a particular machine
+    scope: CommandScope.EachNode,
     env: buildKubeEnv,
     command: (_config: CloudConfig, context: any) => {
       const name = quoteForShell(getClusterNodeName(context));
@@ -397,6 +387,10 @@ export const NodeLabelCommands: CommandSpec[] = [
     name: "apply-node-labels",
     description: "Label the node with its roles and configured labels",
     runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it has to run on a server — and it is nevertheless
+    // one command per node, because it labels a particular machine
+    scope: CommandScope.EachNode,
     env: buildKubeEnv,
     command: (config: CloudConfig, context: any) => {
       const name = quoteForShell(getClusterNodeName(context));
@@ -443,6 +437,10 @@ export const NodeLabelCommands: CommandSpec[] = [
     purpose: CommandPurpose.Verify,
     description: "Check the node ended up with the labels it was meant to",
     runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it has to run on a server — and it is nevertheless
+    // one command per node, because it labels a particular machine
+    scope: CommandScope.EachNode,
     env: buildKubeEnv,
     command: (_config: CloudConfig, context: any) =>
       `kubectl get node ${quoteForShell(getClusterNodeName(context))} -o json`,

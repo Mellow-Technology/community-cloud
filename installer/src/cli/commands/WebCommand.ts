@@ -14,10 +14,13 @@
  * back is most often JSON, so that's the parsing this defaults to.
  */
 import Command, {
+  CommandContext,
   CommandOutput,
+  CommandResults,
   OutputType,
   WebCommandSpec,
 } from "./Command.ts";
+import CloudConfig from "../../util/CloudConfig.ts";
 
 // What to send when a spec doesn't say
 const DEFAULT_METHOD = "GET";
@@ -89,7 +92,11 @@ export default class WebCommand extends Command {
    * @param commandResults
    * @returns
    */
-  protected async run(config, context, commandResults): Promise<CommandOutput> {
+  protected async run(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): Promise<CommandOutput> {
     const url = this.buildUrl(config, context, commandResults);
     const headers = {
       ...this.resolve(this.headers, config, context, commandResults),
@@ -157,7 +164,11 @@ export default class WebCommand extends Command {
    * @param commandResults
    * @returns
    */
-  buildUrl(config, context, commandResults): string {
+  buildUrl(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): string {
     const url = this.resolve(this.url, config, context, commandResults);
     if (typeof url !== "string" || url === "") {
       throw new Error(`Command "${this.name}" didn't produce a URL to call.`);
@@ -203,7 +214,12 @@ export default class WebCommand extends Command {
    * @param commandResults
    * @returns
    */
-  protected resolve(value: any, config, context, commandResults) {
+  protected resolve(
+    value: any,
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ) {
     return typeof value === "function"
       ? value(config, context, commandResults)
       : value;

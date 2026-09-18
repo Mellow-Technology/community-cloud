@@ -10,33 +10,38 @@
  * running for months and something is off.
  *
  * So this runs all of them and none of the rest. Commands say what
- * they're for, and only the three purposes that change nothing are
- * asked for here, which is what makes this safe to point at a cluster
- * people depend on.
+ * they're for, and only the purposes that change nothing are asked
+ * for here, which is what makes this safe to point at a cluster people
+ * depend on.
  *
- * It also doesn't stop at the first failure, unlike an install. One
- * thing being broken is the most likely reason to want to know what
- * else is.
+ * It runs on the same machinery as an install, which is the part worth
+ * insisting on. The doctor's job is to say where a whole cluster is,
+ * and a cluster is several machines: asking them one after another
+ * means the report is a description of six different moments, and the
+ * first slow node delays every answer behind it. Every node is asked
+ * the same question at the same time, and the step doesn't move on
+ * until they have all answered — the same barrier an install uses, for
+ * the same reason.
+ *
+ * Two things are relaxed, because the questions are read-only. A node
+ * that can't be reached doesn't stop the others being asked: a cluster
+ * with a machine down is exactly the case somebody runs this for. And
+ * one failure doesn't stop the run, because one thing being broken is
+ * the most likely reason to want to know what else is.
  */
-import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
+import chalk from "chalk";
+
+import CloudConfig from "../util/CloudConfig.ts";
+import { ALL_NODES, resolveTarget } from "../pipeline/fleet.ts";
 import {
   CommandPurpose,
-  CommandTarget,
   PROMPT_PURPOSES,
   READ_ONLY_PURPOSES,
 } from "../cli/commands/Command.ts";
-import { getCommandType } from "../cli/commands/createCommand.ts";
-import {
-  BundleDefinition,
-  bundles,
-  getBundle,
-  getBundleCommands,
-  getBundleNames,
-} from "../cli/commands/bundles.ts";
-import CloudConfig from "../util/CloudConfig.ts";
+import { ConsoleReporter, StepOutcome } from "../pipeline/reporter.ts";
+import { ExecuteOutcome, executePipeline } from "../pipeline/execute.ts";
+import { getBundle, getBundleNames } from "../cli/commands/bundles.ts";
 import { loadPlugins } from "../plugins/registry.ts";
-import { connectToControlPlane, connectToNode, NodeConnection } from "./nodeConnection.ts";
-import chalk from "chalk";
 
 /**
  * Options for a check-up.
@@ -61,15 +66,6 @@ export interface DoctorOptions {
 }
 
 /**
- * What one bundle had to say about one node.
- */
-interface BundleReport {
-  bundle: string;
-  node: string;
-  results: Record<string, CommandResult>;
-}
-
-/**
  * The purposes to run.
  *
  * @param options
@@ -91,143 +87,23 @@ function getPurposes(options: DoctorOptions): CommandPurpose[] {
 }
 
 /**
- * The bundles to look at.
+ * The bundles to look at, as a pipeline.
  *
  * @param options
  * @returns
  */
-function getBundles(options: DoctorOptions): BundleDefinition[] {
+function getPipeline(options: DoctorOptions): string {
   if (options.bundle === undefined) {
-    return bundles;
+    return getBundleNames().join(",");
   }
 
-  const wanted = getBundle(options.bundle);
-  if (wanted === undefined) {
+  if (getBundle(options.bundle) === undefined) {
     throw new Error(
       `Couldn't find a command bundle named "${options.bundle}". The bundles that can be run are: ${getBundleNames().join(", ")}.`,
     );
   }
 
-  return [wanted];
-}
-
-/**
- * The nodes to look at.
- *
- * @param config
- * @param options
- * @returns
- */
-function getNodes(config: CloudConfig, options: DoctorOptions): any[] {
-  const { nodes } = config.getConfig();
-  const configured = Array.isArray(nodes) ? nodes : [];
-
-  if (options.node === undefined) {
-    if (configured.length === 0) {
-      throw new Error(
-        'This configuration describes no nodes, so there is nothing to look at. Add them under "nodes".',
-      );
-    }
-
-    return configured;
-  }
-
-  const node = config.getNode(options.node);
-  if (node === null) {
-    throw new Error(
-      `Couldn't find node "${options.node}" in the specified configuration. Was the name misspelled?`,
-    );
-  }
-
-  return [node];
-}
-
-/**
- * Whether everything a bundle would ask is asked of the cluster
- * rather than of a node.
- *
- * A bundle like cilium or helm-charts is about the cluster: running it
- * against each node in turn would ask the same control plane the same
- * questions over and over. One that reads the hardware or the kernel
- * has to be asked of each node separately. Which one a bundle is
- * follows from where its commands want to run, so nothing has to be
- * declared twice.
- *
- * @param specs
- * @returns
- */
-function isAboutTheCluster(specs: any[]): boolean {
-  return specs.every((spec) => spec.runOn === CommandTarget.ControlPlane);
-}
-
-/**
- * Run one bundle's questions against one node.
- *
- * @param config
- * @param bundle
- * @param connection
- * @param controlPlane
- * @param options
- * @returns
- */
-async function askBundle(
-  config: CloudConfig,
-  bundle: BundleDefinition,
-  connection: NodeConnection,
-  controlPlane: NodeConnection,
-  options: DoctorOptions,
-): Promise<BundleReport | undefined> {
-  const context: any = {
-    nodeName: connection.node.name,
-    node: connection.node,
-    params: [],
-
-    // Nothing here just changed anything, so there's nothing to wait
-    // for. The waits inside these commands exist to ride out the gap
-    // after an install, and on a node with a real problem they would
-    // make this sit through every timeout in turn before saying so.
-    noWaiting: options.wait !== true,
-  };
-
-  let specs: any[];
-  try {
-    specs = getBundleCommands(bundle, config, context);
-  } catch (error: any) {
-    // A bundle built from the configuration can refuse to be built at
-    // all, which is itself worth reporting rather than hiding
-    return {
-      bundle: bundle.name,
-      node: connection.node.name,
-      results: {
-        [`${bundle.name}-configuration`]: {
-          stdout: "",
-          stderr: error.message,
-          parsed: null,
-          error: true,
-        },
-      },
-    };
-  }
-
-  const purposes = getPurposes(options);
-  const wanted = specs.filter(
-    (spec) => purposes.includes(spec.purpose) && getCommandType(spec) !== undefined,
-  );
-
-  if (wanted.length === 0) {
-    return undefined;
-  }
-
-  const runner = new CommandBundle(config, specs, context)
-    .setPurposes(purposes)
-    .setContinueOnFailure()
-    .setQuiet(options.verbose !== true)
-    .setExec(connection.exec)
-    .setControlPlaneExec(controlPlane.exec);
-
-  await runner.runAllCommands();
-
-  return { bundle: bundle.name, node: connection.node.name, results: runner.getResults() };
+  return options.bundle;
 }
 
 /**
@@ -241,127 +117,154 @@ export async function doctor(configPath: string, options: DoctorOptions = {}) {
   await config.loadConfigFromFile(configPath);
   loadPlugins(config);
 
-  const nodes = getNodes(config, options);
-  const wanted = getBundles(options);
-  const reports: BundleReport[] = [];
+  const names = resolveTarget(config, options.node ?? ALL_NODES);
 
-  // Asked once rather than once per node
-  const clusterBundles = new Set<string>();
+  const outcome = await executePipeline(config, {
+    pipeline: getPipeline(options),
+    nodes: names,
+    what: "asked",
+    heading: `\n${chalk.bold("Asking")} ${chalk.cyan(`${names.length} node${names.length === 1 ? "" : "s"}`)} ${chalk.bold("how they are")}`,
+    purposes: getPurposes(options),
 
-  let controlPlane: NodeConnection | undefined = undefined;
+    // Nothing here just changed anything, so there's nothing to wait
+    // for. The waits inside these commands exist to ride out the gap
+    // after an install, and on a node with a real problem they would
+    // make this sit through every timeout in turn before saying so.
+    context: { noWaiting: options.wait !== true },
 
-  try {
-    for (const node of nodes) {
-      console.log(`\n${chalk.bold(`── ${node.name} ──`)}`);
+    // A broken cluster is the reason to be running this, so neither a
+    // node that's down nor a bundle that won't build is allowed to
+    // cost you the rest of the report
+    partial: true,
+    tolerant: true,
+    keepGoing: true,
+    verbose: options.verbose,
 
-      let connection: NodeConnection;
-      try {
-        connection = await connectToNode(config, node.name);
-      } catch (error: any) {
-        console.log(`  ${chalk.red("unreachable")}: ${error.message}`);
-        reports.push({
-          bundle: "connection",
-          node: node.name,
-          results: {
-            connect: { stdout: "", stderr: error.message, parsed: null, error: true },
-          },
-        });
-        continue;
-      }
+    // The report below is the summary, so the runner shouldn't print
+    // one saying the run "stopped" — it didn't, it finished and found
+    // something
+    reporter: new ConsoleReporter(
+      process.stdout,
+      options.verbose === true ? false : undefined,
+      false,
+    ),
+  });
 
-      try {
-        // The same connection when this node is the control plane
-        if (controlPlane === undefined) {
-          controlPlane = await connectToControlPlane(config, connection);
-        }
-
-        for (const bundle of wanted) {
-          const specs = safeSpecs(config, bundle, connection.node);
-
-          if (isAboutTheCluster(specs)) {
-            if (clusterBundles.has(bundle.name)) {
-              continue;
-            }
-            clusterBundles.add(bundle.name);
-          }
-
-          const report = await askBundle(config, bundle, connection, controlPlane, options);
-          if (report !== undefined) {
-            reports.push(report);
-          }
-        }
-      } finally {
-        if (controlPlane !== connection) {
-          await connection.disconnect();
-        }
-      }
-    }
-  } finally {
-    if (controlPlane !== undefined) {
-      await controlPlane.disconnect();
-    }
-  }
-
-  report(reports);
+  report(outcome);
 }
 
 /**
- * A bundle's commands, or nothing when it can't be built.
+ * What one node had to say about one bundle.
+ */
+interface Finding {
+  node: string;
+  bundle: string;
+  ran: number;
+  skipped: number;
+  failures: StepOutcome[];
+}
+
+/**
+ * Gather the outcomes into something worth printing.
  *
- * @param config
- * @param bundle
- * @param node
+ * Grouped by node and then by bundle, which is the shape of the
+ * question people actually ask — "what's wrong with that machine" —
+ * rather than the order the steps happened to run in.
+ *
+ * @param outcomes
  * @returns
  */
-function safeSpecs(config: CloudConfig, bundle: BundleDefinition, node: any): any[] {
-  try {
-    return getBundleCommands(bundle, config, { nodeName: node.name, node });
-  } catch {
-    return [];
+function gather(outcomes: StepOutcome[]): Finding[] {
+  const findings = new Map<string, Finding>();
+
+  for (const outcome of outcomes) {
+    const key = `${outcome.node}/${outcome.bundle}`;
+    const finding = findings.get(key) ?? {
+      node: outcome.node,
+      bundle: outcome.bundle,
+      ran: 0,
+      skipped: 0,
+      failures: [],
+    };
+
+    if (outcome.outcome === "skipped") {
+      finding.skipped += 1;
+    } else {
+      finding.ran += 1;
+    }
+
+    if (outcome.outcome === "failed") {
+      finding.failures.push(outcome);
+    }
+
+    findings.set(key, finding);
   }
+
+  return [...findings.values()].sort((one, other) =>
+    one.node === other.node
+      ? one.bundle.localeCompare(other.bundle)
+      : one.node.localeCompare(other.node),
+  );
 }
 
 /**
  * Say what was found.
  *
- * @param reports
+ * @param outcome
  */
-function report(reports: BundleReport[]) {
+function report(outcome: ExecuteOutcome) {
+  // A doctor run is never a dry run, so there is always a summary;
+  // the check is what tells the compiler so
+  const findings = gather(outcome.dryRun ? [] : outcome.summary.outcomes);
   const problems: string[] = [];
   let asked = 0;
 
   console.log(`\n${chalk.bold("── what was found ──")}`);
 
-  for (const entry of reports) {
-    const names = Object.keys(entry.results);
-    const failed = names.filter((name) => entry.results[name]?.error === true);
-    const skipped = names.filter((name) => entry.results[name]?.skipped === true);
-    const ran = names.length - skipped.length;
+  // Anything that couldn't be asked at all comes first: a node that's
+  // down is a bigger fact than anything the nodes that are up said
+  for (const failure of outcome.failures) {
+    console.log(`  ${chalk.red("✗")} ${failure.name} ${chalk.dim("·")} ${failure.why}`);
+    problems.push(`${failure.name}: ${failure.kind}`);
+  }
+
+  for (const problem of outcome.plan.problems) {
+    console.log(
+      `  ${chalk.yellow("!")} ${problem.bundle} ${chalk.dim("·")} ${chalk.dim(problem.why)}`,
+    );
+  }
+
+  let node: string | undefined;
+
+  for (const finding of findings) {
+    if (finding.node !== node) {
+      node = finding.node;
+      console.log(`\n  ${chalk.bold(node)}`);
+    }
 
     // Everything it would have asked turned out not to apply to this
     // cluster, which is not the same as everything being fine
-    if (ran === 0) {
-      console.log(`  ${chalk.dim("·")} ${entry.node} ${chalk.dim("·")} ${entry.bundle} ${chalk.dim("nothing to check")}`);
+    if (finding.ran === 0) {
+      console.log(`    ${chalk.dim("·")} ${finding.bundle} ${chalk.dim("nothing to check")}`);
       continue;
     }
 
-    asked += ran;
+    asked += finding.ran;
 
-    const mark = failed.length > 0 ? chalk.red("✗") : chalk.green("✓");
+    const mark = finding.failures.length > 0 ? chalk.red("✗") : chalk.green("✓");
     const detail =
-      failed.length > 0
-        ? chalk.red(`${failed.length} of ${ran}`)
-        : chalk.dim(`${ran} checked`);
+      finding.failures.length > 0
+        ? chalk.red(`${finding.failures.length} of ${finding.ran}`)
+        : chalk.dim(`${finding.ran} checked`);
 
-    console.log(`  ${mark} ${entry.node} ${chalk.dim("·")} ${entry.bundle} ${detail}`);
+    console.log(`    ${mark} ${finding.bundle} ${detail}`);
 
-    for (const name of failed) {
-      const result = entry.results[name];
-      const why = (result?.stderr !== undefined && result.stderr !== "" ? result.stderr : "failed")
+    for (const failure of finding.failures) {
+      const why = (failure.why !== undefined && failure.why !== "" ? failure.why : "failed")
         .split("\n")[0];
 
-      console.log(`      ${chalk.yellow(name)}: ${why}`);
-      problems.push(`${entry.node} · ${entry.bundle} · ${name}`);
+      console.log(`        ${chalk.yellow(failure.step)}: ${why}`);
+      problems.push(`${finding.node} · ${finding.bundle} · ${failure.step}`);
     }
   }
 

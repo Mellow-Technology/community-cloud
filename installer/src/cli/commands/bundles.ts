@@ -11,6 +11,7 @@ import CloudConfig from "../../util/CloudConfig.ts";
 
 // Command Bundles
 import { K3sCommands } from "./K3s.ts";
+import { ClusterOnlineCommands, NodeJoinedCommands } from "./AddNode.ts";
 import { BasePackageCommands } from "./BasePackages.ts";
 import { NodeLabelCommands } from "./NodeLabels.ts";
 import { LvmCommands } from "./LVM.ts";
@@ -68,6 +69,11 @@ const builtInBundles: BundleDefinition[] = [
     commands: ClusterConfigCommands,
   },
   {
+    name: "cluster-online",
+    description: "Check the cluster is up and answering, before joining a node to it",
+    commands: ClusterOnlineCommands,
+  },
+  {
     name: "gateway",
     description: "Give the cluster a way in from outside, from the control plane",
     commands: GatewayCommands,
@@ -121,6 +127,11 @@ const builtInBundles: BundleDefinition[] = [
     name: "network",
     description: "Set kernel networking properties, including BBR congestion control",
     commands: NetworkingCommands,
+  },
+  {
+    name: "node-joined",
+    description: "Check a node has joined the cluster and gone Ready",
+    commands: NodeJoinedCommands,
   },
   {
     name: "nodeLabels",

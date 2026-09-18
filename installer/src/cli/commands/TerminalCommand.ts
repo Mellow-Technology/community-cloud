@@ -8,11 +8,14 @@
  * and passing values on belongs to the base class.
  */
 import Command, {
+  CommandContext,
   CommandOutput,
+  CommandResults,
   OutputType,
   TerminalCommandSpec,
   joinCommand,
 } from "./Command.ts";
+import CloudConfig from "../../util/CloudConfig.ts";
 import {
   SecretEnvScript,
   buildSecretEnvScript,
@@ -83,7 +86,11 @@ export default class TerminalCommand extends Command {
    * @param commandResults
    * @returns
    */
-  protected async run(config, context, commandResults): Promise<CommandOutput> {
+  protected async run(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): Promise<CommandOutput> {
     // If the command is a function it's a
     // command creator, so we pass the context
     // to it to get the final command string
@@ -231,7 +238,11 @@ export default class TerminalCommand extends Command {
    * @param commandResults
    * @returns
    */
-  resolveEnv(config, context, commandResults): Record<string, unknown> {
+  resolveEnv(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): Record<string, unknown> {
     if (this.env === undefined || this.env === null) {
       return {};
     }

@@ -64,7 +64,12 @@ export class CommandBundle {
   protected continueOnFailure: boolean;
   protected quiet: boolean;
 
-  constructor(config: CloudConfig, commands?: CommandSpec[], context?: object, execFunction?: Function,subscribeHooks?: Observer<any>[]) {
+  constructor(
+    config: CloudConfig,
+    commands?: CommandSpec[],
+    context?: Record<string, unknown>,
+    execFunction?: Function,
+  ) {
     this.config = config;
     this.commands = commands !== undefined ? commands : [];
     this.context = context !== undefined ? context : {};
@@ -77,15 +82,6 @@ export class CommandBundle {
     this.continueOnFailure = false;
     this.quiet = false;
 
-
-    // Have any subscribe hooks. Can be used for
-    // to generate various output types
-    // if (subscribeHooks !== undefined) {
-    //   for (let i = 0; i < subscribeHooks.length; i++) {
-    //     const hook = subscribeHooks[i];
-    //     this.actor.subscribe(hook);
-    //   }
-    // }
   }
 
   /**
@@ -106,9 +102,8 @@ export class CommandBundle {
    * @returns
    */
   addBulk(commands: CommandSpec[]): this {
-    for (let i = 0; i < commands.length; i++) {
-      // @ts-expect-error This will always work (please let this not bite me lol)
-      this.add(commands[i]);
+    for (const command of commands) {
+      this.add(command);
     }
 
     return this;
@@ -197,14 +192,6 @@ export class CommandBundle {
   }
 
   /**
-   * Whether this bundle holds anything that needs the control plane,
-   * so a runner knows whether to go and connect to one.
-   */
-  needsControlPlane(commands: CommandSpec[]): boolean {
-    return commands.some((command) => command.runOn === CommandTarget.ControlPlane);
-  }
-
-  /**
    * Set the function that web commands make their requests with.
    * Only useful for pointing them somewhere other than the network.
    *
@@ -222,9 +209,7 @@ export class CommandBundle {
   async runAllCommands(): Promise<void> {
 
 
-    for (let i = 0; i < this.commands.length; i++) {
-      // Grab the parameters for the current command
-      const commandSpec = this.commands[i];
+    for (const commandSpec of this.commands) {
 
       // Instantiate a command object of whichever kind
       // the specification describes
@@ -300,9 +285,25 @@ export class CommandBundle {
       }
 
       // Execute the command
-      let res = null;
+      //
+      // A result promises strings for stdout and stderr, and a command
+      // that produced neither hands back null. Everything downstream
+      // compares those against "", so they are normalised here rather
+      // than in every reader.
+      let res: CommandResult;
       try {
-        res = await command.exec(this.config, this.context, this.commandResults);
+        const output = await command.exec(this.config, this.context, this.commandResults);
+
+        res = {
+          ...output,
+          stdout: output.stdout ?? "",
+          stderr: output.stderr ?? "",
+
+          // A result always has this field, holding null when there
+          // was nothing to parse. Callers read it without checking
+          // whether it is there.
+          parsed: output.parsed ?? null,
+        };
       }
       catch (e: any) {
         // A caller rendering its own report has the message in the
@@ -317,15 +318,15 @@ export class CommandBundle {
 
         res = {
           error: true,
-          stdout: e.stdout,
+          stdout: e.stdout ?? "",
           // A command that failed in the shell reports on stderr, but
           // one that failed before it got there — a configuration a
           // builder wouldn't accept — has only a message. Either way
           // the result should say why, since that's what a caller
           // reads to find out.
           stderr: e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message,
-          parsed: ""
-        }
+          parsed: "",
+        };
       }
 
       // Save the results
@@ -358,6 +359,24 @@ export class CommandBundle {
    * Retrieve the results of every command that ran, keyed
    * by command name.
    */
+  /**
+   * Tell this bundle what earlier commands found.
+   *
+   * A bundle normally accumulates its own results as it goes, which
+   * is all a bundle run on its own needs. A runner that executes one
+   * command at a time — because it is keeping several nodes in step —
+   * has to carry those results forward itself, since a command may
+   * read what an earlier one returned rather than what it put in the
+   * context.
+   *
+   * @param results
+   * @returns
+   */
+  setResults(results: Record<string, CommandResult>): this {
+    this.commandResults = { ...results };
+    return this;
+  }
+
   getResults(): Record<string, CommandResult> {
     return this.commandResults;
   }

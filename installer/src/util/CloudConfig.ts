@@ -84,7 +84,7 @@ export default class CloudConfig {
     // Node names carry capitals and spaces ("Mamoru BKK") while the
     // address is what people actually type at a terminal, so a node
     // answers to either.
-    const nodes = config.nodes.filter((node) => {
+    const nodes = config.nodes.filter((node: any) => {
       return (
         node.name?.toLowerCase() === name || node.address?.toLowerCase() === name || node.sshHost?.toLowerCase() === name
       );
@@ -117,7 +117,7 @@ export default class CloudConfig {
    */
   getControlPlaneHost() {
     const { config } = this;
-    const controlPlaneNodes = config.nodes.filter((host) => {
+    const controlPlaneNodes = config.nodes.filter((host: any) => {
       return host.type === "server";
     });
 

@@ -28,6 +28,17 @@ describe("a configuration preflight is happy with", () => {
     assert.deepEqual(problems({ k3s: { token: "t" }, nodes: [SERVER, AGENT] }), []);
   });
 
+  it("accepts a plain shared secret as a token", () => {
+    assert.deepEqual(problems({ k3s: { token: "any-old-secret" }, nodes: [SERVER] }), []);
+  });
+
+  it("accepts a token K3s itself issued", () => {
+    assert.deepEqual(
+      problems({ k3s: { token: `K10${"a".repeat(64)}::server:abc` }, nodes: [SERVER] }),
+      [],
+    );
+  });
+
   it("reports nothing for a complete gateway setup", () => {
     assert.deepEqual(
       problems({
@@ -56,6 +67,11 @@ describe("what preflight catches", () => {
       "2 nodes are servers",
     ],
     ["no K3s token", { nodes: [SERVER] }, "No K3s token"],
+    [
+      "a token that looks structured and isn't",
+      { k3s: { token: "K10not-really-a-ca-hash::server:secret" }, nodes: [SERVER] },
+      "structured form",
+    ],
     [
       "a node with no address",
       { k3s: { token: "t" }, nodes: [SERVER, { name: "x", type: "agent" }] },

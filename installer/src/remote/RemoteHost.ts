@@ -103,8 +103,9 @@ export default class RemoteHost {
       }
     }
 
-    // Prefer explicit auth methods
-    const finalOptions: NodeSSH.SSHConnectionOptions = {
+    // Prefer explicit auth methods. Typed as our own options rather
+    // than node-ssh's, because "sshAgent" is ours.
+    const finalOptions: RemoteHostOptions = {
       ...this.options,
       privateKey,
       password,
@@ -116,7 +117,7 @@ export default class RemoteHost {
     if (!finalOptions.password) delete finalOptions.password;
 
     try {
-      await this.ssh.connect(finalOptions);
+      await this.ssh.connect(finalOptions as Config);
     } catch (err: any) {
       throw new Error(
         `SSH connection failed for host '${this.options.host}': ${err.message}`,
@@ -131,7 +132,7 @@ export default class RemoteHost {
   async upload(
     localPath: string,
     remotePath: string,
-    options?: { recursive?: boolean; mode?: number },
+    _options?: { recursive?: boolean; mode?: number },
   ): Promise<void> {
     await this.ssh.putFile(localPath, remotePath);
   }
@@ -146,10 +147,12 @@ export default class RemoteHost {
    */
   async exec(
     command: string,
-    args?: string[],
     stdin?: string,
   ): Promise<{ stdout: string; stderr: string; parsed: any }> {
-    const result = await this.ssh.execCommand(command, { args, stdin });
+    const result = await this.ssh.execCommand(
+      command,
+      stdin !== undefined ? { stdin } : {},
+    );
 
     // A remote command that fails reports it in its exit code, which
     // node-ssh hands back rather than throwing. Raise it here so that
@@ -172,28 +175,6 @@ export default class RemoteHost {
       stderr: result.stderr ?? "",
       parsed: null,
     };
-  }
-
-  /**
-   * Execute a JSON-returning command.
-   * Throws if output is not valid JSON or empty.
-   */
-  async execJSON<T = any>(command: string, args?: string[]): Promise<T> {
-    const { stdout, stderr } = await this.exec(command, args);
-    if (!stdout.trim()) {
-      throw new Error(`Command returned empty output for: ${command}`);
-    }
-    try {
-      return {
-        stdout: stdout,
-        stderr: null,
-        parsed: JSON.parse(stdout),
-      };
-    } catch (err) {
-      throw new Error(
-        `Failed to parse JSON from command '${command}': ${err.message}\nOutput was:\n${stdout}`,
-      );
-    }
   }
 
   /**

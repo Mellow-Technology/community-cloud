@@ -112,7 +112,7 @@ export async function runTemplate(
     try {
       // Same as locally, the manifest goes over on stdin
       bundle.setExec((command: string, stdin?: string) =>
-        node.exec(command, undefined, stdin),
+        node.exec(command, stdin),
       );
       await bundle.runAllCommands();
     } finally {

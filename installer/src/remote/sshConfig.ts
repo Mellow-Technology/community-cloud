@@ -60,21 +60,21 @@ export async function resolveSshHost(options: {
     return {};
   }
 
-  const { identityfile, ...settings } = parseSshSettings(stdout);
+  const { settings, identityfile } = parseSshSettings(stdout);
   const resolved: ResolvedSshHost = {};
 
   // ssh always reports a hostname, echoing the name back when the
   // config says nothing about it, so this is safe either way
-  if (settings.hostname !== undefined) {
-    resolved.host = settings.hostname;
+  if (settings["hostname"] !== undefined) {
+    resolved.host = settings["hostname"];
   }
 
-  if (settings.user !== undefined) {
-    resolved.username = settings.user;
+  if (settings["user"] !== undefined) {
+    resolved.username = settings["user"];
   }
 
-  if (settings.port !== undefined) {
-    const port = Number.parseInt(settings.port, 10);
+  if (settings["port"] !== undefined) {
+    const port = Number.parseInt(settings["port"], 10);
     if (!Number.isNaN(port)) {
       resolved.port = port;
     }
@@ -121,7 +121,10 @@ async function findReadableKey(paths: string[]): Promise<string | undefined> {
  * @param output
  * @returns
  */
-function parseSshSettings(output: string) {
+function parseSshSettings(output: string): {
+  settings: Record<string, string>;
+  identityfile: string[];
+} {
   const settings: Record<string, string> = {};
   const identityfile: string[] = [];
 
@@ -146,7 +149,7 @@ function parseSshSettings(output: string) {
     }
   }
 
-  return { ...settings, identityfile };
+  return { settings, identityfile };
 }
 
 /**

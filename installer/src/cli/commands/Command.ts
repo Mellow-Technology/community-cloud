@@ -14,6 +14,8 @@
  */
 import { loadAll } from "js-yaml";
 
+import CloudConfig from "../../util/CloudConfig.ts";
+
 export enum OutputType {
   // Output is JSON
   Json = "json",
@@ -133,6 +135,70 @@ export enum CommandTarget {
 }
 
 /**
+ * How many times a command runs, and for which nodes.
+ *
+ * This is a different question from "runOn", and the two get confused
+ * because on a single node they look like the same thing. "runOn" says
+ * which machine executes the shell. This says how many times, and on
+ * whose behalf.
+ *
+ * Labelling a node is the case that shows they're separate: the shell
+ * is kubectl, so it has to run on a server, and it is nevertheless one
+ * command per node in the cluster.
+ *
+ * - Cluster: once, whatever the cluster's size. Anything addressing
+ *   Kubernetes rather than a machine — applying a manifest, installing
+ *   a chart. The API is shared, so doing it per node would be doing it
+ *   again.
+ * - EachNode: once per node. System configuration, hardware, storage,
+ *   and anything about a particular machine even when something else
+ *   carries it out.
+ * - EachServer / EachAgent: once per node of that kind. K3s is the
+ *   reason both exist: a server has to be up before an agent can join
+ *   it, so those are two steps rather than one.
+ */
+export enum CommandScope {
+  Cluster = "cluster",
+  EachNode = "each-node",
+  EachServer = "each-server",
+  EachAgent = "each-agent",
+}
+
+/**
+ * What a command's scope is, including the ones that never said.
+ *
+ * The default is worked out from where it runs, because that is right
+ * for almost every command already written: something running on the
+ * control plane is talking to the cluster and wants doing once, and
+ * something running on a node is about that node. Only the commands
+ * where those two come apart have to say so, which today is labelling
+ * a node and installing K3s.
+ *
+ * @param spec
+ * @returns
+ */
+export function getCommandScope(spec: BaseCommandSpec): CommandScope {
+  if (spec.scope !== undefined) {
+    return spec.scope;
+  }
+
+  return spec.runOn === CommandTarget.ControlPlane
+    ? CommandScope.Cluster
+    : CommandScope.EachNode;
+}
+
+/**
+ * Whether a scope means one command per node rather than one for the
+ * whole cluster.
+ *
+ * @param scope
+ * @returns
+ */
+export function isPerNode(scope: CommandScope): boolean {
+  return scope !== CommandScope.Cluster;
+}
+
+/**
  * The output of a command.
  *
  * Both kinds of command report through the same fields so that
@@ -161,6 +227,29 @@ export interface CommandOutput {
 export type ContextUpdates = Record<string, unknown>;
 
 /**
+ * What a command is told before it runs: everything the commands
+ * before it decided to pass on.
+ *
+ * Deliberately open, and named rather than written as "any" at each
+ * of the several dozen places that take one. The whole point of the
+ * context is that a bundle can put a finding in it that nothing else
+ * knew about — the disks lvm found, the GPUs gpu found — and having
+ * to declare each one in a closed shape here would make adding a
+ * finding a change in two places.
+ *
+ * The cost is that a typo in a context key isn't caught by the
+ * compiler, which is the trade this makes knowingly. Being one name
+ * is what makes tightening it later a single edit rather than a
+ * hundred.
+ */
+export type CommandContext = any;
+
+/**
+ * What the commands before this one returned, by name.
+ */
+export type CommandResults = Record<string, any>;
+
+/**
  * What every command has, whichever kind it is.
  *
  * - name: a label for the command, and the key its result is kept under
@@ -179,6 +268,9 @@ export type ContextUpdates = Record<string, unknown>;
  *   is never run by anything that promised to only look.
  * - runOn: where the command runs. Defaults to the node the bundle is
  *   aimed at; set to the control plane for anything needing kubectl.
+ * - scope: how many times it runs and for which nodes. Worked out from
+ *   "runOn" when it isn't given, which is right for everything except
+ *   the commands where the two come apart.
  * - skipWhen: a function saying this command has nothing to do, given
  *   what the commands before it found. A bundle that can be run twice
  *   needs this: a shell command can check the state it's about to
@@ -197,6 +289,7 @@ export interface BaseCommandSpec {
   skipWhen?: Function;
   purpose?: CommandPurpose;
   runOn?: CommandTarget;
+  scope?: CommandScope;
 }
 
 /**
@@ -392,7 +485,11 @@ export default abstract class Command {
     this.quiet = quiet;
   }
 
-  shouldSkip(config, context, commandResults): boolean {
+  shouldSkip(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): boolean {
     if (typeof this.skipWhen !== "function") {
       return false;
     }
@@ -411,7 +508,11 @@ export default abstract class Command {
    * @param config
    * @returns
    */
-  async exec(config, context, commandResults) {
+  async exec(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): Promise<CommandOutput> {
     this.rawOutput = await this.run(config, context, commandResults);
 
     // Parse the output from the command
@@ -455,7 +556,11 @@ export default abstract class Command {
    * @param commandResults
    * @returns
    */
-  resolveContextUpdates(config, context, commandResults): ContextUpdates {
+  resolveContextUpdates(
+    config: CloudConfig,
+    context: CommandContext,
+    commandResults: CommandResults,
+  ): ContextUpdates {
     if (this.saveToContext === undefined || this.saveToContext === null) {
       return {};
     }
@@ -485,7 +590,7 @@ export default abstract class Command {
    * Parse the output of the command
    * @returns
    */
-  async parseOutput(): boolean {
+  async parseOutput(): Promise<boolean> {
     if (this.rawOutput === null || this.rawOutput === undefined) {
       return false;
     }
@@ -493,11 +598,15 @@ export default abstract class Command {
     // Copy over the initial raw output
     this.parsedOutput = this.rawOutput;
 
+    // A command that produced nothing has no output rather than null
+    // output, as far as anything parsing it is concerned
+    const stdout = this.rawOutput.stdout ?? "";
+
     // Parse output
     try {
       switch (this.outputType) {
         case OutputType.Json:
-          this.parsedOutput.parsed = JSON.parse(this.rawOutput.stdout);
+          this.parsedOutput.parsed = JSON.parse(stdout);
           break;
 
         case OutputType.Csv:
@@ -508,7 +617,7 @@ export default abstract class Command {
           break;
 
         case OutputType.Yaml:
-          this.parsedOutput.parsed = loadAll(this.rawOutput.stdout);
+          this.parsedOutput.parsed = loadAll(stdout);
           break;
 
         case OutputType.Custom:
@@ -538,7 +647,10 @@ export default abstract class Command {
         console.error(`Failed to parse ${this.outputType} output:`, error);
       }
 
-      this.parsedOutput = null;
+      // The output is kept even though it didn't parse: it is what
+      // the command actually said, and a caller working out what went
+      // wrong has nothing else to go on
+      this.parsedOutput = { ...this.rawOutput, parsed: null };
       return false;
     }
 

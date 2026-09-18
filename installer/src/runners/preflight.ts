@@ -62,6 +62,21 @@ function getConfiguredNodes(config: CloudConfig): any[] {
   return Array.isArray(nodes) ? nodes : [];
 }
 
+// The structured token K3s issues: K10, a hex CA hash, then the user
+// and password. Anything not starting "K10" is a plain shared secret
+// and is taken as it is.
+const STRUCTURED_TOKEN = /^K10[0-9a-f]{64}::[^:]+:.+$/;
+
+/**
+ * Whether K3s will accept this as a token.
+ *
+ * @param token
+ * @returns
+ */
+function isUsableToken(token: string): boolean {
+  return !token.startsWith("K10") || STRUCTURED_TOKEN.test(token);
+}
+
 /**
  * Check the configuration describes a cluster that could exist.
  *
@@ -95,6 +110,16 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
   const { token } = config.getConfig().k3s ?? {};
   if (token === undefined || token === "") {
     say('No K3s token under "k3s.token". The server and every agent need the same one to form a cluster.');
+  }
+  else if (!isUsableToken(token)) {
+    // K3s treats a token beginning "K10" as the structured form and
+    // takes it apart; one that looks like that and isn't fails when
+    // the server starts, with "failed to normalize server token" and
+    // nothing about where it came from. That is a long way from here
+    // and a poor place to find out.
+    say(
+      'The K3s token starts with "K10", which K3s reads as its structured form — K10<CA hash>::<user>:<password> — and this one isn\'t that shape. Either use a token K3s issued, or use any other string as a shared secret.',
+    );
   }
 
   // Names have to survive becoming Kubernetes node names

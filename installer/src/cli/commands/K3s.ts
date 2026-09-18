@@ -22,7 +22,13 @@
  * - sudo, which the K3s install script uses itself for the privileged
  *   parts, so these commands don't set the sudo flag
  */
-import { CommandPurpose, CommandSpec, OutputType } from "./Command.ts";
+import {
+  CommandContext,
+  CommandPurpose,
+  CommandScope,
+  CommandSpec,
+  OutputType,
+} from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SInstallationType } from "../../util/types.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
@@ -185,6 +191,31 @@ export function getNodeName(context: any): string | undefined {
 }
 
 /**
+ * What this node is called in the cluster, insisting on an answer.
+ *
+ * The same name K3s registers it under, so anything acting on the node
+ * by name and the node itself always agree about which machine is
+ * meant. Where getNodeName shrugs — K3s can fall back to the machine's
+ * own hostname, so not knowing is survivable at install time — kubectl
+ * cannot: a command that has to name a node and can't is a command
+ * that would act on the wrong one or on none.
+ *
+ * @param context
+ * @returns
+ */
+export function getClusterNodeName(context: CommandContext): string {
+  const name = getNodeName(context);
+
+  if (name === undefined) {
+    throw new Error(
+      `Couldn't work out what "${context.nodeName}" is called in the cluster. Give the node a name or address that can be a DNS label, or set "nodeName" on it.`,
+    );
+  }
+
+  return name;
+}
+
+/**
  * Build the arguments K3s is started with.
  *
  * Anything K3s reads from the environment is left out of here on
@@ -270,12 +301,12 @@ function buildInstallEnv(config: CloudConfig, context: any): Record<string, stri
 
   if (installationType === K3SInstallationType.Agent) {
     // Where to find the cluster to join
-    env.K3S_URL = config.getControlPlaneUrl();
+    env["K3S_URL"] = config.getControlPlaneUrl();
   }
   else {
     // Let the node's own user read the kubeconfig, so that everything
     // afterwards doesn't have to go through sudo to talk to the cluster
-    env.K3S_KUBECONFIG_MODE = "644";
+    env["K3S_KUBECONFIG_MODE"] = "644";
   }
 
   return env;
@@ -303,33 +334,68 @@ function buildInstallSecrets(config: CloudConfig): Record<string, string> {
   };
 }
 
+/**
+ * Fetch the install script and run it.
+ *
+ * The script works out that it isn't root and uses sudo for the parts
+ * that need it, so this runs as the connecting user and the
+ * environment survives to reach it.
+ *
+ * It is fetched to a file first rather than piped straight into a
+ * shell. In a pipeline the shell's exit status is the one that counts,
+ * so a curl that fails hands an empty script to a shell that reads
+ * nothing, does nothing, and reports success. That is a miserable
+ * thing to debug: the install looks like it worked and the node never
+ * comes up.
+ */
+const INSTALL_SCRIPT = [
+  "installer=$(mktemp)",
+  `curl -fsSL ${K3S_INSTALL_URL} -o "$installer" || { echo "Couldn't download the K3s install script from ${K3S_INSTALL_URL}" >&2; rm -f "$installer"; exit 1; }`,
+  `test -s "$installer" || { echo "The K3s install script came back empty" >&2; rm -f "$installer"; exit 1; }`,
+  'sh "$installer"',
+  "status=$?",
+  'rm -f "$installer"',
+  "exit $status",
+];
+
 export const K3sCommands: CommandSpec[] = [
   /**
-   * Install K3s itself. The install script works out that it isn't
-   * root and uses sudo for the parts that need it, so this runs as the
-   * connecting user and the environment survives to reach it.
+   * Install the servers.
    *
-   * The script is fetched to a file first rather than piped straight
-   * into a shell. In a pipeline the shell's exit status is the one
-   * that counts, so a curl that fails hands an empty script to a shell
-   * that reads nothing, does nothing, and reports success. That is a
-   * miserable thing to debug: the install looks like it worked and the
-   * node never comes up.
+   * Servers and agents are two steps rather than one because they are
+   * genuinely ordered: an agent joins a server, so there has to be a
+   * server listening before any agent tries. Running them as separate
+   * scopes is what lets every server come up together, and then every
+   * agent come up together, without either waiting on a node it
+   * doesn't need.
+   *
+   * The shell is the same either way — the install script reads the
+   * environment to know which it is building — so both share it.
    */
   {
-    name: "install-k3s",
-    description: "Install K3s and start it as a server or an agent",
+    name: "install-k3s-server",
+    description: "Install K3s and start it as a server",
+    scope: CommandScope.EachServer,
+    skipWhen: (_config: CloudConfig, context: any) =>
+      getInstallationType(context) !== K3SInstallationType.Server,
     env: buildInstallEnv,
     secretEnv: buildInstallSecrets,
-    command: [
-      "installer=$(mktemp)",
-      `curl -fsSL ${K3S_INSTALL_URL} -o "$installer" || { echo "Couldn't download the K3s install script from ${K3S_INSTALL_URL}" >&2; rm -f "$installer"; exit 1; }`,
-      `test -s "$installer" || { echo "The K3s install script came back empty" >&2; rm -f "$installer"; exit 1; }`,
-      'sh "$installer"',
-      "status=$?",
-      'rm -f "$installer"',
-      "exit $status",
-    ],
+    command: INSTALL_SCRIPT,
+    output: OutputType.Raw,
+  },
+
+  /**
+   * And then the agents, which need one to join.
+   */
+  {
+    name: "install-k3s-agent",
+    description: "Install K3s and join it to the cluster as an agent",
+    scope: CommandScope.EachAgent,
+    skipWhen: (_config: CloudConfig, context: any) =>
+      getInstallationType(context) !== K3SInstallationType.Agent,
+    env: buildInstallEnv,
+    secretEnv: buildInstallSecrets,
+    command: INSTALL_SCRIPT,
     output: OutputType.Raw,
   },
 
@@ -342,7 +408,7 @@ export const K3sCommands: CommandSpec[] = [
     name: "wait-for-k3s",
     purpose: CommandPurpose.Settle,
     description: "Wait for the K3s service to come up",
-    command: (config: CloudConfig, context: any) => {
+    command: (_config: CloudConfig, context: any) => {
       const service = getServiceName(context);
 
       return [
@@ -367,7 +433,7 @@ export const K3sCommands: CommandSpec[] = [
     name: "verify-k3s",
     purpose: CommandPurpose.Verify,
     description: "Verify the node has joined and is working",
-    command: (config: CloudConfig, context: any) => {
+    command: (_config: CloudConfig, context: any) => {
       if (getInstallationType(context) === K3SInstallationType.Server) {
         const nodeName = getNodeName(context);
 

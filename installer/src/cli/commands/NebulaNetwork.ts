@@ -97,13 +97,13 @@ export function getNebulaConfig(config: CloudConfig): NebulaConfig {
  * @returns
  */
 export function usesNebula(config: CloudConfig): boolean {
-  const { apiKey, network, id } = getNebulaConfig(config);
+  const { apiKey, network, networkID } = getNebulaConfig(config);
 
   return (
     (apiKey !== undefined && apiKey !== "") ||
     process.env[API_KEY_ENV] !== undefined ||
     network !== undefined ||
-    id !== undefined
+    networkID !== undefined
   );
 }
 
@@ -147,7 +147,7 @@ export const findNetworkCommand: WebCommandSpec = {
   url: `${DEFINED_API_URL}/v2/networks`,
   query: { pageSize: PAGE_SIZE },
   headers: buildApiHeaders,
-  saveToContext: (output: any, context: any, config: CloudConfig) => {
+  saveToContext: (output: any, _context: any, config: CloudConfig) => {
     const { network, networkID } = getNebulaConfig(config);
     const networks = output.parsed !== undefined && output.parsed !== null
       ? output.parsed.data
@@ -225,10 +225,10 @@ function buildCreateRoleCommand(role: NebulaRole): WebCommandSpec {
 
     // A role that's already there is the state we wanted, so there's
     // nothing to do and nothing to report
-    skipWhen: (config: CloudConfig, context: any) =>
+    skipWhen: (_config: CloudConfig, context: any) =>
       getRoleID(context, role.name) !== undefined,
 
-    body: (config: CloudConfig, context: any) => ({
+    body: (_config: CloudConfig, context: any) => ({
       name: role.name,
       description: role.description !== undefined ? role.description : "",
       firewallRules: buildFirewallRules(role, context),
