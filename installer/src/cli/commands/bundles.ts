@@ -26,6 +26,9 @@ import { HelmCommands } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
+import { DrainCommands } from "./Drain.ts";
+import { K3sUninstallCommands, NodeRemovedCommands } from "./Uninstall.ts";
+import { CleanCommands, StorageRemoveCommands } from "./Clean.ts";
 
 /**
  * A bundle that can be run.
@@ -44,6 +47,17 @@ export interface BundleDefinition {
   // leave it unset, and the listing says where a bundle came from so
   // that what a node will run can be traced to who asked for it.
   plugin?: string;
+
+  // Whether this bundle takes something apart rather than building it.
+  //
+  // It matters because of the doctor, which runs every bundle's
+  // read-only commands to say how a cluster is. These bundles' checks
+  // assert the opposite of a working cluster — "K3s isn't running",
+  // "this node isn't a member", "no volume group is ours" — so running
+  // them during a check-up would report a healthy cluster as broken.
+  // They are left out of a check-up that asks about everything, and
+  // run as normal when one is asked for by name.
+  teardown?: boolean;
 }
 
 /**
@@ -64,6 +78,12 @@ const builtInBundles: BundleDefinition[] = [
     commands: CiliumCommands,
   },
   {
+    name: "clean",
+    description: "Remove the configuration and data directories an uninstall kept",
+    commands: CleanCommands,
+    teardown: true,
+  },
+  {
     name: "cluster",
     description: "Record this cluster's configuration in the cluster itself",
     commands: ClusterConfigCommands,
@@ -72,6 +92,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "cluster-online",
     description: "Check the cluster is up and answering, before joining a node to it",
     commands: ClusterOnlineCommands,
+  },
+  {
+    name: "drain",
+    description: "Move the workloads off a node, before taking it out of service",
+    commands: DrainCommands,
+    teardown: true,
   },
   {
     name: "gateway",
@@ -97,6 +123,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "k3s",
     description: "Install K3s, as a server or an agent depending on the node",
     commands: K3sCommands,
+  },
+  {
+    name: "k3s-uninstall",
+    description: "Take K3s off a node, keeping its configuration and data",
+    commands: K3sUninstallCommands,
+    teardown: true,
   },
   {
     name: "lvm",
@@ -134,9 +166,21 @@ const builtInBundles: BundleDefinition[] = [
     commands: NodeJoinedCommands,
   },
   {
+    name: "node-removed",
+    description: "Remove a node from the cluster, and check the cluster agrees",
+    commands: NodeRemovedCommands,
+    teardown: true,
+  },
+  {
     name: "nodeLabels",
     description: "Label a node with its roles, its own labels, and what was detected on it",
     commands: NodeLabelCommands,
+  },
+  {
+    name: "storage-remove",
+    description: "Destroy the volume groups this installer created, and the data in them",
+    commands: StorageRemoveCommands,
+    teardown: true,
   },
 ];
 
@@ -200,6 +244,20 @@ export function getBundle(bundleName: string): BundleDefinition | undefined {
  */
 export function getBundleNames(): string[] {
   return bundles.map((bundle) => bundle.name);
+}
+
+/**
+ * The bundles that describe a working cluster rather than one being
+ * taken apart.
+ *
+ * What a check-up should ask about, and nothing else.
+ *
+ * @returns
+ */
+export function getCheckableBundleNames(): string[] {
+  return bundles
+    .filter((bundle) => bundle.teardown !== true)
+    .map((bundle) => bundle.name);
 }
 
 /**

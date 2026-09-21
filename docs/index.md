@@ -24,6 +24,8 @@ Full configuration reference: [installer/README.md](../installer/README.md#confi
 | `doctor <config>` | Ask a running cluster how it's doing, every node at once. Changes nothing. |
 | `install <config>` | Build the whole cluster, every node in lock step. |
 | `add-node <node> <config>` | Add an agent to a cluster that already exists. |
+| `uninstall <node> <config>` | Take one node out of the cluster and K3s off it, keeping its data. |
+| `clean <node\|all> <config>` | Remove the configuration and data an uninstall kept. |
 | `run-bundle <bundle> <node\|all> <config>` | Run one bundle against one node or every node. |
 | `run-pipeline <pipeline> <node\|all> <config>` | Run several bundles in order, passing findings along. |
 | `run-template <manifest> <config>` | Render a manifest and apply or delete it with kubectl. |
@@ -97,6 +99,20 @@ cluster in service.
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
+
+The bundles below take a cluster apart rather than building one. Their
+checks assert the opposite of a working cluster — "K3s isn't running
+here", "this node isn't a member" — so a check-up that asks about
+everything leaves them out, and `doctor --bundle <name>` runs them
+when the question is meant.
+
+| Bundle | What it does |
+|---|---|
+| `drain` | Moves the workloads off a node, respecting disruption budgets |
+| `k3s-uninstall` | Stops K3s and removes it, keeping every directory it was using |
+| `node-removed` | Removes a node from the cluster, and checks the cluster agrees |
+| `clean` | Removes the directories `k3s-uninstall` kept |
+| `storage-remove` | Destroys the volume groups, and everything stored in them |
 
 ### Secrets
 

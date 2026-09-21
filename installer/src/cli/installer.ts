@@ -31,6 +31,8 @@ import { configure } from "../runners/configure.ts";
 import { listEmbedded } from "../runners/listEmbedded.ts";
 import { doctor } from "../runners/doctor.ts";
 import { preflight } from "../runners/preflight.ts";
+import { uninstall } from "../runners/uninstall.ts";
+import { clean } from "../runners/clean.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -49,8 +51,8 @@ const COMMAND_NAME = "community-cloud";
  *
  * - install -> run the Community Cloud install process
  * - add-node -> add a node to a cluster that already exists
- * - uninstall -> uninstall Community Cloud
- * - clean -> clean up various install steps
+ * - uninstall -> take a node out of the cluster, keeping its data
+ * - clean -> remove the data an uninstall kept
  */
 enum CliOperation {
   Configure = "configure",
@@ -129,18 +131,36 @@ program
   .action(addNode);
 
 // Uninstall
+// Takes one node at a time. Everything it removes belongs to that
+// machine, and the data it was looking after is left where it is —
+// "clean" is the command for removing that.
 program
   .command(CliOperation.Uninstall)
-  .description("Uninstall existing Community Cloud components.")
-  .option("--skip-cleanup", "Skip cleanup of related directories and files.")
-  .argument("<ccFilePath>", "Path to the Community Cloud configuration file");
+  .description("Take a node out of the cluster and K3s off it, keeping its data")
+  .argument("<node>", "The node to uninstall, as it is named in the configuration")
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("--server", "Allow uninstalling the control plane, which destroys the cluster")
+  .option("--skip-drain", "Stop the workloads rather than moving them off first")
+  .option("--drain-timeout <seconds>", "How long to give the eviction API before giving up")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--timeout <seconds>", "How long to give a node to answer when connecting")
+  .option("--verbose", "Print each command's output as well as the report")
+  .action(uninstall);
 
 // Clean
 program
   .command(CliOperation.Clean)
-  .description("Clean up various install steps, removing residual files.")
-  .option("--full", "Perform a deep clean of all possible installation artifacts.")
-  .argument("<ccFilePath>", "Path to the Community Cloud configuration file");
+  .description("Remove the configuration and data an uninstall kept")
+  .argument("<node>", 'The node to clean, or "all" for every node in the configuration')
+  .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
+  .option("--full", "Also destroy the volume groups, and everything stored in them")
+  .option("--yes", "Having seen what --full would destroy, go ahead and destroy it")
+  .option("--dry-run", "Work out every step and print it, changing nothing")
+  .option("--keep-going", "Carry on after a step fails instead of stopping")
+  .option("--timeout <seconds>", "How long to give a node to answer when connecting")
+  .option("--verbose", "Print each command's output as well as the report")
+  .action(clean);
 
 // Run one bundle
 program

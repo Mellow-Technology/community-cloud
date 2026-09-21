@@ -466,6 +466,168 @@ address changed and the port left alone, a `username` that overrides
 what `~/.ssh/config` would have resolved — and without the check the
 first sign of it is a cluster missing a node nobody can account for.
 
+## Taking a node out
+
+```bash
+community-cloud uninstall node-4 cc.config.json
+community-cloud uninstall node-4 cc.config.json --dry-run
+community-cloud uninstall node-4 cc.config.json --skip-drain
+```
+
+This is the install read backwards, and only the part of it that
+belongs to one machine:
+
+```
+cluster-online → drain → k3s-uninstall → node-removed
+```
+
+Nothing here touches Cilium, the Gateway, Helm or the charts. Those
+are the cluster rather than the node, and removing them because one
+machine is leaving would take the cluster down in order to shrink it.
+
+**It keeps the data.** That is the whole distinction between this and
+`clean`, and it is why the K3s install's own uninstall scripts aren't
+used: `k3s-uninstall.sh` ends with `rm -rf /etc/rancher/k3s
+/var/lib/rancher/k3s /var/lib/kubelet`, which on a server is the
+cluster's datastore and its certificate authority. Removing the
+software and removing what it was looking after are two decisions, and
+running them as one means the careful version doesn't exist.
+
+So what is left behind is:
+
+| | |
+|---|---|
+| `/etc/rancher/k3s` | Configuration, registry credentials, the kubeconfig |
+| `/var/lib/rancher/k3s` | The server's datastore and CA, an agent's certificates, the image cache |
+| `/var/lib/kubelet` | Pod state, and the mount points node local volumes were attached at |
+| every volume group | Where the data actually is — TopoLVM carves its volumes out of them |
+
+A node uninstalled this way can be put back with `add-node` and finds
+its images, its certificates and its volumes where it left them.
+
+What *is* used from K3s's own scripts is `k3s-killall.sh`, which is
+the half that changes no data: it stops the service, kills every
+container and shim, and unmounts everything under `/run/k3s` and
+`/var/lib/kubelet`. The unmounting matters more than it sounds, and
+the clean section below says why.
+
+### Draining first
+
+Stopping K3s on a node kills whatever is running there. The pods come
+back somewhere else a minute or two later, once the cluster notices —
+which is fine for something stateless and is not fine for a database
+being killed mid-write. Draining moves the work first and waits for it
+to land.
+
+Two flags are deliberately not passed to `kubectl drain`. `--force`
+deletes pods belonging to no controller, and since nothing recreates
+those it turns "move this workload" into "delete this workload"
+without saying so. `--disable-eviction` ignores every disruption
+budget in the cluster, which is the thing draining exists to respect.
+So a drain that can't finish stops and says what held it up, and
+`--skip-drain` is how you decide to stop the workloads instead.
+
+`--drain-timeout <seconds>` bounds the wait, which matters because a
+pod held by a disruption budget that can't be satisfied is never
+evicted at all.
+
+### Servers
+
+```bash
+community-cloud uninstall cleverswing cc.config.json --server
+```
+
+A server is refused without `--server`, because uninstalling one
+destroys the cluster: the datastore, the certificate authority and the
+token all live on it, nothing here can put them back, and every agent
+loses its control plane at once. It is the one operation in this tool
+that no other command can undo.
+
+With the flag, the pipeline is just `k3s-uninstall`. There is nothing
+to drain to — draining a control plane means evicting the pods that
+would carry out the eviction — and nothing to be removed from.
+
+Agents are taken out one at a time; `all` is refused, since draining
+every node at once would mean waiting out every timeout and then
+failing, having cordoned the whole cluster on the way. Take the agents
+out one by one and the server last.
+
+### When the cluster is already gone
+
+Everything above needs a reachable control plane, to drain to and to
+remove the node from. If the cluster isn't there any more, the
+node-local half is a bundle like any other:
+
+```bash
+community-cloud run-bundle k3s-uninstall node-4 cc.config.json
+```
+
+## Cleaning up
+
+```bash
+community-cloud clean node-4 cc.config.json
+community-cloud clean all cc.config.json
+community-cloud clean node-4 cc.config.json --full          # says what it would destroy
+community-cloud clean node-4 cc.config.json --full --yes    # destroys it
+```
+
+The other half of the decision: removing what the uninstall kept. Two
+levels, because there are two sizes of loss.
+
+By default it removes the K3s directories — the datastore, the
+kubeconfig, the registry credentials, the image cache, and what is
+left of the pod network. Painful, and all of it rebuildable by
+installing again.
+
+`--full` also destroys the volume groups this installer created, which
+is where the data is: TopoLVM carves every persistent volume out of
+them, so this is the contents of every database and every upload on
+the node. Nothing here can put that back, so `--full` on its own
+prints what it would destroy and stops:
+
+```
+cc-ssd-vg           931GB  4 logical volumes
+    pvc-8f2a…         30GB
+    …
+Nothing was destroyed. The volume groups listed above hold what the
+cluster stored on this node — run the same command again with --yes to
+remove them.
+```
+
+Ownership comes from an LVM tag this installer wrote rather than from
+the group's name. A group called `cc-ssd-vg` is *probably* one of
+ours, and "probably" is not the standard to apply to something about
+to be destroyed.
+
+The `--yes` gate lives in the `storage-remove` bundle rather than in
+the command, so that reaching it another way — `run-bundle`, a
+pipeline in the configuration — is no shorter a path. `--keep-going`
+doesn't get past it either: the step that does the removing checks for
+approval as well as the step that asks for it, because a run told to
+carry on past failures would otherwise note the refusal and walk
+straight past it.
+
+### Why it won't clean a running node
+
+Cleaning refuses while K3s is running, and refuses while anything is
+still mounted under `/var/lib/kubelet` or `/run/k3s`. The second is
+the one worth the trouble: `rm -rf /var/lib/kubelet` with a volume
+still mounted underneath descends through the mount point and deletes
+what is *in* the volume, which is exactly the data every other
+decision here is arranged to protect. An uninstall unmounts those, so
+the usual answer is to run one first.
+
+### What is left alone
+
+Cilium's datapath is removed by `clean` and reported by
+`k3s-uninstall` rather than removed — the `cilium_*` interfaces, the
+veth pairs and the eBPF programs attached to them belong to Cilium
+rather than to K3s, and a node that is going back into a cluster may
+well want them. A reboot clears them either way.
+
+A node's mesh membership — Nebula or Tailscale — is left alone by
+both. It is usually how you are reaching the machine.
+
 ## Tests
 
 ```bash

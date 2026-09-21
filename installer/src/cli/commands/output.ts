@@ -97,3 +97,37 @@ export function field(fields: string[], index: number): string {
   const value = fields[index];
   return value !== undefined ? value : "";
 }
+
+/**
+ * Split output into the sections a command printed.
+ *
+ * A command that walks a node once and reports several different
+ * things needs a way to say where one answer stops and the next
+ * begins, and a "== name ==" line between them is the cheapest one
+ * that survives a shell. Anything before the first marker belongs to
+ * nothing and is dropped, which is what lets a command print a
+ * warning first without the reader having to allow for it.
+ *
+ * @param text
+ * @returns each section's lines, by name
+ */
+export function readSections(text: string): Record<string, string[]> {
+  const sections: Record<string, string[]> = {};
+  let current = "";
+
+  for (const line of text.split("\n")) {
+    const marker = line.match(/^==\s*(\S+)\s*==$/);
+
+    if (marker !== null) {
+      current = marker[1] as string;
+      sections[current] = [];
+      continue;
+    }
+
+    if (current !== "" && line.trim() !== "") {
+      (sections[current] as string[]).push(line.trim());
+    }
+  }
+
+  return sections;
+}

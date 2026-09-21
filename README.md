@@ -107,6 +107,7 @@ The installer (`installer/`) is a Bun-based CLI that automates multi-node K3s cl
 - **K3s Provisioning**: Server/agent bootstrap, Gateway API CRD installation, cert-manager deployment
 - **Registry Auth**: K3s private registry configuration
 - **GPU Detection**: Automatic AMD/NVIDIA/Intel GPU identification
+- **Teardown**: `uninstall` drains a node and removes K3s while keeping its configuration, images and volume groups; `clean` removes those separately, and only destroys the disks when told to twice
 
 ### Building the Installer
 

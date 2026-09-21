@@ -47,6 +47,7 @@ import {
 import CloudConfig from "../../util/CloudConfig.ts";
 import { quoteForShell } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
+import { readSections } from "./output.ts";
 
 // The values file that says which volume groups TopoLVM will look for
 const TOPOLVM_VALUES_FILE = "embed://storage/TopoLVM/TopoLVM.values.yaml";
@@ -583,33 +584,6 @@ function readTags(value: string | undefined): string[] {
     .split(",")
     .map((tag) => tag.trim())
     .filter((tag) => tag !== "");
-}
-
-/**
- * Split the output into the sections the command printed.
- *
- * @param text
- * @returns
- */
-function readSections(text: string): Record<string, string[]> {
-  const sections: Record<string, string[]> = {};
-  let current = "";
-
-  for (const line of text.split("\n")) {
-    const marker = line.match(/^==\s*(\S+)\s*==$/);
-
-    if (marker !== null) {
-      current = marker[1] as string;
-      sections[current] = [];
-      continue;
-    }
-
-    if (current !== "" && line.trim() !== "") {
-      (sections[current] as string[]).push(line.trim());
-    }
-  }
-
-  return sections;
 }
 
 /**

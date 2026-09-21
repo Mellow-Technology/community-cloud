@@ -40,7 +40,11 @@ import {
 } from "../cli/commands/Command.ts";
 import { ConsoleReporter, StepOutcome } from "../pipeline/reporter.ts";
 import { ExecuteOutcome, executePipeline } from "../pipeline/execute.ts";
-import { getBundle, getBundleNames } from "../cli/commands/bundles.ts";
+import {
+  getBundle,
+  getBundleNames,
+  getCheckableBundleNames,
+} from "../cli/commands/bundles.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 
 /**
@@ -89,12 +93,19 @@ function getPurposes(options: DoctorOptions): CommandPurpose[] {
 /**
  * The bundles to look at, as a pipeline.
  *
+ * Everything except the ones that take a cluster apart. Their checks
+ * are real checks and they assert the opposite of what this is asking:
+ * "K3s isn't running on this node" is the whole point after an
+ * uninstall and is the first thing you would want to hear about during
+ * a check-up. Asked for by name they run as normal, because then it is
+ * a question somebody meant to put.
+ *
  * @param options
  * @returns
  */
 function getPipeline(options: DoctorOptions): string {
   if (options.bundle === undefined) {
-    return getBundleNames().join(",");
+    return getCheckableBundleNames().join(",");
   }
 
   if (getBundle(options.bundle) === undefined) {
