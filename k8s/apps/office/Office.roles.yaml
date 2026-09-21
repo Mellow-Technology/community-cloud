@@ -1,0 +1,62 @@
+# The roles applications connect to cc-postgres as.
+#
+# One DatabaseRole each, rather than a list inside the Cluster. A role
+# is a thing in its own right: it outlives any one application, it can
+# be added or taken away without editing the cluster that every other
+# application depends on, and its status is reported against itself
+# rather than buried in the cluster's.
+#
+# Each takes its password from a Secret, which has to be in the
+# kubernetes.io/basic-auth format with both a username and a password.
+# A role whose secret isn't there yet simply isn't created, and says
+# so, rather than being created without one.
+#
+# The installer makes those Secrets, with a password nobody chooses
+# and nobody has to remember — see "secrets" on the cloudnative-pg
+# package. The username in each is the role's Postgres name below
+# rather than the Secret's own name: CloudNativePG compares the two
+# and refuses the role if they differ.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+spec:
+  name: twenty_crm
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Twenty CRM
+  passwordSecret:
+    name: twenty-crm
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: mattermost
+  namespace: cc-office
+spec:
+  name: mattermost
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Mattermost
+  passwordSecret:
+    name: mattermost
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: authentik
+  namespace: cc-office
+spec:
+  name: authentik
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Authentik
+  passwordSecret:
+    name: authentik-db

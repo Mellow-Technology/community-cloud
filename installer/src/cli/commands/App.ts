@@ -1,0 +1,3 @@
+/**
+ * Install a bundlded application
+ */

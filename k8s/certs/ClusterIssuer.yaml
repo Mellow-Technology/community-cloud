@@ -1,7 +1,7 @@
 # Main certificate issuer for Community Cloud
 # This handles certifcate management for the default
 # Gateway (cc-letsencrypt-web-gateway) used in the cluster
-# and for the
+# and for office applications
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -23,15 +23,3 @@ spec:
               spec:
                 nodeSelector:
                   node-role.kubernetes.io/worker: worker
-            parentRefs:
-              # Default Gateway for applications
-              # that don't come bundled with Community Cloud
-              - name: cc-letsencrypt-web-gateway
-                namespace: community-cloud
-                kind: Gateway
-              # For applications that do come bundled
-              # with Community Cloud we use a
-              # separate Gateway
-              - name: cc-office-web-gateway
-                namespace: cc-office
-                kind: Gateway

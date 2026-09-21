@@ -2,7 +2,18 @@
 
 ## License
 
-Community Cloud is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+Community Cloud is licensed under the [MIT License](https://opensource.org/licenses/MIT),
+with one exception.
+
+### The installer is LGPL
+
+Everything under [`installer/`](./installer) is licensed under the
+**GNU Lesser General Public License, version 3 or later**
+(LGPL-3.0-or-later), and carries its own copy of both licence texts:
+see [`installer/LICENSE.md`](./installer/LICENSE.md).
+
+Everything else in this repository — the Kubernetes manifests under
+`k8s/`, the documentation, and the rest — is MIT, as below.
 
 ### MIT License
 

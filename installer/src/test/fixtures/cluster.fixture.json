@@ -1,0 +1,58 @@
+{
+  "k3s": {
+    "token": "not-a-real-token-this-is-a-fixture",
+    "kubeconfig": "/etc/rancher/k3s/k3s.yaml"
+  },
+  "values": {
+    "adminEmail": "someone@example.test",
+    "domain": {
+      "main": "example.test",
+      "auth": "auth.example.test",
+      "agent": "agent.example.test",
+      "crm": "crm.example.test",
+      "mattermost": "chat.example.test"
+    },
+    "authentik": {
+      "secretKey": "not-a-real-signing-key-this-is-a-fixture"
+    }
+  },
+  "network": {
+    "congestionControl": "bbr",
+    "cilium": {
+      "kubeProxyReplacement": true
+    },
+    "gateway": {
+      "mode": "port-forward",
+      "addresses": ["192.0.2.240-192.0.2.250"]
+    }
+  },
+  "packages": {
+    "cert-manager": true,
+    "cloudnative-pg": true
+  },
+  "storage": {
+    "minimumSizeGb": 1
+  },
+  "nodes": [
+    {
+      "name": "server-1",
+      "address": "server-1.test",
+      "username": "someone",
+      "type": "server",
+      "gateway": true,
+      "roles": ["worker", "storage-local"],
+      "region": "mob",
+      "zone": "mob-mob-0"
+    },
+    {
+      "name": "agent-1",
+      "address": "agent-1.test",
+      "username": "someone",
+      "type": "agent",
+      "gateway": false,
+      "roles": ["worker", "storage-local"],
+      "region": "mob",
+      "zone": "mob-mob-1"
+    }
+  ]
+}

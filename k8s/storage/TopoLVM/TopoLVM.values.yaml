@@ -1,0 +1,85 @@
+# Only run controller pods on storage-local nodes
+controller:
+  # The controller spreads its replicas across nodes and requires it,
+  # so asking for more than there are storage nodes leaves one pending
+  # forever and an install waiting on it. Derived from the node list:
+  # two where there are two storage nodes to put them on, one where
+  # there's only one.
+  replicaCount: {{ .Values.storageControllerReplicas }}
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local
+lvmd:
+  managed: true
+  socketName: /run/topolvm/lvmd.sock
+
+  # Every device class Community Cloud knows about. This is the
+  # catalogue, and it's the one place they're written down: the LVM
+  # bundle reads it to know which volume groups to create on a node,
+  # and the installer reads it again to work out which nodes can serve
+  # which classes.
+  #
+  # A node doesn't have to have all of them. See lvmd.additionalConfigs
+  # below for what happens when it doesn't.
+  deviceClasses:
+    # This device class is specifically for M.2 SSDs
+    # They are by far the fastest
+    - name: ssd
+      volume-group: cc-ssd-vg
+      default: true
+    # For SATA based SSD drives. These are still fast
+    # but typically slower than M.2 devices
+    - name: ssd-sata
+      volume-group: cc-ssd-sata-vg
+    # It's possible to setup LVM such that an SSD
+    # is used as a cache for an HDD. This device
+    # class is reserved for that type of setup
+    - name: ssd-cache
+      volume-group: cc-ssd-cache-vg
+    # Finally, we have a device class for spinning
+    # drives. The slowest but highest capacity
+    - name: hdd
+      volume-group: cc-hdd-vg
+
+  # Which nodes the configuration above serves.
+  #
+  # Every storage node, until the cluster knows better. Once nodes are
+  # labelled with the classes they actually have volume groups for,
+  # this narrows to the nodes that have all of them and the rest are
+  # served by additionalConfigs.
+  nodeSelector: {{ .Values.lvmdBaseSelector }}
+
+  # One extra lvmd per combination of device classes found in the
+  # cluster, each naming only the classes those nodes can serve.
+  #
+  # This exists because lvmd treats a missing volume group as fatal.
+  # cmd/lvmd/app/root.go, in the loop over config.DeviceClasses at
+  # line 89 (topolvm main, as of chart v17.2.0):
+  #
+  #     vg, err := command.SearchVolumeGroupList(vgs, dc.VolumeGroup)
+  #     if err != nil {
+  #         logger.Error(err, "volume group not found", ...)
+  #         return err        <- line 93, and line 100 for a thin pool
+  #     }
+  #
+  # Returning there fails the process, so a node missing one of four
+  # volume groups serves none of the four and CrashLoopBackOffs.
+  #
+  # Which is stricter than the rest of lvmd needs. vgService.send in
+  # internal/lvmd/vgservice.go, line 96, builds its capacity report by
+  # iterating the volume groups that exist (ListVolumeGroups, line 97)
+  # and looking up the device class for each, skipping unknown ones
+  # with ErrDeviceClassNotFound at lines 120 and 162. A class with no
+  # volume group is simply never reported, the node advertises no
+  # capacity for it, and the scheduler never places a volume there.
+  # The default class is handled the same way: res.FreeBytes is never
+  # set, so the node reports zero and is passed over.
+  #
+  # So the startup check is the only thing that objects, and turning
+  # those two returns into a warning would let a node serve what it
+  # has. Worth raising upstream — the nearest existing issue, #80, is
+  # only about the error not naming the volume group, and is closed.
+  # Until then, this.
+  additionalConfigs: {{ .Values.lvmdAdditionalConfigs }}
+node:
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local
