@@ -152,3 +152,18 @@ The blur is layered over a `background-attachment: fixed` page, which is the
 expensive combination of the two: if scrolling a long list ever feels heavy, that
 `fixed` is the first thing to drop. Nothing visible is lost under the panels,
 only in the gutters, where the texture would then scroll with the page.
+
+## License
+
+LGPL-3.0-or-later, with the rest of `headlamp/` — see
+[`../../LICENSE.md`](../../LICENSE.md).
+
+The two bundled typefaces keep their own licence, the SIL Open Font
+License 1.1: IBM Plex Sans (Copyright © 2017 IBM Corp. with Reserved Font
+Name "Plex") and Space Grotesk (Copyright 2020 The Space Grotesk Project
+Authors). Their texts are in [`licenses/`](./licenses), and the notices are
+emitted into the built `main.js` as well, since that is the form the fonts
+are distributed in.
+
+`src/headlamp-plugin.d.ts` came from the plugin scaffolding and keeps its
+Apache-2.0 header.

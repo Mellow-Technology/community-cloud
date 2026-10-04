@@ -3,14 +3,23 @@
 ## License
 
 Community Cloud is licensed under the [MIT License](https://opensource.org/licenses/MIT),
-with one exception.
+with two exceptions.
 
-### The installer is LGPL
+### The installer and the Headlamp plugins are LGPL
 
-Everything under [`installer/`](./installer) is licensed under the
-**GNU Lesser General Public License, version 3 or later**
-(LGPL-3.0-or-later), and carries its own copy of both licence texts:
-see [`installer/LICENSE.md`](./installer/LICENSE.md).
+Everything under [`installer/`](./installer) and everything under
+[`headlamp/`](./headlamp) is licensed under the **GNU Lesser General
+Public License, version 3 or later** (LGPL-3.0-or-later). Each carries
+its own copy of both licence texts:
+
+| Directory | Licence |
+|---|---|
+| [`installer/`](./installer) | [`installer/LICENSE.md`](./installer/LICENSE.md) |
+| [`headlamp/`](./headlamp) | [`headlamp/LICENSE.md`](./headlamp/LICENSE.md) |
+
+`headlamp/LICENSE.md` also lists the third-party files under it that keep
+their own licences — two typefaces under the SIL Open Font License, and
+the scaffolding each plugin was generated from, which is Apache-2.0.
 
 Everything else in this repository — the Kubernetes manifests under
 `k8s/`, the documentation, and the rest — is MIT, as below.

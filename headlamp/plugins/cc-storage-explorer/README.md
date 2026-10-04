@@ -168,3 +168,11 @@ double quotes; this plugin is checked by Headlamp's own Prettier and ESLint
 config (`@headlamp-k8s/eslint-config`, single quotes, 100 columns), which
 `npm run lint` enforces. Matching the installer's quote style would mean
 fighting the plugin's own toolchain on every save.
+
+## License
+
+LGPL-3.0-or-later, with the rest of `headlamp/` — see
+[`../../LICENSE.md`](../../LICENSE.md).
+
+`src/headlamp-plugin.d.ts` came from the plugin scaffolding and keeps its
+Apache-2.0 header.

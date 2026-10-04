@@ -534,7 +534,7 @@ evicted at all.
 ### Servers
 
 ```bash
-community-cloud uninstall cleverswing cc.config.json --server
+community-cloud uninstall node-1 cc.config.json --server
 ```
 
 A server is refused without `--server`, because uninstalling one

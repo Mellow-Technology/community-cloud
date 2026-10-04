@@ -2,6 +2,7 @@
   "name": "cc-storage-explorer",
   "version": "0.1.0",
   "description": "Shows local disk usage per node and the node-local PersistentVolumes bound to them.",
+  "license": "LGPL-3.0-or-later",
   "scripts": {
     "build": "node scripts/build.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",

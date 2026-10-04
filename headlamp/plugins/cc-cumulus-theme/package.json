@@ -2,6 +2,7 @@
   "name": "cc-cumulus-theme",
   "version": "0.1.0",
   "description": "Cumulus: the Community Cloud theme and logo for Headlamp.",
+  "license": "LGPL-3.0-or-later",
   "scripts": {
     "build": "node scripts/build.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",

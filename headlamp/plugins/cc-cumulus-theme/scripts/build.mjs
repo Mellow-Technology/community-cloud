@@ -28,6 +28,29 @@ const { pluginNameInjection } = await import(
 
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 config.plugins = [...(config.plugins || []), pluginNameInjection({ pluginName: pkg.name })];
-config.build = { ...(config.build || {}), assetsInlineLimit: 512 * 1024 };
+
+// Kept in the output rather than only in the source tree: the built file is
+// how this is actually distributed, and the Open Font License asks that its
+// notice travel with the font. Rollup leaves a `/*!` comment alone.
+const BANNER = `/*!
+ * cc-cumulus-theme — the Community Cloud theme for Headlamp
+ * Copyright (C) 2026 Code Incarnate Technologies, LLC.
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ *
+ * Bundled typefaces, both under the SIL Open Font License 1.1:
+ *   IBM Plex Sans  — Copyright (c) 2017 IBM Corp. with Reserved Font Name "Plex"
+ *   Space Grotesk  — Copyright 2020 The Space Grotesk Project Authors
+ * The licence texts are at https://scripts.sil.org/OFL and in the source tree
+ * under licenses/.
+ */`;
+
+config.build = {
+  ...(config.build || {}),
+  rollupOptions: {
+    ...(config.build?.rollupOptions || {}),
+    output: { ...(config.build?.rollupOptions?.output || {}), banner: BANNER },
+  },
+};
+config.build.assetsInlineLimit = 512 * 1024;
 
 await vite.build(config);

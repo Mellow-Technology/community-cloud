@@ -3,7 +3,7 @@
  * Look up what OpenSSH would do with a host name.
  *
  * Node addresses in a Community Cloud configuration are the names
- * people already use for their machines ("phoenix", "guandi"), and
+ * people already use for their machines ("phoenix", "node-4"), and
  * those are usually aliases defined in ~/.ssh/config rather than names
  * DNS can resolve. ssh2 knows nothing about that file, so a node that
  * "ssh <name>" reaches happily is unreachable from here.
