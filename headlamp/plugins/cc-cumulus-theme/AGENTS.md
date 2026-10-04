@@ -4,19 +4,23 @@ This file provides guidance for AI coding agents working on this Headlamp plugin
 
 ## Available Scripts
 
-The following npm scripts are available for development and testing:
+- **`npm run build`** - Build the plugin into `dist/main.js`
+- **`npm run deploy:local`** - Copy the build into Headlamp's plugin directory
+- **`npm run check`** - Type check, lint and check formatting
+- **`npm run tsc`** - Type check only
+- **`npm run lint`** / **`npm run lint:fix`** - Lint, and fix what can be fixed
+- **`npm run format`** / **`npm run format:check`** - Format, and check formatting
 
-- **`npm run format`** - Format code with prettier
-- **`npm run lint`** - Lint code with eslint for coding issues
-- **`npm run lint-fix`** - Automatically fix linting issues
-- **`npm run build`** - Build the plugin for production
-- **`npm run tsc`** - Type check code with TypeScript compiler
-- **`npm run test`** - Run tests with vitest
-- **`npm start`** - Start development server watching for changes
-- **`npm run storybook`** - Start Storybook for component development
-- **`npm run storybook-build`** - Build static Storybook
-- **`npm run i18n`** - Extract translatable strings for internationalization
-- **`npm run package`** - Create a tarball of the plugin package
+These call `tsc`, `eslint`, `prettier` and Vite directly rather than going
+through the `headlamp-plugin` CLI, which fails to start on Node 26 — it throws
+`ReferenceError: require is not defined in ES module scope` from inside yargs.
+That rules out `headlamp-plugin`'s own `start`, `package`, `storybook`, `test`
+and `i18n` commands as well, so there are no npm scripts for them here. On an
+older Node they can still be run with `npx @kinvolk/headlamp-plugin <command>`.
+
+`npm run build` is not a thin wrapper around `headlamp-plugin build`: it runs
+the same Vite config with the asset inline limit raised, which is what puts the
+bundled fonts inside `main.js`. See `scripts/build.mjs`.
 
 ## Plugin Development Resources
 
@@ -126,13 +130,13 @@ Check out production-ready plugins in `node_modules/@kinvolk/headlamp-plugin/off
 
 ## Development Workflow
 
-1. **Start Development:** Run `npm start` to watch for changes
-2. **Make Changes:** Edit files in `src/`
-3. **Type Check:** Run `npm run tsc` to check for TypeScript errors
-4. **Lint:** Run `npm run lint` to check for code quality issues
-5. **Format:** Run `npm run format` to format code
-6. **Test:** Run `npm run test` to run tests
-7. **Build:** Run `npm run build` to create production build
+1. **Make Changes:** Edit files in `src/`
+2. **Check:** Run `npm run check` (type check, lint, formatting)
+3. **Build:** Run `npm run build`
+4. **Install:** Run `npm run deploy:local`, then reload Headlamp
+
+There is no watch mode: `headlamp-plugin start` is one of the commands that
+does not run on this Node. Re-run steps 3 and 4 after a change.
 
 ## Best Practices
 
