@@ -11,7 +11,7 @@ shows the shape those values take; the real ones come from
 Nothing here needs to be applied by hand:
 
 ```bash
-community-cloud run-template embed://gateway/Gateway.yaml cc.config.json
+community-cloud run-template embed://networking/cilium/gateway/Gateway.yaml cc.config.json
 community-cloud list-embedded            # everything the installer carries
 ```
 
