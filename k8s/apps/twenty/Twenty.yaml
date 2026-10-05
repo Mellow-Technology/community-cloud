@@ -91,9 +91,10 @@ spec:
                                 key: BUCKET_HOST
                       - name: STORAGE_S3_ENDPOINT
                         value: "http://$(BUCKET_HOST):80"
-                      # Garage uses this region
+                      # SeaweedFS accepts whatever region a request is
+                      # signed for. This is the one S3 clients assume.
                       - name: STORAGE_S3_REGION
-                        value: "garage"
+                        value: "us-east-1"
                       - name: STORAGE_S3_NAME
                         valueFrom:
                             configMapKeyRef:
@@ -177,9 +178,10 @@ spec:
                                 key: BUCKET_HOST
                       - name: STORAGE_S3_ENDPOINT
                         value: "http://$(BUCKET_HOST):80"
-                      # Garage uses this region
+                      # SeaweedFS accepts whatever region a request is
+                      # signed for. This is the one S3 clients assume.
                       - name: STORAGE_S3_REGION
-                        value: "garage"
+                        value: "us-east-1"
                       - name: STORAGE_S3_NAME
                         valueFrom:
                             configMapKeyRef:

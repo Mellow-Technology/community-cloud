@@ -193,6 +193,7 @@ more than in anything else.
 | `disks` | Consider only these, by path. This **narrows** what's considered; it never overrides a safety check. |
 | `diskClasses` | Put a disk in a class other than the one its hardware suggests: `{"/dev/sdb": "hdd"}`. |
 | `minimumSizeGb` | Ignore disks smaller than this. Defaults to 1. |
+| `allocations` | How much each service claims, in whole GiB: `databaseGb` (default 30) and `objectStorageGb` (default 50). Read from the cluster-wide section only. |
 
 Disks are sorted by what they are — NVMe to `ssd`, other solid state
 to `ssd-sata`, spinning to `hdd` — and the volume group each class
@@ -209,6 +210,13 @@ group it hasn't got — which lvmd treats as fatal. That means running
 `helm-charts` when a node's disks change. See
 [Nodes that can't serve every class](../k8s/storage/README.md#nodes-that-cant-serve-every-class).
 
+`allocations` is about the volumes rather than the disks. The
+database and SeaweedFS both claim space from the same volume groups,
+so their sizes are set side by side, and together they have to fit.
+A size can be raised later and the claim will grow. A size can't be
+lowered. See
+[How much each service gets](../k8s/storage/README.md#how-much-each-service-gets).
+
 ### `packages`
 
 Which Helm charts to install. `true` is shorthand for enabled.
@@ -222,7 +230,7 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`headlamp`, `tailscale-operator`. Dependencies are worked out and
+`seaweedfs`, `headlamp`, `tailscale-operator`. Dependencies are worked out and
 installed first — TopoLVM needs cert-manager, so enabling it enables
 that too.
 

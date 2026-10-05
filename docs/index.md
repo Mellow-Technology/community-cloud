@@ -176,8 +176,8 @@ k8s/
     │   └── cc-local-ssd-fast.yaml  # Default SSD storage class
     ├── TopoLVM/
     │   └── TopoLVM.values.yaml       # TopoLVM values, and the device classes
-    ├── Garage/
-    │   └── GarageValues.yaml         # Garage S3-compatible object storage
+    ├── SeaweedFS/
+    │   └── SeaweedFS.values.yaml     # SeaweedFS S3-compatible object storage
     └── README.md
 ```
 
@@ -206,7 +206,7 @@ Open-source CRM with server + worker architecture:
 |---|---|
 | `Twenty.yaml` | Server (1 replica, port 3000) + Worker (1 replica, `yarn worker:prod`) deployments |
 | `Twenty.database.yaml` | CloudNativePG `Database` for the `twenty_crm` database |
-| `Twenty.storage.yaml` | `ObjectBucketClaim` for Garage S3 (20 Gi limit) |
+| `Twenty.storage.yaml` | `ObjectBucketClaim` for S3 storage (20 Gi limit) |
 | `Twenty.config.yaml` | ConfigMap with server URL |
 | `Twenty.install.yaml` | Init Job — runs `yarn database:init:prod` |
 | `Twenty.route.yaml` | Gateway API HTTPRoute |
@@ -215,7 +215,7 @@ Open-source CRM with server + worker architecture:
 
 #### Authentik (`apps/authentik/`)
 
-Authentication provider with Postgres backend and Garage S3 storage:
+Authentication provider with Postgres backend and SeaweedFS S3 storage:
 
 | File | Purpose |
 |---|---|
@@ -252,7 +252,7 @@ Kubernetes dashboard plugin:
 | Layer | Technology | Details |
 |---|---|---|
 | **Local SSD** | TopoLVM | Default StorageClass `cc-local-ssd-fast`, XFS, Retain policy, WaitForFirstConsumer |
-| **Object** | Garage | S3-compatible, NodePort 3900/3902, single-node StatefulSet |
+| **Object** | SeaweedFS | S3-compatible, one all-in-one pod, cluster-internal on port 8333, size from `storage.allocations.objectStorageGb` |
 
 TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache), `hdd` (cc-hdd-vg).
 
@@ -260,7 +260,7 @@ TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cac
 
 | Service | Technology | Namespace | Storage |
 |---|---|---|---|
-| cc-postgres | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | cc-office | 30Gi cc-local-ssd-fast |
+| cc-postgres | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | cc-office | `storage.allocations.databaseGb` (30Gi by default) on cc-local-ssd-fast |
 | postgis | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | default | 30Gi cc-local-ssd-fast |
 | Redis | Opstree Operator (v7.0.15) | cc-office | 5Gi cc-local-ssd-fast |
 
@@ -327,7 +327,7 @@ Build one with `community-cloud` and no arguments, and check it with
 ## Deployment Order
 
 1. **Provision nodes** — `community-cloud preflight`, then the `k3s` bundle
-2. **Storage** — TopoLVM → Garage
+2. **Storage** — TopoLVM → SeaweedFS
 3. **Networking** — Cilium → Gateway API → the cluster Gateway → cert-manager
 4. **CRDs** — Webapp, Site
 5. **Databases** — cc-postgres → Redis
@@ -356,7 +356,7 @@ Proposals, not descriptions of what exists. Each says so at the top.
 | **State Machine** | XState (command bundle) |
 | **SSH** | node-ssh, ssh2 |
 | **K8s Client** | @kubernetes/client-node |
-| **Storage** | TopoLVM, Garage |
+| **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
 | **Databases** | CloudNative-PG, Redis (Opstree) |
 | **AI** | vLLM (ROCm/AMD GPU) |

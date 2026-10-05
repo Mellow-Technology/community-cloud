@@ -199,6 +199,17 @@ const builtInPackages: PackageDefinition[] = [
     },
   },
   {
+    name: "seaweedfs",
+    description: "S3-compatible object storage, as a single pod",
+    chart: { repo: "https://seaweedfs.github.io/seaweedfs/helm", name: "seaweedfs" },
+    namespace: "seaweedfs",
+    valuesFile: "embed://storage/SeaweedFS/SeaweedFS.values.yaml",
+
+    // Its volume is a claim on "cc-local-ssd-fast", which waits
+    // forever for a class nothing has made
+    requires: ["topolvm"],
+  },
+  {
     name: "headlamp",
     description: "A web interface for the cluster",
     chart: { repo: "https://kubernetes-sigs.github.io/headlamp/", name: "headlamp" },

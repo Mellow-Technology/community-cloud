@@ -30,15 +30,13 @@ domain:
   # Picoclaw agent hostname (derived: agent.<main>)
   agent: "agent.example.com"
 
-garage:
-  replicationFactor: 3
-  persistence:
-     meta:
-       storageClass: "cc-local-ssd-fast"
-       size: 600Mi
-     data:
-       storageClass: "cc-local-ssd-fast"
-       size: 200Gi
+# -------------------------------------------------------------------
+# Storage
+# -------------------------------------------------------------------
+# How much disk the database and SeaweedFS claim isn't set here. It's
+# "storage.allocations" in the installer configuration, which hands
+# each manifest its size as databaseVolumeSize and
+# objectStorageVolumeSize. See k8s/storage/README.md.
 
 
 # -------------------------------------------------------------------

@@ -16,9 +16,10 @@ spec:
   instances: 1
   # We're not actually using PostGIS capabilities (yet)
   imageName: ghcr.io/cloudnative-pg/postgis:18-3.6-system-trixie
-  # Generally speaking for databasess we use fast SSDs
+  # Generally speaking for databasess we use fast SSDs. The size comes
+  # from "storage.allocations" in the configuration.
   storage:
-    size: 30Gi
+    size: {{ .Values.databaseVolumeSize }}
     storageClass: cc-local-ssd-fast
   postgresql:
     parameters:

@@ -93,20 +93,78 @@ for a class gets fast local storage.
 is a manual step, on the grounds that losing data is worse than
 tidying up by hand.
 
-## Object storage: Garage
+## Object storage: SeaweedFS
 
 | File | What it is |
 |---|---|
-| `Garage/GarageValues.yaml` | Garage's Helm values. |
+| `SeaweedFS/SeaweedFS.values.yaml` | SeaweedFS's Helm values. |
 
-[Garage](https://garagehq.deuxfleurs.fr) is S3-compatible object
-storage built for exactly this shape of cluster — a handful of
-machines in different places, on ordinary connections.
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) provides
+S3-compatible object storage. It's installed as the `seaweedfs`
+package, into the `seaweedfs` namespace.
 
-Currently one replica, using `cc-local-ssd-fast` for metadata and
-data, with the S3 API on NodePort 3900 and the web interface on 3902.
-For anything beyond a single node, raise `replicaCount` and set
-`replicationFactor` to match.
+This is the smallest install the chart can do: one pod running
+SeaweedFS's master, volume server, filer and S3 gateway together
+(the chart's `allInOne` mode), on one volume, keeping one copy of
+everything. It's a single point of failure on purpose, as a starting
+point that's easy to verify before anything is spread across
+machines.
+
+- **Storage**: a claim on `cc-local-ssd-fast`, sized from
+  `storage.allocations.objectStorageGb` (see below). Because the
+  volume is local, the pod stays on the node where the claim was
+  first made.
+- **Access**: S3 on `seaweedfs-all-in-one.seaweedfs.svc:8333`, inside
+  the cluster only. Authentication is on. The chart generates an
+  admin key pair and a read-only key pair into the
+  `seaweedfs-s3-secret` Secret on first install, and keeps them
+  across upgrades.
+- **Region**: SeaweedFS accepts whatever region a request is signed
+  for, so clients can leave theirs at `us-east-1`.
+
+Two settings in the values file are less obvious than they look.
+`allInOne` doesn't switch off the chart's separate master, volume
+and filer components, so the file switches them off. And
+`volume.dataDirs[0].maxVolumes` is set to `0`, which sizes the number
+of volumes to the disk. Without it, `weed server` allows 8 volumes of
+1000 MB each, which caps the store at about 8 GB however large the
+claim is.
+
+### Not yet
+
+- **Other storage classes.** It's SSD for now. SeaweedFS can tier
+  volumes by disk type, which could put cold data on `hdd`, but that
+  needs investigating first.
+- **More than one node.** That means the chart's separate components,
+  a replication setting other than `000`, and probably the
+  `storage-distributed` role.
+- **Buckets for applications.** The apps' `ObjectBucketClaim`s expect
+  a bucket provisioner and a `cc-s3-storage` class, and nothing in
+  the cluster provides either yet.
+
+## How much each service gets
+
+The services that claim local storage share the same volume groups,
+so their sizes are set together in the installer configuration
+rather than in each manifest:
+
+```json
+"storage": {
+  "allocations": { "databaseGb": 30, "objectStorageGb": 50 }
+}
+```
+
+| Key | For | Default |
+|---|---|---|
+| `databaseGb` | The shared Postgres cluster, `cc-postgres` | 30 |
+| `objectStorageGb` | SeaweedFS | 50 |
+
+The manifests read these back as `.Values.databaseVolumeSize` and
+`.Values.objectStorageVolumeSize`. The classes allow expansion, so a
+size can be raised and the claim grows to match on the next install.
+A size can't be lowered. The sum has to fit on the storage nodes. A
+claim bigger than the volume group behind it doesn't fail. It waits,
+with its pod stuck in Pending.
 
 ## Where nodes come into it
 
