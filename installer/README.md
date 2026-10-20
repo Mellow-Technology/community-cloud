@@ -344,42 +344,68 @@ the gateway mode, `networkDevices` from the shared interface list, and
 
 ### `smtp`
 
-The mail server applications send through — invoices, signing
-requests, password resets. It's assumed to be somewhere else: a
-provider, or a relay on your network. Running one well is mostly a
-matter of reputation, which a cluster in an office isn't placed to
-build.
+The mail servers applications send through — invoices, signing
+requests, password resets — and which namespaces may send at all.
+The servers are assumed to be somewhere else: a provider, or a relay on
+your network. Running one well is mostly a matter of reputation, which
+a cluster in an office isn't placed to build.
+
+Mail is configured per namespace, each with credentials of its own:
 
 ```jsonc
 "smtp": {
-  "host": "smtp.example.com",
-  "port": 587,                 // defaults to the usual port for "security"
-  "security": "starttls",      // starttls (587), tls (465) or none (25)
-  "username": "mailer@example.com",
-  "password": "…",
-  "fromDomain": "example.com"  // defaults to values.domain.main
+  // What namespaces share. Never credentials.
+  "defaults": {
+    "host": "smtp.example.com",
+    "port": 587,                 // defaults to the usual port for "security"
+    "security": "starttls",      // starttls (587), tls (465) or none (25)
+    "fromDomain": "example.com"  // defaults to values.domain.main
+  },
+  "namespaces": {
+    "cc-office": { "username": "office@example.com", "password": "…" },
+    "client-acme": {
+      "host": "smtp.acme.example", "security": "tls",
+      "username": "…", "password": "…"
+    }
+  }
 }
 ```
 
-Leave out `username` and `password` for a relay that takes mail
-without them. Applications send as an address at `fromDomain` —
-`invoices@`, `documents@`, `auth@` — so most providers will want that
-domain verified with them first.
+The reason is containment. Something that gets into a namespace — a
+compromised application, say — finds that namespace's mail credentials
+and can start sending. With credentials per namespace, the provider's
+rate limits and logs are per namespace, one namespace can be cut off
+without touching the rest, and a namespace that isn't listed has
+nothing to send with. Taking a namespace out of `namespaces` and running
+the install removes the credentials it had; the doctor reports a
+namespace still holding credentials it's no longer given. Preflight
+reports two namespaces sharing one login, and credentials put in
+`defaults`.
 
-Said once, it reaches every application in that application's own
-terms: the manifests read it as `.Values.mail`, which has every field
-whether or not there's a server, with `enabled` to tell the two apart.
-The username and password go into a `cc-smtp` Secret in each namespace
-that has something sending mail, rather than into any manifest, and
-they're applied on every install, so a changed password lands by
-changing the file and running the install again. Applications restart
-for a new server on their own; for a new password alone, restart them
-with `kubectl rollout restart`.
+It's a little protection rather than a wall: a namespace's credentials
+are readable by anything running in it, and nothing here stops a pod
+connecting to a mail server of its own.
 
-Without `smtp`, applications keep their mail to themselves — Invoice
-Ninja in its log, Documenso not at all. `community-cloud configure
---section mail` asks for it, and preflight checks it, including the
-usual mismatch of STARTTLS on port 465.
+A namespace naming its own `host` is using a different server, so it
+takes nothing from `defaults` but `fromDomain`. Leave out `username`
+and `password` for a relay that takes mail without them. Applications
+send as an address at `fromDomain` — `invoices@`, `documents@`,
+`auth@` — so most providers will want that domain verified first.
+
+Each application is told about its own namespace's server in its own
+terms: manifests read it as `.Values.mail`, rendered for the namespace
+of the package being installed (`run-template --namespace` says which
+for a manifest applied by hand). The username and password go into a
+`cc-smtp` Secret in that namespace rather than into any manifest, and
+are applied on every install, so a changed password lands by changing
+the file and running the install again. Applications restart for a new
+server on their own; for a new password alone, restart them with
+`kubectl rollout restart`.
+
+A namespace without mail keeps it to itself — Invoice Ninja in its
+log, Documenso not at all. `community-cloud configure --section mail`
+asks for all of this, and the doctor checks each namespace's server
+can be reached from the cluster.
 
 ### `dns`
 

@@ -44,6 +44,7 @@ import {
 } from "./Authentik.ts";
 import {
   buildApplyMailSecretCommand,
+  buildVerifyMailReachableCommand,
   buildVerifyMailSecretCommand,
 } from "./Mail.ts";
 import {
@@ -208,6 +209,19 @@ function getValuesPath(definition: PackageDefinition): string {
 }
 
 /**
+ * The context to render a package's templates in, which says whose
+ * namespace they're for: what's configured per namespace, mail among
+ * it, depends on that.
+ *
+ * @param definition
+ * @param context
+ * @returns
+ */
+function forNamespace(definition: PackageDefinition, context: any): any {
+  return { ...(context ?? {}), templateNamespace: definition.namespace };
+}
+
+/**
  * Whether a package has values to hand its chart, from a file or
  * built in code.
  *
@@ -266,7 +280,7 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
     stdin: (config: CloudConfig, context: any) =>
       definition.valuesSource !== undefined
         ? definition.valuesSource(config, context)
-        : renderInstallerFile(config, definition.valuesFile as string, context),
+        : renderInstallerFile(config, definition.valuesFile as string, forNamespace(definition, context)),
     output: OutputType.Raw,
   };
 }
@@ -310,7 +324,7 @@ function buildManifestCommand(
   manifest: string,
   when: string,
   render: (config: CloudConfig, context: any) => string = (config, context) =>
-    renderInstallerFile(config, manifest, context),
+    renderInstallerFile(config, manifest, forNamespace(definition, context)),
 ): CommandSpec {
   const path = `${WORK_DIR}/${toKubernetesName(definition.name)}-${getManifestName(manifest)}.yaml`;
   const quoted = quoteForShell(path);
@@ -568,7 +582,8 @@ export function buildPackageCommands(
     );
   }
 
-  // The mail server's credentials, which the manifests below refer to.
+  // The namespace's mail credentials, which the manifests below refer
+  // to — or their removal, for a namespace whose mail was taken away.
   // Once per namespace, like the generated credentials above.
   const mailKey = `mail:${definition.namespace}`;
   const sendsMail = definition.mail === true && !madeSecrets.has(mailKey);
@@ -602,6 +617,11 @@ export function buildPackageCommands(
 
   if (sendsMail) {
     commands.push(buildVerifyMailSecretCommand(definition.namespace));
+  }
+
+  // Whether the namespace's mail server can be reached at all
+  if (sendsMail) {
+    commands.push(buildVerifyMailReachableCommand(definition.namespace));
   }
 
   if (definition.chart !== undefined) {

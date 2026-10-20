@@ -12,7 +12,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "yaml";
 
-import { TerminalCommandSpec, joinCommand } from "../cli/commands/Command.ts";
+import { CommandPurpose, TerminalCommandSpec, joinCommand } from "../cli/commands/Command.ts";
 import { DnsCommands, buildDnsCredentialsManifest } from "../cli/commands/Dns.ts";
 import { buildExternalDnsValues, checkDnsConfig, getDnsInstances } from "../util/dns.ts";
 import { redact, REDACTED } from "../util/redact.ts";
@@ -228,5 +228,39 @@ describe("the bundle", () => {
     assert.equal(manifest.type, "Opaque");
     assert.equal(manifest.metadata.namespace, "external-dns");
     assert.deepEqual(manifest.stringData, { CF_API_TOKEN: "t" });
+  });
+});
+
+describe("what a check-up asks about DNS", () => {
+  it("checks every account's credentials, without reading them out", async () => {
+    const config = await loadFixtureConfig();
+    const verify = DnsCommands(config).find((each) => each.name === "verify-dns-credentials-acme") as TerminalCommandSpec;
+    const text = joinCommand(verify.command as string[]);
+
+    assert.equal(verify.purpose, CommandPurpose.Verify);
+    assert.match(text, /\{\.data\.AWS_ACCESS_KEY_ID\}/);
+    assert.match(text, /\{\.data\.AWS_SECRET_ACCESS_KEY\}/);
+    assert.ok(!text.includes("not-a-real"));
+  });
+
+  it("checks each instance is still running, not just that Helm installed it", async () => {
+    const config = await loadFixtureConfig();
+    const names = DnsCommands(config).map((each) => each.name);
+
+    assert.ok(names.includes("verify-rollout-external-dns-office-cc-office"));
+    assert.ok(names.includes("verify-rollout-external-dns-acme-client-acme"));
+  });
+
+  it("reports what each instance's names resolve to, without failing on it", async () => {
+    const config = await loadFixtureConfig();
+    const inspect = DnsCommands(config).find((each) => each.name === "inspect-dns-external-dns-office-cc-office") as TerminalCommandSpec;
+    const text = joinCommand(inspect.command as string[]);
+
+    assert.equal(inspect.purpose, CommandPurpose.Inspect);
+    assert.match(text, /kubectl -n cc-office get httproutes/);
+    assert.match(text, /example\.test\|\*\.example\.test/);
+    // The office gave clients.example.test away, so it doesn't report on it
+    assert.match(text, /clients\.example\.test\|\*\.clients\.example\.test\) continue/);
+    assert.match(text, /203\.0\.113\.10/);
   });
 });

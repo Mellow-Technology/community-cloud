@@ -1,7 +1,7 @@
 /**
  * @file
- * Putting the mail server's credentials where applications can read
- * them.
+ * Putting a namespace's mail credentials where its applications can
+ * read them, and taking them away again.
  *
  * The rest of the mail configuration reaches applications through
  * their templates — see util/mail.ts. The username and password go a
@@ -9,16 +9,22 @@
  * aren't written into a ConfigMap anyone in the namespace can read or
  * into a rendered manifest left on the control plane.
  *
- * Unlike the generated credentials in Secrets.ts, this one is applied
+ * Unlike the generated credentials in Secrets.ts, these are applied
  * rather than created once. Those are made up by the installer and
  * nothing else knows them, so writing them again would break whatever
- * is using them. This one comes from the configuration, which is where
- * it's changed: a new password goes in the file, the install is run,
- * and the cluster has it.
+ * is using them. These come from the configuration, which is where
+ * they're changed: a new password goes in the file, the install is
+ * run, and the namespace has it.
+ *
+ * And which is where they're revoked. Mail is per namespace so that a
+ * namespace sending what it shouldn't can be cut off on its own, and
+ * cutting it off means taking its entry out of the configuration — so
+ * a namespace with no entry has its credentials removed, not merely
+ * left where they were. Only a Secret the installer made is removed;
+ * one someone put there by hand is theirs.
  *
  * A package says it sends mail with "mail: true", and gets this ahead
- * of its manifests. Nothing happens when the configuration has no
- * mail server.
+ * of its manifests.
  */
 import { stringify } from "yaml";
 
@@ -31,32 +37,36 @@ import {
 import { BASIC_AUTH } from "./Secrets.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
-import { MAIL_SECRET, buildMailValues, getMailConfig } from "../../util/mail.ts";
+import { MAIL_SECRET, buildMailValues, getNamespaceMail } from "../../util/mail.ts";
 import { quoteForShell } from "../../util/shell.ts";
 
+// What marks a Secret as the installer's to remove
+const MANAGED_LABEL = "app.kubernetes.io/managed-by";
+const MANAGED_VALUE = "community-cloud";
+
 /**
- * Whether the configuration has a mail server.
+ * Whether a namespace was given mail.
  *
  * @param config
+ * @param namespace
  * @returns
  */
-function hasMail(config: CloudConfig): boolean {
-  return buildMailValues(config.getConfig()).enabled;
+function hasMail(config: CloudConfig, namespace: string): boolean {
+  return buildMailValues(config.getConfig(), namespace).enabled;
 }
 
 /**
- * The Secret holding the mail server's credentials.
+ * The Secret holding a namespace's mail credentials.
  *
  * Both keys are always there, empty for a relay that needs no login.
- * An application handed an empty username doesn't try to log in, and
- * one handed no key at all fails to start.
+ * An application handed an empty username doesn't try to log in.
  *
  * @param config
  * @param namespace
  * @returns
  */
 export function buildMailSecretManifest(config: CloudConfig, namespace: string): string {
-  const mail = getMailConfig(config.getConfig()) ?? {};
+  const mail = getNamespaceMail(config.getConfig(), namespace) ?? {};
 
   return stringify({
     apiVersion: "v1",
@@ -64,7 +74,7 @@ export function buildMailSecretManifest(config: CloudConfig, namespace: string):
     metadata: {
       name: MAIL_SECRET,
       namespace,
-      labels: { "app.kubernetes.io/managed-by": "community-cloud" },
+      labels: { [MANAGED_LABEL]: MANAGED_VALUE },
     },
     type: BASIC_AUTH,
     stringData: {
@@ -75,10 +85,22 @@ export function buildMailSecretManifest(config: CloudConfig, namespace: string):
 }
 
 /**
- * Put the mail server's credentials in a namespace.
+ * The shell that reads whether the namespace's Secret is the
+ * installer's, into "$managed".
+ *
+ * @param namespace
+ * @returns
+ */
+function readManaged(namespace: string): string {
+  return `managed=$(kubectl -n ${quoteForShell(namespace)} get secret ${MAIL_SECRET} -o jsonpath='{.metadata.labels.${MANAGED_LABEL.replace(/\./g, "\\.")}}' 2>/dev/null)`;
+}
+
+/**
+ * Give a namespace its mail credentials, or take them away.
  *
  * Over standard input, like every other credential, so the password is
- * never on a command line.
+ * never on a command line. Nothing goes over it when they're being
+ * taken away, and the command reads nothing.
  *
  * @param namespace
  * @returns
@@ -86,23 +108,38 @@ export function buildMailSecretManifest(config: CloudConfig, namespace: string):
 export function buildApplyMailSecretCommand(namespace: string): CommandSpec {
   return {
     name: `apply-smtp-${namespace}`,
-    description: `Give applications in ${namespace} the mail server's credentials`,
+    description: `Give ${namespace} its mail credentials, or remove them if it has none`,
     purpose: CommandPurpose.Apply,
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    skipWhen: (config: CloudConfig) => !hasMail(config),
-    command: [
-      // Apply, because the configuration is where this is changed
-      `kubectl apply -f - || { echo "Couldn't put the mail server's credentials in ${namespace}" >&2; exit 1; }`,
-    ],
-    stdin: (config: CloudConfig) => buildMailSecretManifest(config, namespace),
+    command: (config: CloudConfig) =>
+      hasMail(config, namespace)
+        ? [
+            // Apply, because the configuration is where this is changed
+            `kubectl apply -f - || { echo "Couldn't put the mail credentials in ${namespace}" >&2; exit 1; }`,
+          ]
+        : [
+            readManaged(namespace),
+            `if [ "$managed" = "${MANAGED_VALUE}" ]`,
+            "then",
+            `  kubectl -n ${quoteForShell(namespace)} delete secret ${MAIL_SECRET} || { echo "${namespace} has no mail in the configuration, and its old credentials couldn't be removed" >&2; exit 1; }`,
+            `  echo "${namespace} has no mail in the configuration, so its credentials were removed"`,
+            "else",
+            `  echo "${namespace} has no mail in the configuration, so it gets no credentials"`,
+            "fi",
+          ],
+    stdin: (config: CloudConfig) =>
+      hasMail(config, namespace) ? buildMailSecretManifest(config, namespace) : "",
     output: OutputType.Raw,
   };
 }
 
 /**
- * Check the credentials are there, when there's a mail server to have
- * them for.
+ * Check a namespace has the credentials it was given, and none it
+ * wasn't.
+ *
+ * Credentials the installer left in a namespace whose mail was taken
+ * away are a failure: that namespace can still send.
  *
  * @param namespace
  * @returns
@@ -110,15 +147,57 @@ export function buildApplyMailSecretCommand(namespace: string): CommandSpec {
 export function buildVerifyMailSecretCommand(namespace: string): CommandSpec {
   return {
     name: `verify-smtp-${namespace}`,
-    description: `Verify applications in ${namespace} have the mail server's credentials`,
+    description: `Verify ${namespace} has the mail credentials it was given, and none it wasn't`,
     purpose: CommandPurpose.Verify,
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    skipWhen: (config: CloudConfig) => !hasMail(config),
-    command: [
-      `kubectl -n ${quoteForShell(namespace)} get secret ${MAIL_SECRET} > /dev/null 2>&1 || { echo "There's a mail server in the configuration and no ${MAIL_SECRET} in ${namespace}. Run the install again." >&2; exit 1; }`,
-      `echo "${MAIL_SECRET} is in ${namespace}"`,
-    ],
+    command: (config: CloudConfig) =>
+      hasMail(config, namespace)
+        ? [
+            `kubectl -n ${quoteForShell(namespace)} get secret ${MAIL_SECRET} > /dev/null 2>&1 || { echo "${namespace} has mail in the configuration and no ${MAIL_SECRET}. Run the install again." >&2; exit 1; }`,
+            `echo "${namespace} has its mail credentials"`,
+          ]
+        : [
+            readManaged(namespace),
+            `[ "$managed" != "${MANAGED_VALUE}" ] || { echo "${namespace} has no mail in the configuration, and still has the credentials it used to — it can still send. Run the install again to remove them." >&2; exit 1; }`,
+            `echo "${namespace} has no mail, and no credentials"`,
+          ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Check a namespace's mail server can be reached.
+ *
+ * Asked from the control plane, which leaves the cluster the way the
+ * applications' pods do. Plenty of networks block outgoing mail ports
+ * — 25 most of all — and nothing else would say so: an application
+ * that can't connect logs it somewhere nobody is looking and carries
+ * on. A connection that opens is all this asks; whether the server
+ * then accepts the login is for the application to find out.
+ *
+ * Bash's /dev/tcp rather than a tool that may not be installed,
+ * bounded by timeout so a port that drops packets rather than
+ * refusing them doesn't hang the check-up.
+ *
+ * @param namespace
+ * @returns
+ */
+export function buildVerifyMailReachableCommand(namespace: string): CommandSpec {
+  return {
+    name: `verify-smtp-reachable-${namespace}`,
+    description: `Verify ${namespace}'s mail server can be reached from the cluster`,
+    purpose: CommandPurpose.Verify,
+    runOn: CommandTarget.ControlPlane,
+    skipWhen: (config: CloudConfig) => !hasMail(config, namespace),
+    command: (config: CloudConfig) => {
+      const { host, port } = buildMailValues(config.getConfig(), namespace);
+
+      return [
+        `timeout 5 bash -c ${quoteForShell(`exec 3<>/dev/tcp/${host}/${port}`)} 2> /dev/null || { echo "Couldn't connect to ${namespace}'s mail server at ${host}:${port} from the control plane. If it's right, something between here and there is blocking the port — mail ports are often blocked by home and cloud networks alike." >&2; exit 1; }`,
+        `echo "${namespace}'s mail server at ${host}:${port} answers"`,
+      ];
+    },
     output: OutputType.Raw,
   };
 }

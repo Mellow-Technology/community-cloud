@@ -19,11 +19,23 @@
     }
   },
   "smtp": {
-    "host": "smtp.example.test",
-    "port": 587,
-    "security": "starttls",
-    "username": "fixture-mailer",
-    "password": "not-a-real-password-this-is-a-fixture"
+    "defaults": {
+      "host": "smtp.example.test",
+      "port": 587,
+      "security": "starttls"
+    },
+    "namespaces": {
+      "cc-office": {
+        "username": "fixture-office-mailer",
+        "password": "not-a-real-password-this-is-a-fixture"
+      },
+      "client-acme": {
+        "host": "smtp.acme.example.test",
+        "security": "tls",
+        "username": "fixture-acme-mailer",
+        "password": "not-a-real-acme-password"
+      }
+    }
   },
   "dns": {
     "target": "203.0.113.10",

@@ -106,15 +106,16 @@ installer generates.
 
 ## Mail
 
-Applications that send email read the cluster's mail server, from
-`smtp` in the configuration, as `.Values.mail`: `enabled`, `host`,
-`port`, `fromDomain`, and the kind of TLS in the forms different
-applications want it — `scheme` (`smtps` or `smtp`), `implicitTls`,
-`startTls`, `ignoreTls`. The username and password are in the
-`cc-smtp` Secret in the application's namespace; read them with
-`optional: true`, so the application still starts on a cluster with
-no mail server. A pod annotation of `.Values.mail.revision` restarts
-it when the server changes.
+Mail is configured per namespace, under `smtp` in the configuration.
+Applications that send email read their namespace's server as
+`.Values.mail` — the installer renders a package's manifests for the
+package's namespace — with `enabled`, `host`, `port`, `fromDomain`, and
+the kind of TLS in the forms different applications want it: `scheme`
+(`smtps` or `smtp`), `implicitTls`, `startTls`, `ignoreTls`. The
+username and password are in the `cc-smtp` Secret in the namespace;
+read them with `optional: true`, so the application still starts in a
+namespace given no mail. A pod annotation of `.Values.mail.revision`
+restarts it when the server changes.
 
 ## Single sign on
 

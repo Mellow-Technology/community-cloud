@@ -18,7 +18,12 @@ import assert from "node:assert/strict";
 
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose, PROMPT_PURPOSES, isReadOnly } from "../cli/commands/Command.ts";
-import { bundles, getBundleCommands } from "../cli/commands/bundles.ts";
+import {
+  bundles,
+  getBundle,
+  getBundleCommands,
+  getCheckableBundleNames,
+} from "../cli/commands/bundles.ts";
 import { fixtureNode, loadFixtureConfig, withoutConsole } from "./helpers.ts";
 
 // Anything that would change a node or a cluster
@@ -132,5 +137,25 @@ describe("what the doctor would run", () => {
       .map(({ bundle }) => bundle);
 
     assert.deepEqual([...new Set(waiting)], []);
+  });
+});
+
+describe("what a check-up of everything asks about", () => {
+  it("leaves out the bundles another bundle's checks already cover", () => {
+    // Their checks are the package's own, which helm-charts asks for
+    // every package enabled — and for one that isn't, they'd report a
+    // cluster without Invoice Ninja as a broken Invoice Ninja
+    const checkable = getCheckableBundleNames();
+
+    for (const name of ["invoice-ninja", "documenso"]) {
+      assert.ok(!checkable.includes(name), name);
+      assert.ok(getBundle(name) !== undefined, `${name} can still be asked about by name`);
+    }
+  });
+
+  it("asks about the applications through helm-charts, and about DNS", () => {
+    const checkable = getCheckableBundleNames();
+    assert.ok(checkable.includes("helm-charts"));
+    assert.ok(checkable.includes("dns"));
   });
 });

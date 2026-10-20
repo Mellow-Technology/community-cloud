@@ -102,6 +102,14 @@ cluster in service.
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
+`invoice-ninja` and `documenso` install one package on its own. Their
+checks are that package's, which `helm-charts` already asks for every
+package the configuration enables, so a check-up of everything leaves
+them out — otherwise a cluster without Invoice Ninja would be reported
+as having a broken one. `doctor --bundle invoice-ninja` still asks.
+A package installed with `run-bundle` alone should be enabled under
+`packages` too, so the doctor knows to ask about it.
+
 The bundles below take a cluster apart rather than building one. Their
 checks assert the opposite of a working cluster — "K3s isn't running
 here", "this node isn't a member" — so a check-up that asks about

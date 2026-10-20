@@ -103,6 +103,99 @@ export function buildDnsPackage(instance: DnsInstance): PackageDefinition {
     version: EXTERNAL_DNS_CHART_VERSION,
     namespace: DNS_NAMESPACE,
     valuesSource: () => buildExternalDnsValues(instance),
+
+    // Helm calls a release deployed once its pod has started, and an
+    // ExternalDNS with a token the provider refuses starts perfectly
+    // well. This at least says whether it's still running, rather
+    // than restarting.
+    rollout: [`deployment/${instance.release}`],
+  };
+}
+
+/**
+ * Check a provider account's credentials are all there.
+ *
+ * Only that each key is present and not empty. Whether the provider
+ * accepts them is the provider's to say, in the instance's own log.
+ *
+ * @param provider
+ * @returns
+ */
+function buildVerifyCredentialsCommand(provider: DnsProvider): CommandSpec {
+  const secret = getCredentialsSecretName(provider);
+
+  return {
+    name: `verify-dns-credentials-${provider.name}`,
+    description: `Verify the ${provider.name} DNS credentials are in place`,
+    purpose: CommandPurpose.Verify,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      "failed=",
+      ...Object.keys(provider.credentials ?? {}).map(
+        (key) =>
+          `[ -n "$(kubectl -n ${DNS_NAMESPACE} get secret ${secret} -o jsonpath='{.data.${key}}' 2>/dev/null)" ] || { echo "  ${secret} has no ${key}" >&2; failed=yes; }`,
+      ),
+      `[ -z "$failed" ] || { echo "The ${provider.name} DNS credentials aren't all there. Run the dns bundle again." >&2; exit 1; }`,
+      `echo "The ${provider.name} DNS credentials are in ${DNS_NAMESPACE}"`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * A shell pattern matching a domain and everything under it.
+ *
+ * @param domains
+ * @returns
+ */
+function domainPattern(domains: string[]): string {
+  return domains.flatMap((domain) => [domain, `*.${domain}`]).join("|");
+}
+
+/**
+ * Say what the names an instance publishes resolve to.
+ *
+ * A report rather than a check. Whether a name resolves, and to what,
+ * depends on where it's asked from — the control plane's resolver may
+ * cache, or answer from a split horizon — and on how long ago the
+ * record changed. What it's good for is the question someone running
+ * this actually has: is the name there, and is it pointing where it
+ * should.
+ *
+ * The names are the hostnames on the routes in the instance's
+ * namespace that fall within its domains, which is what it publishes.
+ *
+ * @param instance
+ * @returns
+ */
+function buildInspectNamesCommand(instance: DnsInstance): CommandSpec {
+  const { provider } = instance;
+  const excluded = provider.excludeDomains ?? [];
+
+  return {
+    name: `inspect-dns-${instance.release}`,
+    description: `Report what the names ${instance.release} publishes resolve to`,
+    purpose: CommandPurpose.Inspect,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      `hosts=$(kubectl -n ${instance.namespace} get httproutes -o jsonpath='{range .items[*]}{range .spec.hostnames[*]}{@}{"\\n"}{end}{end}' 2>/dev/null | sort -u)`,
+      'found=',
+      'for host in $hosts',
+      "do",
+      `  case "$host" in ${domainPattern(provider.domains)}) ;; *) continue ;; esac`,
+      ...(excluded.length > 0 ? [`  case "$host" in ${domainPattern(excluded)}) continue ;; esac`] : []),
+      "  found=yes",
+      `  addresses=$(getent ahosts "$host" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\\n' ' ')`,
+      `  echo "  $host → \${addresses:-nothing yet}"`,
+      "done",
+      `[ -n "$found" ] || echo "  Nothing in ${instance.namespace} is routed on ${provider.domains.join(", ")} yet"`,
+      ...(instance.target !== undefined
+        ? [`echo "  Each should resolve to ${instance.target}"`]
+        : []),
+    ],
+    output: OutputType.Raw,
   };
 }
 
@@ -135,15 +228,26 @@ export function DnsCommands(config: CloudConfig): CommandSpec[] {
 
   const commands: CommandSpec[] = [checkHelmAvailableCommand];
 
-  for (const provider of getDnsConfig(raw)?.providers ?? []) {
-    if (Object.keys(provider.credentials ?? {}).length > 0) {
-      commands.push(buildApplyCredentialsCommand(provider));
-    }
+  const providers = (getDnsConfig(raw)?.providers ?? []).filter(
+    (provider) => Object.keys(provider.credentials ?? {}).length > 0,
+  );
+
+  for (const provider of providers) {
+    commands.push(buildApplyCredentialsCommand(provider));
   }
 
   const made = new Set<string>();
   for (const instance of instances) {
     commands.push(...buildPackageCommands(buildDnsPackage(instance), made));
+  }
+
+  // What a check-up asks: credentials, then what's being published
+  for (const provider of providers) {
+    commands.push(buildVerifyCredentialsCommand(provider));
+  }
+
+  for (const instance of instances) {
+    commands.push(buildInspectNamesCommand(instance));
   }
 
   return commands;

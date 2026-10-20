@@ -1,23 +1,28 @@
 /**
  * @file
- * The mail server, said once and heard by every application.
+ * Mail, configured per namespace.
  *
- * Most of what can go wrong with mail goes wrong silently: an
- * application configured for TLS talking to a server waiting for
- * STARTTLS hangs until it times out, and one with no mail server logs
- * what it would have sent and carries on. So what's guarded here is
- * the translation — that one "smtp" section becomes the right setting
- * in each application's own vocabulary — and that the password only
- * ever travels the way passwords are meant to.
+ * Two things are guarded here. One is the translation — that a
+ * namespace's mail settings become the right setting in each
+ * application's own vocabulary, since most mail failures are silent.
+ * The other is the separation, which is why mail is per namespace at
+ * all: a namespace gets its own credentials and nobody else's, a
+ * namespace given none has none, and one whose mail is taken away
+ * loses the credentials it had.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { TerminalCommandSpec, joinCommand } from "../cli/commands/Command.ts";
 import { buildPackageCommands } from "../cli/commands/Helm.ts";
-import { buildApplyMailSecretCommand, buildMailSecretManifest } from "../cli/commands/Mail.ts";
+import {
+  buildApplyMailSecretCommand,
+  buildMailSecretManifest,
+  buildVerifyMailReachableCommand,
+  buildVerifyMailSecretCommand,
+} from "../cli/commands/Mail.ts";
 import { getPackage } from "../cli/commands/packages.ts";
-import { buildMailValues, checkMailConfig } from "../util/mail.ts";
+import { buildMailValues, checkMailConfig, getNamespaceMail } from "../util/mail.ts";
 import { redact, REDACTED } from "../util/redact.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { configFrom, loadFixtureConfig } from "./helpers.ts";
@@ -25,15 +30,74 @@ import { configFrom, loadFixtureConfig } from "./helpers.ts";
 const BASE = { values: { domain: { main: "example.test" } } };
 
 /**
- * The derived values for an smtp section.
+ * A configuration with this smtp section.
  */
-function valuesFor(smtp: Record<string, unknown> | undefined) {
-  return buildMailValues({ ...BASE, ...(smtp !== undefined ? { smtp } : {}) });
+function withMail(smtp: Record<string, unknown>) {
+  return { ...BASE, smtp };
 }
 
-describe("what templates are told about mail", () => {
-  it("says mail is off when there's no server, and still gives every field", () => {
-    const values = valuesFor(undefined);
+const SHARED = {
+  defaults: { host: "smtp.example.test" },
+  namespaces: {
+    "cc-office": { username: "office", password: "office-password" },
+    "client-acme": { host: "smtp.acme.test", security: "tls", username: "acme", password: "acme-password" },
+  },
+};
+
+/**
+ * The command's shell, for a configuration.
+ */
+function shellOf(command: TerminalCommandSpec, config: ReturnType<typeof configFrom>): string {
+  return joinCommand(
+    typeof command.command === "function" ? command.command(config, {}) : command.command,
+  );
+}
+
+describe("whose mail a namespace gets", () => {
+  it("gets the shared server with its own credentials", () => {
+    const mail = getNamespaceMail(withMail(SHARED), "cc-office")!;
+
+    assert.equal(mail.host, "smtp.example.test");
+    assert.equal(mail.username, "office");
+  });
+
+  it("can send through a server of its own", () => {
+    assert.equal(getNamespaceMail(withMail(SHARED), "client-acme")!.host, "smtp.acme.test");
+  });
+
+  it("takes nothing about the shared server's connection when it names its own", () => {
+    const smtp = {
+      defaults: { host: "smtp.example.test", port: 2525, fromDomain: "example.test" },
+      namespaces: { a: { host: "own.test", security: "tls" } },
+    };
+    const mail = getNamespaceMail(withMail(smtp), "a")!;
+
+    assert.equal(mail.port, undefined);
+    assert.equal(buildMailValues(withMail(smtp), "a").port, "465");
+    assert.equal(mail.fromDomain, "example.test");
+  });
+
+  it("gets none when it isn't given any", () => {
+    assert.equal(getNamespaceMail(withMail(SHARED), "somewhere-else"), undefined);
+    assert.equal(buildMailValues(withMail(SHARED), "somewhere-else").enabled, false);
+  });
+
+  it("never takes credentials from the shared server", () => {
+    const smtp = { defaults: { host: "h", username: "everyone", password: "p" }, namespaces: { a: {} } };
+    const mail = getNamespaceMail(withMail(smtp), "a")!;
+
+    assert.equal(mail.username, undefined);
+    assert.equal(mail.password, undefined);
+  });
+
+  it("is off for a template rendered for no namespace in particular", () => {
+    assert.equal(buildMailValues(withMail(SHARED)).enabled, false);
+  });
+});
+
+describe("what templates are told about a namespace's mail", () => {
+  it("says mail is off when there's none, and still gives every field", () => {
+    const values = buildMailValues(BASE, "cc-office");
 
     assert.equal(values.enabled, false);
     assert.equal(values.fromDomain, "example.test");
@@ -43,7 +107,7 @@ describe("what templates are told about mail", () => {
   });
 
   it("takes STARTTLS on 587 as the default", () => {
-    const values = valuesFor({ host: "smtp.example.test" });
+    const values = buildMailValues(withMail(SHARED), "cc-office");
 
     assert.equal(values.port, "587");
     assert.equal(values.startTls, "true");
@@ -52,94 +116,136 @@ describe("what templates are told about mail", () => {
   });
 
   it("says TLS from the start in each application's terms", () => {
-    const values = valuesFor({ host: "smtp.example.test", security: "tls" });
+    const values = buildMailValues(withMail(SHARED), "client-acme");
 
     assert.equal(values.port, "465");
     assert.equal(values.implicitTls, "true");
-    assert.equal(values.startTls, "false");
     assert.equal(values.scheme, "smtps");
   });
 
   it("only turns TLS off when asked to", () => {
-    assert.equal(valuesFor({ host: "relay.test", security: "none" }).ignoreTls, "true");
-    assert.equal(valuesFor({ host: "relay.test" }).ignoreTls, "false");
-  });
-
-  it("sends from the domain it's given", () => {
-    assert.equal(valuesFor({ host: "smtp.example.test", fromDomain: "mail.example.test" }).fromDomain, "mail.example.test");
+    const relay = withMail({ defaults: { host: "relay.test", security: "none" }, namespaces: { a: {} } });
+    assert.equal(buildMailValues(relay, "a").ignoreTls, "true");
+    assert.equal(buildMailValues(withMail(SHARED), "cc-office").ignoreTls, "false");
   });
 
   it("restarts applications for a new server, without deriving anything from the password", () => {
-    const one = valuesFor({ host: "smtp.example.test", username: "u", password: "first" });
-    const samePassword = valuesFor({ host: "smtp.example.test", username: "u", password: "second" });
-    const otherHost = valuesFor({ host: "other.example.test", username: "u", password: "first" });
+    const one = buildMailValues(withMail(SHARED), "cc-office");
+    const newPassword = buildMailValues(
+      withMail({ ...SHARED, namespaces: { "cc-office": { username: "office", password: "changed" } } }),
+      "cc-office",
+    );
+    const newHost = buildMailValues(
+      withMail({ ...SHARED, defaults: { host: "other.example.test" } }),
+      "cc-office",
+    );
 
-    assert.equal(one.revision, samePassword.revision);
-    assert.notEqual(one.revision, otherHost.revision);
+    assert.equal(one.revision, newPassword.revision);
+    assert.notEqual(one.revision, newHost.revision);
   });
 });
 
 describe("checking an smtp section", () => {
-  const problems = (smtp: Record<string, unknown>) => checkMailConfig({ smtp });
-
-  it("accepts a complete one", () => {
-    assert.deepEqual(problems({ host: "smtp.example.test", username: "u", password: "p" }), []);
+  it("accepts namespaces with credentials of their own", () => {
+    assert.deepEqual(checkMailConfig(withMail(SHARED)), []);
   });
 
   it("accepts a relay that takes mail without logging in", () => {
-    assert.deepEqual(problems({ host: "relay.test", port: 25, security: "none" }), []);
+    assert.deepEqual(
+      checkMailConfig(withMail({ defaults: { host: "relay.test", port: 25, security: "none" }, namespaces: { a: {} } })),
+      [],
+    );
   });
 
   it("has nothing to say when there's no section", () => {
-    assert.deepEqual(checkMailConfig({}), []);
+    assert.deepEqual(checkMailConfig(BASE), []);
   });
 
-  it("asks for a host", () => {
-    assert.equal(problems({ username: "u" }).length, 1);
+  it("catches one login shared by two namespaces", () => {
+    const shared = withMail({
+      defaults: { host: "smtp.example.test" },
+      namespaces: { a: { username: "same", password: "p" }, b: { username: "same", password: "p" } },
+    });
+
+    assert.match(checkMailConfig(shared).join(), /same user/);
+  });
+
+  it("refuses credentials in the defaults", () => {
+    const leaky = withMail({ defaults: { host: "h", username: "u", password: "p" }, namespaces: { a: { username: "a", password: "p" } } });
+    assert.match(checkMailConfig(leaky).join(), /has credentials in it/);
+  });
+
+  it("explains the cluster-wide shape it used to have", () => {
+    assert.match(checkMailConfig(withMail({ host: "smtp.example.test" })).join(), /per namespace/);
+  });
+
+  it("asks for a host when neither the namespace nor the defaults has one", () => {
+    assert.match(checkMailConfig(withMail({ namespaces: { a: {} } })).join(), /nowhere to send/);
+  });
+
+  it("asks for at least one namespace", () => {
+    assert.match(checkMailConfig(withMail({ defaults: { host: "h" } })).join(), /gives no namespace mail/);
   });
 
   it("catches STARTTLS on the TLS port, which hangs rather than failing", () => {
-    assert.match(problems({ host: "smtp.example.test", port: 465 }).join(), /465/);
+    assert.match(checkMailConfig(withMail({ namespaces: { a: { host: "h", port: 465 } } })).join(), /465/);
   });
 
   it("catches half a login", () => {
-    assert.match(problems({ host: "smtp.example.test", username: "u" }).join(), /no password/);
+    assert.match(checkMailConfig(withMail({ namespaces: { a: { host: "h", username: "u" } } })).join(), /no password/);
   });
 
   it("won't send a password in the clear", () => {
-    assert.match(problems({ host: "r.test", security: "none", username: "u", password: "p" }).join(), /in the clear/);
-  });
-
-  it("names the kinds of security there are", () => {
-    assert.match(problems({ host: "smtp.example.test", security: "ssl" }).join(), /starttls, tls, none/);
+    assert.match(
+      checkMailConfig(withMail({ namespaces: { a: { host: "h", security: "none", username: "u", password: "p" } } })).join(),
+      /in the clear/,
+    );
   });
 });
 
-describe("the credentials", () => {
+describe("a namespace's credentials", () => {
   it("are kept out of what the cluster records about itself", () => {
-    const redacted = redact({ smtp: { host: "smtp.example.test", password: "p" } });
-    assert.equal(redacted.smtp.password, REDACTED);
-    assert.equal(redacted.smtp.host, "smtp.example.test");
+    const redacted = redact({ smtp: SHARED });
+    assert.equal(redacted.smtp.namespaces["cc-office"].password, REDACTED);
   });
 
-  it("travel on standard input, and are applied so a new password lands", async () => {
-    const config = await loadFixtureConfig();
+  it("are its own, and nobody else's", () => {
+    const config = configFrom(withMail(SHARED));
+    const office = buildMailSecretManifest(config, "cc-office");
+
+    assert.ok(office.includes("office-password"));
+    assert.ok(!office.includes("acme-password"));
+  });
+
+  it("travel on standard input, and are applied so a new password lands", () => {
+    const config = configFrom(withMail(SHARED));
     const command = buildApplyMailSecretCommand("cc-office") as TerminalCommandSpec;
-    const text = joinCommand(command.command as string[]);
-    const payload = (command.stdin as Function)(config);
 
-    assert.ok(payload.includes("not-a-real-password-this-is-a-fixture"));
-    assert.ok(!text.includes("not-a-real-password"));
-    assert.match(text, /kubectl apply -f -/);
+    assert.ok((command.stdin as Function)(config).includes("office-password"));
+    assert.ok(!shellOf(command, config).includes("office-password"));
+    assert.match(shellOf(command, config), /kubectl apply -f -/);
   });
 
-  it("are skipped when there's no mail server", () => {
-    const command = buildApplyMailSecretCommand("cc-office");
-    assert.equal(command.skipWhen!(configFrom(BASE), {}), true);
+  it("are removed from a namespace whose mail was taken away", () => {
+    const config = configFrom(withMail(SHARED));
+    const text = shellOf(buildApplyMailSecretCommand("client-other") as TerminalCommandSpec, config);
+
+    assert.match(text, /delete secret cc-smtp/);
+    assert.ok(!text.includes("apply"));
+  });
+
+  it("are only removed when the installer put them there", () => {
+    const config = configFrom(BASE);
+    const text = shellOf(buildApplyMailSecretCommand("cc-office") as TerminalCommandSpec, config);
+
+    assert.match(text, /if \[ "\$managed" = "community-cloud" \]/);
   });
 
   it("leave both keys there, empty, for a relay that needs no login", () => {
-    const manifest = buildMailSecretManifest(configFrom({ ...BASE, smtp: { host: "relay.test" } }), "cc-office");
+    const manifest = buildMailSecretManifest(
+      configFrom(withMail({ defaults: { host: "relay.test" }, namespaces: { "cc-office": {} } })),
+      "cc-office",
+    );
     assert.match(manifest, /username: ""/);
     assert.match(manifest, /password: ""/);
   });
@@ -147,7 +253,7 @@ describe("the credentials", () => {
 
 describe("applications that send mail", () => {
   for (const name of ["invoice-ninja", "documenso"]) {
-    it(`${name} is given the credentials before it starts`, () => {
+    it(`${name} is given its namespace's credentials before it starts`, () => {
       const names = buildPackageCommands(getPackage(name)!).map((command) => command.name);
       const firstManifest = names.findIndex((each) => each.startsWith("helm-manifest-after-"));
 
@@ -156,7 +262,7 @@ describe("applications that send mail", () => {
     });
   }
 
-  it("share one set of credentials in a namespace", () => {
+  it("share their namespace's one set of credentials", () => {
     const made = new Set<string>();
     const names = [
       ...buildPackageCommands(getPackage("invoice-ninja")!, made),
@@ -164,48 +270,88 @@ describe("applications that send mail", () => {
     ].map((command) => command.name);
 
     assert.equal(names.filter((each) => each === "apply-smtp-cc-office").length, 1);
+    assert.equal(names.filter((each) => each === "verify-smtp-reachable-cc-office").length, 1);
   });
 
-  describe("with no mail server", async () => {
+  describe("in a namespace with no mail", async () => {
     const config = await loadFixtureConfig();
-    delete config.getConfig().smtp;
+    delete config.getConfig().smtp.namespaces["cc-office"];
+    const forOffice = { templateNamespace: "cc-office" };
 
     it("Invoice Ninja logs what it would have sent", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml");
+      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml", forOffice);
       assert.match(rendered, /MAIL_MAILER: "log"/);
       assert.ok(!rendered.includes("MAIL_HOST"));
     });
 
     it("Documenso is given no server", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/documenso/Documenso.config.yaml");
+      const rendered = renderInstallerFile(config, "embed://apps/documenso/Documenso.config.yaml", forOffice);
       assert.ok(!rendered.includes("NEXT_PRIVATE_SMTP_HOST"));
       assert.match(rendered, /NEXT_PRIVATE_SMTP_FROM_ADDRESS: "documents@example.test"/);
     });
   });
 
-  describe("with one", async () => {
+  describe("in a namespace with mail", async () => {
     const config = await loadFixtureConfig();
+    const forOffice = { templateNamespace: "cc-office" };
 
-    it("Invoice Ninja sends through it", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml");
+    it("Invoice Ninja sends through its namespace's server", () => {
+      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml", forOffice);
       assert.match(rendered, /MAIL_MAILER: "smtp"/);
       assert.match(rendered, /MAIL_HOST: "smtp.example.test"/);
     });
 
-    it("Documenso sends through it", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/documenso/Documenso.config.yaml");
+    it("Documenso sends through its namespace's server", () => {
+      const rendered = renderInstallerFile(config, "embed://apps/documenso/Documenso.config.yaml", forOffice);
       assert.match(rendered, /NEXT_PRIVATE_SMTP_HOST: "smtp.example.test"/);
       assert.match(rendered, /NEXT_PRIVATE_SMTP_SECURE: "false"/);
     });
 
-    it("no template is handed the password", () => {
+    it("the same template rendered for another namespace gets that namespace's", () => {
+      const rendered = renderInstallerFile(config, "embed://apps/documenso/Documenso.config.yaml", {
+        templateNamespace: "client-acme",
+      });
+      assert.match(rendered, /NEXT_PRIVATE_SMTP_HOST: "smtp.acme.example.test"/);
+      assert.match(rendered, /NEXT_PRIVATE_SMTP_SECURE: "true"/);
+    });
+
+    it("no template is handed a password", () => {
       for (const file of [
         "embed://apps/invoice-ninja/InvoiceNinja.config.yaml",
         "embed://apps/documenso/Documenso.config.yaml",
         "embed://apps/authentik/Authentik.values.yaml",
       ]) {
-        assert.ok(!renderInstallerFile(config, file).includes("not-a-real-password"), file);
+        const rendered = renderInstallerFile(config, file, forOffice);
+        assert.ok(!rendered.includes("not-a-real-password"), file);
+        assert.ok(!rendered.includes("not-a-real-acme-password"), file);
       }
     });
+  });
+});
+
+describe("what a check-up asks about mail", () => {
+  it("fails a namespace still holding credentials it was no longer given", () => {
+    const config = configFrom(BASE);
+    const text = shellOf(buildVerifyMailSecretCommand("cc-office") as TerminalCommandSpec, config);
+
+    assert.match(text, /it can still send/);
+  });
+
+  it("checks a namespace with mail has its credentials", () => {
+    const config = configFrom(withMail(SHARED));
+    const text = shellOf(buildVerifyMailSecretCommand("cc-office") as TerminalCommandSpec, config);
+
+    assert.match(text, /get secret cc-smtp/);
+  });
+
+  it("connects to the namespace's own server, bounded so a dropped port can't hang it", async () => {
+    const config = await loadFixtureConfig();
+    const text = shellOf(buildVerifyMailReachableCommand("client-acme") as TerminalCommandSpec, config);
+
+    assert.match(text, /timeout 5 bash -c 'exec 3<>\/dev\/tcp\/smtp\.acme\.example\.test\/465'/);
+  });
+
+  it("doesn't try to reach a server for a namespace with no mail", () => {
+    assert.equal(buildVerifyMailReachableCommand("cc-office").skipWhen!(configFrom(BASE), {}), true);
   });
 });

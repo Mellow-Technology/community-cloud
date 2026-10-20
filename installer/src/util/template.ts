@@ -374,12 +374,14 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     values.storageControllerReplicas = countStorageNodes(rawConfig);
   }
 
-  // The mail server, in the shapes applications want it. Templates
-  // read this rather than "smtp", so they find every field whether or
-  // not there's a mail server, and have no reason to go near the
-  // password — that reaches applications through a Secret.
+  // The mail server, in the shapes applications want it, for the
+  // namespace being rendered for — mail is configured per namespace,
+  // so a template has to know whose it is. Templates read this rather
+  // than "smtp", so they find every field whether or not there's a
+  // mail server, and have no reason to go near the password — that
+  // reaches applications through a Secret.
   if (values.mail === undefined) {
-    values.mail = buildMailValues(rawConfig);
+    values.mail = buildMailValues(rawConfig, context?.templateNamespace);
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

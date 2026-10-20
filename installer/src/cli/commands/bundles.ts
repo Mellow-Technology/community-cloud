@@ -59,6 +59,18 @@ export interface BundleDefinition {
   // They are left out of a check-up that asks about everything, and
   // run as normal when one is asked for by name.
   teardown?: boolean;
+
+  // Another bundle whose checks already cover this one's.
+  //
+  // For the bundles that install a single package on its own. Their
+  // checks are the package's checks, which "helm-charts" asks too for
+  // every package the configuration enables — so in a check-up of
+  // everything they would either say the same thing twice, or, for a
+  // package the cluster doesn't have, report it as broken: Invoice
+  // Ninja's checks fail on a cluster with no Invoice Ninja, which is
+  // the right answer to a question nobody asked. Left out of a
+  // check-up of everything, and run as normal when asked for by name.
+  checkedBy?: string;
 }
 
 /**
@@ -103,6 +115,7 @@ const builtInBundles: BundleDefinition[] = [
     name: "documenso",
     description: "Install Documenso into cc-office, signing in through Authentik",
     commands: buildSinglePackageBundle("documenso"),
+    checkedBy: "helm-charts",
   },
   {
     name: "drain",
@@ -134,6 +147,7 @@ const builtInBundles: BundleDefinition[] = [
     name: "invoice-ninja",
     description: "Install Invoice Ninja into cc-office, signing in through Authentik",
     commands: buildSinglePackageBundle("invoice-ninja"),
+    checkedBy: "helm-charts",
   },
   {
     name: "k3s",
@@ -264,7 +278,7 @@ export function getBundleNames(): string[] {
 
 /**
  * The bundles that describe a working cluster rather than one being
- * taken apart.
+ * taken apart, and whose checks no other bundle already asks.
  *
  * What a check-up should ask about, and nothing else.
  *
@@ -272,7 +286,7 @@ export function getBundleNames(): string[] {
  */
 export function getCheckableBundleNames(): string[] {
   return bundles
-    .filter((bundle) => bundle.teardown !== true)
+    .filter((bundle) => bundle.teardown !== true && bundle.checkedBy === undefined)
     .map((bundle) => bundle.name);
 }
 

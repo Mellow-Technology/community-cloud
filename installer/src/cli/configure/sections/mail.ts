@@ -1,9 +1,11 @@
 /**
  * @file
- * The mail server the cluster's applications send through.
+ * The mail servers the cluster's applications send through, and which
+ * namespaces may send.
  *
- * Asked once, for everything: the applications are each told about it
- * in their own terms by their templates. See util/mail.ts.
+ * Asked as a server most namespaces share, then the namespaces one at a
+ * time, each with credentials of its own. Why per namespace, and why
+ * the credentials are never shared, is in util/mail.ts.
  */
 import { confirm, input, password, select } from "@inquirer/prompts";
 
@@ -14,35 +16,106 @@ import {
   readPath,
   required,
   validateHostname,
+  validateNodeName,
   writePath,
 } from "../section.ts";
-import { MailSecurity, getMailPort } from "../../../util/mail.ts";
+import { MailSecurity, NamespaceMail, getMailPort } from "../../../util/mail.ts";
+
+/**
+ * Ask for a server's settings.
+ *
+ * @param current what's set now, offered as the answers
+ * @param optional whether every answer may be left blank, to fall back
+ *   on the shared server
+ * @returns
+ */
+async function askServer(current: NamespaceMail, optional: boolean): Promise<NamespaceMail> {
+  const blank = optional ? " (blank for the shared server's)" : "";
+
+  const host = (
+    await input({
+      message: `Mail server hostname${blank}`,
+      default: current.host,
+      validate: (value: string) =>
+        optional && value.trim() === "" ? true : validateHostname(value),
+    })
+  ).trim();
+
+  if (optional && host === "") {
+    return {};
+  }
+
+  const security = await select({
+    message: "How is the connection secured?",
+    default: (current.security as MailSecurity | undefined) ?? MailSecurity.StartTls,
+    choices: [
+      {
+        name: "STARTTLS, usually port 587 (Recommended)",
+        value: MailSecurity.StartTls,
+        description: "Connects, then upgrades to TLS. What most providers give you.",
+      },
+      {
+        name: "TLS from the start, usually port 465",
+        value: MailSecurity.Tls,
+        description: "Encrypted from the first byte.",
+      },
+      {
+        name: "None, usually port 25",
+        value: MailSecurity.None,
+        description: "Only for a relay on your own network that offers nothing better. Never with a password.",
+      },
+    ],
+  });
+
+  const port = await input({
+    message: "Port",
+    default: String(current.port ?? getMailPort({ security })),
+    validate: (value: string) => {
+      const number = Number(value);
+      return Number.isInteger(number) && number > 0 && number < 65536 ? true : "That isn't a port.";
+    },
+  });
+
+  const fromDomain = (
+    await input({
+      message: "Domain mail is sent from (blank for the cluster's main domain)",
+      default: current.fromDomain ?? "",
+      validate: (value: string) => (value.trim() === "" ? true : validateHostname(value)),
+    })
+  ).trim();
+
+  return {
+    host,
+    port: Number(port),
+    security,
+    ...(fromDomain !== "" ? { fromDomain } : {}),
+  };
+}
 
 export const mailSection: ConfigSection = {
   name: "mail",
   title: "Mail",
 
   describe: (draft) => {
-    const host = readPath(draft, "smtp.host");
-
-    if (host === undefined || host === "") {
-      return NOTHING_SET;
-    }
-
-    return `${host}:${getMailPort(readPath(draft, "smtp"))}`;
+    const namespaces = Object.keys(readPath(draft, "smtp.namespaces") ?? {});
+    return namespaces.length > 0 ? `for ${namespaces.join(", ")}` : NOTHING_SET;
   },
 
   run: async (draft: ConfigDraft) => {
     console.log(`
-  The mail server applications send through: invoices, signing
-  requests, password resets. It's somewhere else — a provider, or a
-  relay on your network. Without one, applications keep their mail to
-  themselves, mostly in their logs.
+  The mail servers applications send through: invoices, signing
+  requests, password resets. They're somewhere else — a provider, or
+  a relay on your network.
+
+  Each namespace that sends mail gets credentials of its own, and a
+  namespace that isn't given any sends none. If something in one
+  namespace starts sending what it shouldn't, that namespace's
+  credentials can be taken away without touching anyone else's.
 `);
 
     const wanted = await confirm({
-      message: "Do the applications have a mail server to send through?",
-      default: readPath(draft, "smtp.host") !== undefined,
+      message: "Should any namespace be able to send mail?",
+      default: readPath(draft, "smtp.namespaces") !== undefined,
     });
 
     if (!wanted) {
@@ -50,87 +123,69 @@ export const mailSection: ConfigSection = {
       return;
     }
 
-    const host = await input({
-      message: "Mail server hostname (e.g. smtp.example.com)",
-      default: readPath(draft, "smtp.host"),
-      validate: validateHostname,
-    });
+    console.log("\n  First, the server most namespaces send through. Each can use its own instead.\n");
+    const defaults = await askServer(readPath(draft, "smtp.defaults") ?? {}, false);
 
-    const security = await select({
-      message: "How is the connection secured?",
-      default: readPath(draft, "smtp.security") ?? MailSecurity.StartTls,
-      choices: [
-        {
-          name: "STARTTLS, usually port 587 (Recommended)",
-          value: MailSecurity.StartTls,
-          description: "Connects, then upgrades to TLS. What most providers give you.",
-        },
-        {
-          name: "TLS from the start, usually port 465",
-          value: MailSecurity.Tls,
-          description: "Encrypted from the first byte.",
-        },
-        {
-          name: "None, usually port 25",
-          value: MailSecurity.None,
-          description: "Only for a relay on your own network that offers nothing better. Never with a password.",
-        },
-      ],
-    });
+    const namespaces: Record<string, NamespaceMail> = {
+      ...(readPath(draft, "smtp.namespaces") ?? {}),
+    };
 
-    const port = await input({
-      message: "Port",
-      default: String(readPath(draft, "smtp.port") ?? getMailPort({ security })),
-      validate: (value: string) => {
-        const number = Number(value);
-        return Number.isInteger(number) && number > 0 && number < 65536 ? true : "That isn't a port.";
-      },
-    });
+    let adding = true;
+    while (adding) {
+      const configured = Object.keys(namespaces);
+      if (configured.length > 0) {
+        console.log(`\n  Namespaces with mail: ${configured.join(", ")}`);
+      }
 
-    const authenticates = await confirm({
-      message: "Does it need a username and password?",
-      default: security !== MailSecurity.None,
-    });
-
-    let username: string | undefined;
-    let secret: string | undefined;
-
-    if (authenticates) {
-      username = (
+      const namespace = (
         await input({
-          message: "Username",
-          default: readPath(draft, "smtp.username"),
-          validate: required("a username"),
+          message: "Namespace to give mail (e.g. cc-office)",
+          default: configured.length === 0 ? "cc-office" : undefined,
+          validate: validateNodeName,
         })
       ).trim();
 
-      const entered = await password({
-        message: "Password (blank keeps the existing one)",
-        mask: true,
+      const current = namespaces[namespace] ?? {};
+      const ownServer = await confirm({
+        message: `Does ${namespace} send through a server of its own?`,
+        default: current.host !== undefined,
+      });
+      const server = ownServer ? await askServer(current, true) : {};
+
+      const authenticates = await confirm({
+        message: `Does ${namespace} log in to send?`,
+        default: (server.security ?? defaults.security) !== MailSecurity.None,
       });
 
-      secret = entered.trim() !== "" ? entered.trim() : readPath(draft, "smtp.password");
+      let credentials: NamespaceMail = {};
+      if (authenticates) {
+        const username = (
+          await input({
+            message: `Username for ${namespace} — one of its own, not shared with another namespace`,
+            default: current.username,
+            validate: required("a username"),
+          })
+        ).trim();
 
-      if (secret === undefined) {
-        console.log("  No password given and none on file. Preflight will say so until there is one.");
+        const entered = await password({
+          message: "Password (blank keeps the existing one)",
+          mask: true,
+        });
+
+        const secret = entered.trim() !== "" ? entered.trim() : current.password;
+        if (secret === undefined) {
+          console.log("  No password given and none on file. Preflight will say so until there is one.");
+        }
+
+        credentials = { username, ...(secret !== undefined ? { password: secret } : {}) };
       }
+
+      namespaces[namespace] = { ...server, ...credentials };
+
+      adding = await confirm({ message: "Give another namespace mail?", default: false });
     }
 
-    const fromDomain = await input({
-      message: "Domain mail is sent from (blank for the cluster's main domain)",
-      default: readPath(draft, "smtp.fromDomain") ?? "",
-      validate: (value: string) => (value.trim() === "" ? true : validateHostname(value)),
-    });
-
-    writePath(draft, "smtp", {
-      host: host.trim(),
-      port: Number(port),
-      security,
-      ...(username !== undefined ? { username } : {}),
-      ...(secret !== undefined ? { password: secret } : {}),
-      ...(fromDomain.trim() !== "" ? { fromDomain: fromDomain.trim() } : {}),
-    });
-
-    console.log("  The password is in the configuration file, so keep that file private.");
+    writePath(draft, "smtp", { defaults, namespaces });
+    console.log("  The passwords are in the configuration file, so keep that file private.");
   },
 };
