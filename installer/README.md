@@ -222,9 +222,52 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`headlamp`, `tailscale-operator`. Dependencies are worked out and
-installed first — TopoLVM needs cert-manager, so enabling it enables
-that too.
+`headlamp`, `tailscale-operator`, `invoice-ninja`, `documenso`.
+Dependencies are worked out and installed first — TopoLVM needs
+cert-manager, so enabling it enables that too.
+
+`invoice-ninja` and `documenso` are applications in `cc-office`, each
+on a hostname of its own (`values.domain.invoicing` and
+`values.domain.signing`), and each signs people in through Authentik
+over OpenID Connect. They have no chart, only manifests, and they need
+Authentik running — from the Authentik plugin, or installed by hand as
+the release `authentik` — which the install checks for before it
+starts on them. When the Authentik package is being installed in the
+same run, it goes first. Either can also be installed on its own, into
+a cluster that already has the rest:
+
+```bash
+community-cloud run-bundle invoice-ninja server-1 cc.config.json
+community-cloud run-bundle documenso server-1 cc.config.json
+```
+
+Invoice Ninja's first account is made with `values.adminEmail` and a
+generated password, in the `invoice-ninja-admin` Secret; signing in
+through Authentik with that address links the two. Anyone else needs
+inviting in Invoice Ninja first, since its OpenID Connect sign in never
+creates accounts. Its client portal, where customers open and pay
+invoices, stays open to the world, as it has to.
+
+Documenso is the other way round: passwords are switched off, so
+Authentik is the only way in, and an account is made for whoever
+Authentik sends. The people documents are sent to for signing use
+their links, without an account. It signs completed documents with a
+self-signed certificate the installer makes, in the `documenso-signing`
+Secret. It sends email only once SMTP is configured in
+`Documenso.config.yaml`; until then, signing links are shared by hand.
+Making someone a Documenso administrator is done in its database —
+add `ADMIN` to their `roles` in the `User` table.
+
+In both cases, who may sign in is decided in Authentik, by binding
+groups or policies to the application. With nothing bound, anyone
+with an Authentik account can.
+
+A package for something with no sign in of its own — a cluster
+interface like Headlamp — can declare a `gate` instead, and gets an
+oauth2-proxy in front of it signing in through Authentik, with the
+proxy, its credentials and its Authentik client all made by the
+installer. See `installer/src/cli/commands/OAuth2Proxy.ts`. Nothing in
+the catalogue uses one yet.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to

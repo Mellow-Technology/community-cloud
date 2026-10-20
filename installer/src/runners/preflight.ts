@@ -21,6 +21,7 @@ import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
+import { getPackage, getPackageSelections } from "../cli/commands/packages.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { K3SInstallationType, NodeRole } from "../util/types.ts";
@@ -165,6 +166,37 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
 
   if (hasAddresses && gateways.length === 0) {
     say('There are gateway addresses configured, but no node is marked as a gateway. Set "gateway": true on the nodes that can be reached from outside.');
+  }
+
+  // What each enabled package's templates need. Checked here because
+  // the alternative is finding out from a route with no hostname.
+  // Looked up the way a template sees them: "values" laid over the
+  // top of the rest of the configuration.
+  const raw = config.getConfig();
+  const values = { ...raw, ...(raw.values ?? {}) };
+  for (const [name, selection] of Object.entries(getPackageSelections(config))) {
+    const definition = getPackage(name);
+
+    if (selection.enabled === false || definition === undefined) {
+      continue;
+    }
+
+    // A gate needs its hostname and Authentik's, whether or not the
+    // package's own templates do
+    const needed = [
+      ...(definition.values ?? []),
+      ...(definition.gate !== undefined ? [definition.gate.hostname, "domain.auth"] : []),
+    ];
+
+    for (const path of new Set(needed)) {
+      const value = path
+        .split(".")
+        .reduce((current: any, part) => (current === undefined || current === null ? undefined : current[part]), values);
+
+      if (value === undefined || value === null || value === "") {
+        say(`${name} needs "values.${path}", and it isn't set. Its manifests would render without it and apply as though nothing were wrong.`);
+      }
+    }
   }
 
   return problems;

@@ -1,0 +1,139 @@
+# Documenso
+#
+# One process, holding nothing on disk: its documents are in its
+# database, so it could run more than one replica. One is plenty.
+apiVersion: v1
+kind: Service
+metadata:
+  name: documenso
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: documenso
+    role: server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documenso
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: documenso
+      role: server
+  template:
+    metadata:
+      labels:
+        app: documenso
+        role: server
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      securityContext:
+        # The image runs as "nodejs", 1001, and has to be able to read
+        # the signing certificate. Secret volumes belong to root, and
+        # this group.
+        fsGroup: 1001
+      containers:
+        - name: documenso
+          image: documenso/documenso:v2.21.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: documenso
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-db
+                  key: password
+            # The generated password is words and hyphens, so it goes
+            # into a URL as it is
+            - name: NEXT_PRIVATE_DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/documenso"
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-session
+                  key: password
+            - name: NEXT_PRIVATE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-encryption
+                  key: password
+            - name: NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-encryption-secondary
+                  key: password
+            - name: NEXT_PRIVATE_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-oidc
+                  key: username
+            - name: NEXT_PRIVATE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-oidc
+                  key: password
+            - name: NEXT_PRIVATE_SIGNING_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: documenso-signing
+                  key: password
+          ports:
+            - name: http
+              containerPort: 3000
+          # The image migrates its database before it starts listening,
+          # which takes a while the first time
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: 250m
+          volumeMounts:
+            - name: signing
+              mountPath: /opt/documenso
+              readOnly: true
+      volumes:
+        # Only the bundle, under the name Documenso looks for it by.
+        # The passphrase arrives as an environment variable instead.
+        - name: signing
+          secret:
+            secretName: documenso-signing
+            defaultMode: 0440
+            items:
+              - key: certificate
+                path: cert.p12

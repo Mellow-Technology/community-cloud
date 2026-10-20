@@ -29,6 +29,10 @@ domain:
   auth: "auth.example.com"
   # Picoclaw agent hostname (derived: agent.<main>)
   agent: "agent.example.com"
+  # Invoice Ninja hostname (derived: invoice.<main>)
+  invoicing: "invoice.example.com"
+  # Documenso hostname (derived: sign.<main>)
+  signing: "sign.example.com"
 
 garage:
   replicationFactor: 3

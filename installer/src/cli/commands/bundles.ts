@@ -22,7 +22,7 @@ import { GatewayCommands } from "./GatewayNodes.ts";
 import { PreflightCommands } from "./Preflight.ts";
 import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
-import { HelmCommands } from "./Helm.ts";
+import { HelmCommands, buildSinglePackageBundle } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
@@ -94,6 +94,11 @@ const builtInBundles: BundleDefinition[] = [
     commands: ClusterOnlineCommands,
   },
   {
+    name: "documenso",
+    description: "Install Documenso into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("documenso"),
+  },
+  {
     name: "drain",
     description: "Move the workloads off a node, before taking it out of service",
     commands: DrainCommands,
@@ -118,6 +123,11 @@ const builtInBundles: BundleDefinition[] = [
     name: "helm-charts",
     description: "Install the configured Helm charts, dependencies first",
     commands: HelmCommands,
+  },
+  {
+    name: "invoice-ninja",
+    description: "Install Invoice Ninja into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("invoice-ninja"),
   },
   {
     name: "k3s",

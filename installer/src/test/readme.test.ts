@@ -130,7 +130,7 @@ describe("what the README lists", () => {
   });
 
   it("only names bundles that exist", () => {
-    const shown = [...README.matchAll(/run-bundle (\w+)/g)].map((match) => match[1]!);
+    const shown = [...README.matchAll(/run-bundle ([\w-]+)/g)].map((match) => match[1]!);
     const missing = shown.filter((name) => !getBundleNames().includes(name));
 
     assert.deepEqual(missing, []);

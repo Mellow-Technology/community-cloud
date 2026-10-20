@@ -1,0 +1,94 @@
+# How Invoice Ninja is reached.
+#
+# A ListenerSet on the cluster Gateway rather than a Gateway of its
+# own, so the hostname and its certificate belong to this application
+# while the address and the Envoy serving it are shared. The cluster
+# Gateway only takes listeners from namespaces labelled
+# whereWereGoing=weDontNeedRoads, which cc-office is.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for each HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+#
+# Everything is routed, not only the parts behind a sign in. Clients
+# open invoices, pay them and approve quotes through the client portal
+# with no account at all, and payment gateways call back to it, so
+# none of that can be put behind Authentik. Invoice Ninja's own users
+# sign in through it; see InvoiceNinja.config.yaml.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: invoice-ninja
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.invoicing }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.invoicing }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: invoice-ninja-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: invoice-ninja
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: invoice-ninja
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.invoicing }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: invoice-ninja
+          port: 80
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: invoice-ninja-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: invoice-ninja
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.invoicing }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

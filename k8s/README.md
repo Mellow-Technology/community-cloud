@@ -11,7 +11,7 @@ shows the shape those values take; the real ones come from
 Nothing here needs to be applied by hand:
 
 ```bash
-community-cloud run-template embed://gateway/Gateway.yaml cc.config.json
+community-cloud run-template embed://networking/cilium/gateway/Gateway.yaml cc.config.json
 community-cloud list-embedded            # everything the installer carries
 ```
 
@@ -34,7 +34,9 @@ k8s/
 ├── ai/vLLM/           # Large language model serving
 ├── apps/              # The applications a cluster runs
 │   ├── authentik/     # Identity provider
+│   ├── documenso/     # Document signing
 │   ├── headlamp/      # Kubernetes UI
+│   ├── invoice-ninja/ # Invoicing
 │   ├── mattermost/    # Team chat
 │   ├── office/        # The cc-office namespace and its shared pieces
 │   ├── picoclaw/      # Picoclaw

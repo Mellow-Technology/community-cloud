@@ -87,3 +87,20 @@ export function generateUsername(): string {
 export function generatePassword(): string {
   return generatePhrase(PASSWORD_WORDS);
 }
+
+/**
+ * A key, for the things that want random bytes of a particular length
+ * rather than something a person might ever read.
+ *
+ * Hex rather than base64 because it is the same safe alphabet a phrase
+ * is — nothing a shell, a YAML scalar or a URL treats specially — and
+ * because a consumer that takes the string as it stands gets a key of
+ * exactly twice the byte count, which is the length the callers have
+ * in mind.
+ *
+ * @param bytes
+ * @returns
+ */
+export function generateKey(bytes: number): string {
+  return randomBytes(bytes).toString("hex");
+}

@@ -1,0 +1,37 @@
+# Documenso's role and database, in the shared cc-postgres cluster.
+#
+# The documents themselves live here too. Documenso stores uploads in
+# its database unless it's given S3, and with no object storage in the
+# cluster yet that's the simplest place for them — and it means the
+# cc-postgres backups are the Documenso backups.
+#
+# The role is here rather than in office/Office.roles.yaml with the
+# others, so that installing Documenso on its own brings everything it
+# connects with. Its password is the documenso-db Secret the installer
+# makes for the documenso package; why the role takes it from a
+# Secret, and why the username has to match, is in Office.roles.yaml.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: documenso
+  namespace: cc-office
+spec:
+  name: documenso
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Documenso
+  passwordSecret:
+    name: documenso-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: documenso
+  namespace: cc-office
+spec:
+  name: documenso
+  owner: documenso
+  cluster:
+    name: cc-postgres

@@ -33,7 +33,11 @@ import {
   CommandTarget,
   OutputType,
 } from "./Command.ts";
-import { generatePassword, generateUsername } from "../../util/credentials.ts";
+import {
+  generateKey,
+  generatePassword,
+  generateUsername,
+} from "../../util/credentials.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
 import { quoteForShell } from "../../util/shell.ts";
 
@@ -61,6 +65,18 @@ export const BASIC_AUTH = "kubernetes.io/basic-auth";
  * - type: the Secret type. Basic auth unless something wants another.
  * - labels: anything else that has to be on it. Some operators find
  *   the secrets they care about by label rather than by reference.
+ * - keyBytes: make the password a key of this many random bytes, in
+ *   hex, rather than a phrase. For the things that aren't passwords
+ *   at all but encryption keys of a fixed length, which refuse a
+ *   phrase for being the wrong size — Laravel's application key wants
+ *   exactly 32 characters, and oauth2-proxy's cookie secret 16, 24
+ *   or 32.
+ * - certificate: make a self-signed certificate instead of a pair of
+ *   credentials. The Secret holds a PKCS#12 bundle under
+ *   "certificate" and the passphrase sealing it under "password".
+ *   For something that signs rather than something that logs in —
+ *   Documenso puts a signature in every document it completes, and
+ *   won't sign anything without a certificate to do it with.
  */
 export interface SecretDefinition {
   name: string;
@@ -69,7 +85,26 @@ export interface SecretDefinition {
   username?: string;
   type?: string;
   labels?: Record<string, string>;
+  keyBytes?: number;
+  certificate?: SelfSignedCertificate;
 }
+
+/**
+ * A certificate to make up.
+ *
+ * - commonName: who it says it belongs to, which is what a PDF reader
+ *   shows as the signer
+ * - days: how long it lasts. Long, since replacing it is by hand: the
+ *   Secret is made once, like every other, and never touched again.
+ */
+export interface SelfSignedCertificate {
+  commonName: string;
+  days: number;
+}
+
+// The Secret type a certificate is kept as. Not basic auth, because
+// what's in it isn't a username and a password.
+export const OPAQUE = "Opaque";
 
 /**
  * Where a secret goes, which is its own namespace if it named one and
@@ -117,7 +152,10 @@ export function buildSecretManifest(
     stringData: {
       username:
         definition.username !== undefined ? definition.username : generateUsername(),
-      password: generatePassword(),
+      password:
+        definition.keyBytes !== undefined
+          ? generateKey(definition.keyBytes)
+          : generatePassword(),
     },
   };
 
@@ -146,6 +184,10 @@ export function buildCreateSecretCommand(
   definition: SecretDefinition,
   fallbackNamespace: string,
 ): CommandSpec {
+  if (definition.certificate !== undefined) {
+    return buildCreateCertificateCommand(definition, definition.certificate, fallbackNamespace);
+  }
+
   const namespace = getSecretNamespace(definition, fallbackNamespace);
   const quotedNamespace = quoteForShell(namespace);
   const quotedName = quoteForShell(definition.name);
@@ -168,6 +210,75 @@ export function buildCreateSecretCommand(
       `kubectl create -f - || { echo "Couldn't create the secret ${definition.name} in ${namespace}" >&2; exit 1; }`,
     ],
     stdin: () => buildSecretManifest(definition, namespace),
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Make a self-signed certificate, unless the cluster already has it.
+ *
+ * Made on the control plane with openssl rather than in here, for the
+ * same reason the passwords travel on standard input: the private key
+ * should never be in this process, in a command line, or anywhere it
+ * could be logged. It is written to a directory only the installing
+ * user can read, put in the Secret by kubectl reading the files, and
+ * removed whatever happens.
+ *
+ * The passphrase is generated there too. A PKCS#12 bundle without one
+ * is technically allowed, and Documenso refuses it, failing to find a
+ * private key in it.
+ *
+ * openssl is on any machine that has ca-certificates, which K3s's own
+ * installer needs, so it's checked for rather than installed.
+ *
+ * @param definition
+ * @param certificate
+ * @param fallbackNamespace
+ * @returns
+ */
+function buildCreateCertificateCommand(
+  definition: SecretDefinition,
+  certificate: SelfSignedCertificate,
+  fallbackNamespace: string,
+): CommandSpec {
+  const namespace = getSecretNamespace(definition, fallbackNamespace);
+  const quotedNamespace = quoteForShell(namespace);
+  const quotedName = quoteForShell(definition.name);
+  const labels = {
+    "app.kubernetes.io/managed-by": "community-cloud",
+    ...(definition.labels !== undefined ? definition.labels : {}),
+  };
+  const fail = (what: string) =>
+    `|| { echo "Couldn't make the certificate ${definition.name}: ${what}" >&2; exit 1; }`;
+
+  return {
+    name: `create-secret-${namespace}-${definition.name}`,
+    description: `Create the ${definition.name} certificate: ${definition.description}`,
+    purpose: CommandPurpose.Apply,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      `if kubectl -n ${quotedNamespace} get secret ${quotedName} > /dev/null 2>&1`,
+      "then",
+      `  echo "${definition.name} is already in ${namespace}, keeping the certificate it has"`,
+      "  exit 0",
+      "fi",
+      `command -v openssl > /dev/null 2>&1 || { echo "Making the certificate ${definition.name} needs openssl on the control plane, and it isn't there. Install it and run this again." >&2; exit 1; }`,
+      `work=$(mktemp -d) ${fail("no temporary directory")}`,
+      `trap 'rm -rf "$work"' EXIT`,
+      'chmod 0700 "$work"',
+      // No newline: the passphrase is read back as the whole file by
+      // whatever mounts the Secret, and a newline would be part of it
+      `openssl rand -hex 24 | tr -d '\\n' > "$work/password" ${fail("couldn't generate a passphrase")}`,
+      `openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/key.pem" -out "$work/cert.pem" -days ${certificate.days} -subj ${quoteForShell(`/CN=${certificate.commonName}`)} 2> /dev/null ${fail("openssl wouldn't make the key")}`,
+      `openssl pkcs12 -export -out "$work/certificate.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -passout "file:$work/password" ${fail("openssl wouldn't bundle it")}`,
+      // Deliberately "create", as for every other credential
+      `kubectl -n ${quotedNamespace} create secret generic ${quotedName} --from-file=certificate="$work/certificate.p12" --from-file=password="$work/password" ${fail("kubectl wouldn't create the Secret")}`,
+      `kubectl -n ${quotedNamespace} label secret ${quotedName} ${Object.entries(labels)
+        .map(([key, value]) => quoteForShell(`${key}=${value}`))
+        .join(" ")} ${fail("kubectl wouldn't label the Secret")}`,
+      `echo "Made the certificate ${definition.name} in ${namespace}, valid for ${certificate.days} days"`,
+    ],
     output: OutputType.Raw,
   };
 }
@@ -196,13 +307,21 @@ export function buildVerifySecretsCommand(
     const namespace = getSecretNamespace(definition, fallbackNamespace);
     const quotedNamespace = quoteForShell(namespace);
     const quotedName = quoteForShell(definition.name);
-    const expected = definition.type !== undefined ? definition.type : BASIC_AUTH;
+    const isCertificate = definition.certificate !== undefined;
+    const expected = isCertificate
+      ? OPAQUE
+      : definition.type !== undefined
+        ? definition.type
+        : BASIC_AUTH;
+
+    // A certificate's first half is the bundle rather than a username
+    const first = isCertificate ? "certificate" : "username";
 
     return [
       // One read rather than three. The fields are joined by colons,
       // which neither a Secret type nor base64 contains, so the
       // patterns below can tell "missing" from "half filled in".
-      `found=$(kubectl -n ${quotedNamespace} get secret ${quotedName} -o jsonpath='{.type}:{.data.username}:{.data.password}' 2>/dev/null)`,
+      `found=$(kubectl -n ${quotedNamespace} get secret ${quotedName} -o jsonpath='{.type}:{.data.${first}}:{.data.password}' 2>/dev/null)`,
       `case "$found" in`,
       // "?*" is at least one character, so a key that exists but is
       // empty fails here rather than passing as present

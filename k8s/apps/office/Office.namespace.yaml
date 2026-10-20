@@ -6,5 +6,8 @@ kind: Namespace
 metadata:
   name: cc-office
   labels:
-    where-were-going: "we-dont-need-roads"
+    # What the cluster Gateway's allowedListeners selects on, in
+    # networking/cilium/gateway/Gateway.yaml. Without it a ListenerSet
+    # here is refused and the applications have no way in.
+    whereWereGoing: "weDontNeedRoads"
     app.kubernetes.io/managed-by: "community-cloud"

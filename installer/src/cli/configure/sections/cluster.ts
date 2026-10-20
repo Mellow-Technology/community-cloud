@@ -111,6 +111,8 @@ export const clusterSection: ConfigSection = {
       { key: "agent", label: "Picoclaw agent", prefix: "agent" },
       { key: "crm", label: "Twenty (CRM)", prefix: "crm" },
       { key: "mattermost", label: "Mattermost (chat)", prefix: "chat" },
+      { key: "invoicing", label: "Invoice Ninja (invoicing)", prefix: "invoice" },
+      { key: "signing", label: "Documenso (document signing)", prefix: "sign" },
     ];
 
     for (const service of services) {

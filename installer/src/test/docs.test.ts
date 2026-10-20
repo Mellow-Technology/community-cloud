@@ -125,7 +125,7 @@ describe("what the docs claim about the installer", () => {
   const index = readFileSync(join(REPO_ROOT, "docs", "index.md"), "utf8");
 
   it("only names bundles that exist in run-bundle examples", () => {
-    const named = matchAll(allDocs, /run-bundle (\w+)/g);
+    const named = matchAll(allDocs, /run-bundle ([\w-]+)/g);
     const missing = named.filter((name) => !getBundleNames().includes(name));
 
     assert.deepEqual(missing, []);

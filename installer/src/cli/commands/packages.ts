@@ -18,12 +18,17 @@
  */
 import CloudConfig from "../../util/CloudConfig.ts";
 import { SecretDefinition } from "./Secrets.ts";
+import type { AuthentikClient } from "./Authentik.ts";
+import type { GateDefinition } from "./OAuth2Proxy.ts";
 
 /**
  * Something that can be installed.
  *
  * - chart: where the chart comes from. "repo" is the Helm repository
- *   URL and "name" the chart within it.
+ *   URL and "name" the chart within it. Left out for an application
+ *   that has no chart worth using, which is then nothing but its
+ *   manifests — "before" and "after" still run in that order, with
+ *   the credentials between them.
  * - version: the chart version. Left unset, Helm takes the newest one,
  *   which makes an install depend on the day it was run — worth
  *   pinning once a cluster is real.
@@ -44,18 +49,46 @@ import { SecretDefinition } from "./Secrets.ts";
  *   chart and the "after" manifests, so a manifest naming one finds it
  *   already there. Created once and then left alone, so re-running an
  *   install doesn't change the password half the cluster is using.
+ * - after: packages that, when they're being installed too, have to
+ *   go first — without being pulled in when they aren't. For a
+ *   dependency on something that may have been installed some other
+ *   way: Authentik comes from a plugin, or by hand, and an
+ *   application that signs in through it can't require a package the
+ *   catalogue may never have heard of.
+ * - rollout: the workloads that have to come up before the package
+ *   counts as installed, as "deployment/name" or "statefulset/name".
+ *   A chart is checked through Helm; this is how a package without
+ *   one is.
+ * - values: the configuration values its templates can't do without,
+ *   as paths under "values". A template renders a missing value as
+ *   nothing at all, which for a hostname is a route that matches no
+ *   request and a certificate for no name — so preflight looks for
+ *   these before anything is installed.
+ * - authentik: the single sign on client the package signs in with.
+ *   "blueprint" is an Authentik blueprint describing the provider and
+ *   the application, and "secret" the credentials it's given — see
+ *   Authentik.ts.
+ * - gate: an oauth2-proxy in front of the package, for something with
+ *   no sign in of its own — see OAuth2Proxy.ts. Its Deployment, its
+ *   credentials and its client in Authentik are all made from this;
+ *   the package's own route has to point at it.
  */
 export interface PackageDefinition {
   name: string;
   description: string;
-  chart: { repo: string; name: string };
+  chart?: { repo: string; name: string };
   version?: string;
   namespace: string;
   releaseName?: string;
   valuesFile?: string;
   requires?: string[];
+  after?: string[];
   manifests?: { before?: string[]; after?: string[] };
   secrets?: SecretDefinition[];
+  rollout?: string[];
+  values?: string[];
+  authentik?: AuthentikClient;
+  gate?: GateDefinition;
 
   // Which plugin contributed this, when one did
   plugin?: string;
@@ -179,6 +212,165 @@ const builtInPackages: PackageDefinition[] = [
         labels: { "cnpg.io/reload": "true" },
       },
     ],
+  },
+  {
+    name: "invoice-ninja",
+    description: "Invoicing, quotes and payments, signed into through Authentik",
+    namespace: "cc-office",
+
+    // Not for its Postgres, which it can't use — Invoice Ninja runs on
+    // MySQL or MariaDB only, and brings its own. For the cc-office
+    // namespace, which arrives with CloudNativePG.
+    requires: ["cloudnative-pg"],
+    after: ["authentik"],
+
+    // No chart: the image is PHP-FPM and its workers, expecting a web
+    // server beside it, and the manifests that arrange that are ours
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for. A cluster whose CloudNativePG went in before that label
+      // was added has a cc-office without it, and a ListenerSet there
+      // is refused. Applying it is otherwise a no-op.
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/invoice-ninja/InvoiceNinja.database.yaml",
+        "embed://apps/invoice-ninja/InvoiceNinja.storage.yaml",
+        "embed://apps/invoice-ninja/InvoiceNinja.config.yaml",
+        "embed://apps/invoice-ninja/InvoiceNinja.yaml",
+        "embed://apps/invoice-ninja/InvoiceNinja.network.yaml",
+      ],
+    },
+
+    secrets: [
+      {
+        name: "invoice-ninja-db",
+        description: "the account Invoice Ninja uses in its MariaDB",
+        username: "invoiceninja",
+      },
+      {
+        name: "invoice-ninja-db-root",
+        description: "MariaDB's root account, which nothing uses day to day",
+        username: "root",
+      },
+
+      // Laravel encrypts with AES-256 and takes a key of exactly 32
+      // bytes, which sixteen random bytes in hex are. A phrase is the
+      // wrong length, and the app won't start on one. Changing it
+      // later makes every stored gateway credential unreadable, which
+      // is the other reason it is only ever made once.
+      {
+        name: "invoice-ninja-app-key",
+        description: "the key Invoice Ninja encrypts stored credentials with",
+        keyBytes: 16,
+      },
+
+      // The first account, made on first start. Its address is the
+      // cluster's admin address; signing in through Authentik with
+      // that address links the two.
+      {
+        name: "invoice-ninja-admin",
+        description: "the first Invoice Ninja account's password",
+      },
+      {
+        name: "invoice-ninja-oidc",
+        description: "the client Invoice Ninja signs in to Authentik as",
+      },
+    ],
+
+    rollout: ["statefulset/invoice-ninja-mariadb", "deployment/invoice-ninja"],
+    values: ["domain.invoicing", "domain.auth", "domain.main", "adminEmail"],
+
+    authentik: {
+      blueprint: "embed://apps/invoice-ninja/InvoiceNinja.blueprint.yaml",
+      secret: "invoice-ninja-oidc",
+      slug: "invoice-ninja",
+    },
+  },
+  {
+    name: "documenso",
+    description: "Document signing, signed into through Authentik",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, and so are the documents: with
+    // no object storage in the cluster yet, Documenso keeps uploads in
+    // the database, which is its default and needs no volume
+    requires: ["cloudnative-pg"],
+    after: ["authentik"],
+
+    // No chart from the project; the image is one process
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for. A cluster whose CloudNativePG went in before that label
+      // was added has a cc-office without it, and a ListenerSet there
+      // is refused. Applying it is otherwise a no-op.
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/documenso/Documenso.database.yaml",
+        "embed://apps/documenso/Documenso.config.yaml",
+        "embed://apps/documenso/Documenso.yaml",
+        "embed://apps/documenso/Documenso.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres. Declared here rather than with the
+      // roles in Office.roles.yaml, unlike the applications that came
+      // before it, because this can be installed on its own into a
+      // cluster whose CloudNativePG went in long ago — and that
+      // install has to bring its own role, or Documenso has nothing to
+      // connect as. The username and label are as Office.roles.yaml
+      // explains.
+      {
+        name: "documenso-db",
+        description: "the Documenso database role",
+        username: "documenso",
+        labels: { "cnpg.io/reload": "true" },
+      },
+
+      // Documenso wants each of these to be at least 32 characters.
+      // The two encryption keys protect what it stores — losing them
+      // loses that — which is the other reason they're made once.
+      {
+        name: "documenso-session",
+        description: "the key Documenso signs sessions with",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-encryption",
+        description: "the key Documenso encrypts what it stores with",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-encryption-secondary",
+        description: "Documenso's second encryption key, for rotating the first",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-oidc",
+        description: "the client Documenso signs in to Authentik as",
+      },
+
+      // What it signs completed documents with. Self-signed, so a PDF
+      // reader shows the signature as valid but not from anyone it
+      // already trusts; a certificate from a trusted authority can be
+      // put in this Secret in its place, keeping the same two keys.
+      {
+        name: "documenso-signing",
+        description: "the certificate Documenso signs completed documents with",
+        certificate: { commonName: "Community Cloud Documenso", days: 3650 },
+      },
+    ],
+
+    rollout: ["deployment/documenso"],
+    values: ["domain.signing", "domain.auth", "domain.main"],
+
+    authentik: {
+      blueprint: "embed://apps/documenso/Documenso.blueprint.yaml",
+      secret: "documenso-oidc",
+      slug: "documenso",
+    },
   },
   {
     name: "topolvm",
@@ -347,7 +539,8 @@ export function valuesFileIsFromConfig(selection: PackageSelection = {}): boolea
  * Work out what to install, and in what order.
  *
  * Everything enabled, plus anything those packages require, sorted so
- * nothing is installed before the things it depends on. A package
+ * nothing is installed before the things it depends on — or before
+ * anything it asked to come "after" that is also enabled. A package
  * pulled in as a dependency is reported as such, since being installed
  * without having been asked for is worth saying out loud.
  *
@@ -385,6 +578,14 @@ export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
       }
 
       visit(required, [...path, name]);
+    }
+
+    // Only when it's being installed anyway. Anything else is either
+    // there already or not this installer's to put there.
+    for (const preceding of definition.after !== undefined ? definition.after : []) {
+      if (enabled.includes(preceding)) {
+        visit(preceding, [...path, name]);
+      }
     }
 
     visiting.delete(name);

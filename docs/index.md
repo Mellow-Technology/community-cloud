@@ -97,6 +97,7 @@ cluster in service.
 | `node-joined` | Whether a node has joined the cluster and gone Ready |
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
+| `invoice-ninja`, `documenso` | One application on its own, into a cluster that has the rest, registered with Authentik |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -143,7 +144,9 @@ k8s/
 │       └── vllm-amd-pvc.yaml    # PVC for model weights
 ├── apps/                        # Application deployments
 │   ├── authentik/               # Authentik auth server (6 manifests)
+│   ├── documenso/               # Documenso document signing
 │   ├── headlamp/                # Headlamp K8s UI plugin
+│   ├── invoice-ninja/           # Invoice Ninja invoicing, with its own MariaDB
 │   ├── mattermost/              # Mattermost chat (5 manifests)
 │   ├── office/                  # cc-office namespace
 │   ├── twenty/                  # Twenty CRM (7 manifests)
@@ -224,6 +227,34 @@ Authentication provider with Postgres backend and Garage S3 storage:
 | `Authentik.storage.yaml` | ObjectBucketClaim |
 | `Authentik.cert.yaml` | TLS certificate |
 | `Authentik.config.yaml` | Gateway API route config |
+
+#### Invoice Ninja (`apps/invoice-ninja/`)
+
+Invoicing, signed into through Authentik over OpenID Connect. The
+`invoice-ninja` package or bundle installs it:
+
+| File | Purpose |
+|---|---|
+| `InvoiceNinja.yaml` | PHP-FPM and nginx in one pod (1 replica, `Recreate`) |
+| `InvoiceNinja.database.yaml` | MariaDB StatefulSet — Invoice Ninja can't use Postgres |
+| `InvoiceNinja.storage.yaml` | PVC for documents, PDFs and caches |
+| `InvoiceNinja.config.yaml` | Its environment, and the nginx configuration |
+| `InvoiceNinja.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `InvoiceNinja.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+
+#### Documenso (`apps/documenso/`)
+
+Document signing, signed into through Authentik over OpenID Connect,
+with passwords switched off. The `documenso` package or bundle
+installs it:
+
+| File | Purpose |
+|---|---|
+| `Documenso.yaml` | The application (1 replica), with its signing certificate mounted |
+| `Documenso.database.yaml` | Its CloudNative-PG role and `Database` — documents are stored there too |
+| `Documenso.config.yaml` | Its environment |
+| `Documenso.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `Documenso.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 
 #### Mattermost (`apps/mattermost/`)
 

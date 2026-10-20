@@ -32,12 +32,33 @@ import {
 } from "./Secrets.ts";
 import {
   PackageDefinition,
+  getPackageSelections,
   resolveInstallOrder,
+  resolvePackage,
 } from "./packages.ts";
+import {
+  blueprintFromFile,
+  buildApplyBlueprintCommand,
+  buildRequireAuthentikCommand,
+  buildVerifyAuthentikCommand,
+} from "./Authentik.ts";
+import {
+  buildGateBlueprint,
+  buildGateManifest,
+  getGateClient,
+  getGateName,
+  getGateSecrets,
+} from "./OAuth2Proxy.ts";
 
 // Where rendered values files are put on the control plane. They can
 // carry secrets, so the directory is the installing user's own.
 const WORK_DIR = "/tmp/cc-helm";
+
+// A package that has a chart, which is the only kind the Helm
+// commands below can do anything with
+type ChartedPackage = PackageDefinition & {
+  chart: NonNullable<PackageDefinition["chart"]>;
+};
 
 // How long to give a chart to come up
 const READY_TIMEOUT = "10m";
@@ -114,6 +135,20 @@ const readStorageShapesCommand: CommandSpec = {
 };
 
 /**
+ * Check Helm is there before asking it for anything.
+ */
+const checkHelmAvailableCommand: CommandSpec = {
+  name: "check-helm-available",
+  purpose: CommandPurpose.Require,
+  description: "Check Helm is installed on the control plane",
+  runOn: CommandTarget.ControlPlane,
+  env: buildHelmEnv,
+  command:
+    'command -v helm > /dev/null 2>&1 || { echo "Helm isn\'t installed on the control plane. Run the \\"helm\\" bundle first." >&2; exit 1; }\nhelm version --short',
+  output: OutputType.Raw,
+};
+
+/**
  * The release name for a package, which is its own name unless it
  * asked for something else.
  *
@@ -154,7 +189,7 @@ function toKubernetesName(name: string): string {
  * @param definition
  * @returns
  */
-function getRepoName(definition: PackageDefinition): string {
+function getRepoName(definition: ChartedPackage): string {
   return toKubernetesName(`cc-${definition.chart.name}`);
 }
 
@@ -174,7 +209,7 @@ function getValuesPath(definition: PackageDefinition): string {
  * @param definition
  * @returns
  */
-function buildAddRepoCommand(definition: PackageDefinition): CommandSpec {
+function buildAddRepoCommand(definition: ChartedPackage): CommandSpec {
   const repoName = getRepoName(definition);
 
   return {
@@ -247,14 +282,18 @@ function getManifestName(manifest: string): string {
  * install.
  *
  * @param definition
- * @param manifest
+ * @param manifest the template's path, which also names the command
  * @param when
+ * @param render what produces the manifest, when it's built rather
+ *   than read from a template — a gate's, for one
  * @returns
  */
 function buildManifestCommand(
   definition: PackageDefinition,
   manifest: string,
   when: string,
+  render: (config: CloudConfig, context: any) => string = (config, context) =>
+    renderInstallerFile(config, manifest, context),
 ): CommandSpec {
   const path = `${WORK_DIR}/${toKubernetesName(definition.name)}-${getManifestName(manifest)}.yaml`;
   const quoted = quoteForShell(path);
@@ -283,8 +322,7 @@ function buildManifestCommand(
       `[ "$applied" = "yes" ] || kubectl apply -f ${quoted} || { echo "Couldn't apply ${manifest} for ${definition.name}" >&2; rm -f ${quoted}; exit 1; }`,
       `rm -f ${quoted}`,
     ],
-    stdin: (config: CloudConfig, context: any) =>
-      renderInstallerFile(config, manifest, context),
+    stdin: render,
     output: OutputType.Raw,
   };
 }
@@ -299,7 +337,7 @@ function buildManifestCommand(
  * @param definition
  * @returns
  */
-function buildInstallCommand(definition: PackageDefinition): CommandSpec {
+function buildInstallCommand(definition: ChartedPackage): CommandSpec {
   return {
     name: `helm-install-${definition.name}`,
     description: `Install ${definition.name}: ${definition.description}`,
@@ -356,6 +394,252 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
 }
 
 /**
+ * Wait for a package's own workloads to come up.
+ *
+ * A Settle rather than a Verify, because the first start can be slow
+ * for reasons that are nobody's fault: Invoice Ninja migrates and
+ * seeds its database before it opens a port, and that takes minutes
+ * on a quiet machine.
+ *
+ * @param definition
+ * @returns
+ */
+function buildRolloutCommand(definition: PackageDefinition): CommandSpec {
+  const namespace = quoteForShell(definition.namespace);
+  const workloads = definition.rollout ?? [];
+
+  return {
+    name: `rollout-${definition.name}`,
+    description: `Wait for ${definition.name} to come up`,
+    purpose: CommandPurpose.Settle,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: workloads.map(
+      (workload) =>
+        `kubectl -n ${namespace} rollout status ${quoteForShell(workload)} --timeout=${READY_TIMEOUT} || { echo "${workload} in ${definition.namespace} didn't come up" >&2; kubectl -n ${namespace} get pods >&2; exit 1; }`,
+    ),
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Check a package's own workloads are up, without waiting for them.
+ *
+ * What stands in for "helm status" for a package without a chart.
+ *
+ * @param definition
+ * @returns
+ */
+function buildVerifyRolloutCommand(definition: PackageDefinition): CommandSpec {
+  const namespace = quoteForShell(definition.namespace);
+
+  return {
+    name: `verify-rollout-${definition.name}`,
+    description: `Verify ${definition.name} is running`,
+    purpose: CommandPurpose.Verify,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      "failed=",
+      ...(definition.rollout ?? []).flatMap((workload) => [
+        `counts=$(kubectl -n ${namespace} get ${quoteForShell(workload)} -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null)`,
+        // An empty ready count is none ready, which is how Kubernetes
+        // reports it rather than as a zero
+        `case "$counts" in`,
+        `  "") echo "  ${workload}: missing" >&2; failed=yes ;;`,
+        `  /*) echo "  ${workload}: none ready" >&2; failed=yes ;;`,
+        `  *) ready=\${counts%/*}; wanted=\${counts#*/}; if [ "$ready" -ge "$wanted" ]; then echo "  ${workload}: $counts ready"; else echo "  ${workload}: only $counts ready" >&2; failed=yes; fi ;;`,
+        "esac",
+      ]),
+      `[ -z "$failed" ] || { echo "${definition.name} isn't fully running" >&2; exit 1; }`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Everything that installs one package, in order.
+ *
+ * Shared by the bundle that installs every configured package and by
+ * the bundles that install one on its own, so the two can't come to
+ * disagree about what installing a package means.
+ *
+ * @param definition
+ * @param madeSecrets credentials already made earlier in the same
+ *   run, keyed by namespace and name, so a credential two packages
+ *   both declare is made once. Added to as this goes.
+ * @returns
+ */
+export function buildPackageCommands(
+  definition: PackageDefinition,
+  madeSecrets: Set<string> = new Set(),
+): CommandSpec[] {
+  const commands: CommandSpec[] = [];
+
+  const { authentik, gate } = definition;
+
+  // Said before anything is installed, so an application isn't left
+  // running with nothing anyone can sign in to it through
+  if (authentik !== undefined || gate !== undefined) {
+    commands.push(buildRequireAuthentikCommand(definition.name));
+  }
+
+  // What the chart needs to find already there. Authentik's database
+  // is the example: the chart won't come up without one, and the
+  // resource type it's written in arrives with CloudNativePG, which
+  // the ordering has already installed.
+  for (const manifest of definition.manifests?.before ?? []) {
+    commands.push(buildManifestCommand(definition, manifest, "before"));
+  }
+
+  const { chart } = definition;
+  if (chart !== undefined) {
+    const charted = { ...definition, chart };
+    commands.push(buildAddRepoCommand(charted));
+
+    if (definition.valuesFile !== undefined) {
+      commands.push(buildWriteValuesCommand(definition));
+    }
+
+    commands.push(buildInstallCommand(charted));
+  }
+
+  // The credentials the manifests below refer to. Ahead of them,
+  // because a role whose Secret isn't there yet is a role that
+  // doesn't get made, and behind the chart, because the namespaces
+  // these go in belong to the package rather than to this step.
+  const secrets = [
+    ...(definition.secrets ?? []),
+    ...(gate !== undefined ? getGateSecrets(gate) : []),
+  ];
+  for (const secret of secrets) {
+    const where = `${secret.namespace ?? definition.namespace}/${secret.name}`;
+
+    if (madeSecrets.has(where)) {
+      continue;
+    }
+
+    madeSecrets.add(where);
+    commands.push(buildCreateSecretCommand(secret, definition.namespace));
+  }
+
+  // Authentik is told about the client as soon as its Secret exists,
+  // and before the application starts. oauth2-proxy reads Authentik's
+  // discovery document for its application as it starts and gives up
+  // if there isn't one, so the other way round is a crash loop that
+  // only ends when the back off happens to line up.
+  if (authentik !== undefined) {
+    commands.push(
+      buildApplyBlueprintCommand(
+        definition.name,
+        authentik,
+        definition.namespace,
+        blueprintFromFile(authentik.blueprint),
+      ),
+    );
+  }
+
+  if (gate !== undefined) {
+    commands.push(
+      buildApplyBlueprintCommand(
+        `${definition.name}-gate`,
+        getGateClient(gate),
+        definition.namespace,
+        buildGateBlueprint(gate),
+      ),
+    );
+  }
+
+  // And what belongs with it but isn't in it
+  for (const manifest of definition.manifests?.after ?? []) {
+    commands.push(buildManifestCommand(definition, manifest, "after"));
+  }
+
+  // The gate last, since it only forwards to what's above
+  if (gate !== undefined) {
+    commands.push(
+      buildManifestCommand(
+        definition,
+        "gate/OAuth2Proxy.yaml",
+        "after",
+        buildGateManifest(gate, definition.namespace),
+      ),
+    );
+  }
+
+  if (secrets.length > 0) {
+    commands.push(
+      buildVerifySecretsCommand(secrets, definition.namespace, definition.name),
+    );
+  }
+
+  if (definition.chart !== undefined) {
+    commands.push(buildVerifyCommand(definition));
+  }
+
+  // The gate's own Deployment is waited for like the package's
+  const rollout = [
+    ...(definition.rollout ?? []),
+    ...(gate !== undefined ? [`deployment/${getGateName(gate)}`] : []),
+  ];
+  if (rollout.length > 0) {
+    commands.push(buildRolloutCommand({ ...definition, rollout }));
+    commands.push(buildVerifyRolloutCommand({ ...definition, rollout }));
+  }
+
+  if (authentik !== undefined) {
+    commands.push(buildVerifyAuthentikCommand(definition.name, authentik));
+  }
+
+  if (gate !== undefined) {
+    commands.push(buildVerifyAuthentikCommand(`${definition.name}-gate`, getGateClient(gate)));
+  }
+
+  return commands;
+}
+
+/**
+ * Build a bundle that installs one package and nothing else.
+ *
+ * Nothing it requires is installed along with it. This is for adding
+ * an application to a cluster that already has its foundations, and
+ * re-running the whole chart bundle to get one more application would
+ * upgrade everything else in passing. What it needs is checked
+ * instead, by the package's own commands and the manifests failing
+ * to apply.
+ *
+ * The configuration still counts: a version, a namespace or a values
+ * file it gives for the package is used here as it would be by
+ * "helm-charts".
+ *
+ * @param name the package
+ * @returns the bundle's commands, as a function of the configuration
+ */
+export function buildSinglePackageBundle(name: string) {
+  return (config: CloudConfig): CommandSpec[] => {
+    const definition = resolvePackage(name, getPackageSelections(config)[name]);
+
+    const commands: CommandSpec[] = [
+      {
+        name: `require-cluster-${name}`,
+        purpose: CommandPurpose.Require,
+        description: `Check the namespace ${name} goes in is there`,
+        runOn: CommandTarget.ControlPlane,
+        env: buildKubeEnv,
+        command: `kubectl get namespace ${quoteForShell(definition.namespace)} > /dev/null || { echo "There's no ${definition.namespace} namespace to install ${name} into. It comes with ${(definition.requires ?? []).join(", ") || "the cluster's foundations"} — install that first, or use the \\"helm-charts\\" bundle with ${name} enabled, which installs what it needs." >&2; exit 1; }`,
+        output: OutputType.Raw,
+      },
+    ];
+
+    if (definition.chart !== undefined) {
+      commands.push(checkHelmAvailableCommand);
+    }
+
+    return [...commands, ...buildPackageCommands(definition)];
+  };
+}
+
+/**
  * Build the bundle that installs a cluster's charts.
  *
  * Built from the configuration rather than fixed, because only the
@@ -392,64 +676,12 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   console.log(`Packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`);
 
   const commands: CommandSpec[] = [
-    {
-      name: "check-helm-available",
-      purpose: CommandPurpose.Require,
-      description: "Check Helm is installed on the control plane",
-      runOn: CommandTarget.ControlPlane,
-      env: buildHelmEnv,
-      command:
-        'command -v helm > /dev/null 2>&1 || { echo "Helm isn\'t installed on the control plane. Run the \\"helm\\" bundle first." >&2; exit 1; }\nhelm version --short',
-      output: OutputType.Raw,
-    },
+    checkHelmAvailableCommand,
     readStorageShapesCommand,
   ];
 
   for (const definition of ordered) {
-    // What the chart needs to find already there. Authentik's database
-    // is the example: the chart won't come up without one, and the
-    // resource type it's written in arrives with CloudNativePG, which
-    // the ordering above has already installed.
-    for (const manifest of definition.manifests?.before ?? []) {
-      commands.push(buildManifestCommand(definition, manifest, "before"));
-    }
-
-    commands.push(buildAddRepoCommand(definition));
-
-    if (definition.valuesFile !== undefined) {
-      commands.push(buildWriteValuesCommand(definition));
-    }
-
-    commands.push(buildInstallCommand(definition));
-
-    // The credentials the manifests below refer to. Ahead of them,
-    // because a role whose Secret isn't there yet is a role that
-    // doesn't get made, and behind the chart, because the namespaces
-    // these go in belong to the package rather than to this step.
-    const secrets = definition.secrets ?? [];
-    for (const secret of secrets) {
-      const where = `${secret.namespace ?? definition.namespace}/${secret.name}`;
-
-      if (madeSecrets.has(where)) {
-        continue;
-      }
-
-      madeSecrets.add(where);
-      commands.push(buildCreateSecretCommand(secret, definition.namespace));
-    }
-
-    // And what belongs with it but isn't in it
-    for (const manifest of definition.manifests?.after ?? []) {
-      commands.push(buildManifestCommand(definition, manifest, "after"));
-    }
-
-    if (secrets.length > 0) {
-      commands.push(
-        buildVerifySecretsCommand(secrets, definition.namespace, definition.name),
-      );
-    }
-
-    commands.push(buildVerifyCommand(definition));
+    commands.push(...buildPackageCommands(definition, madeSecrets));
   }
 
   return commands;

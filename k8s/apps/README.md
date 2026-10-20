@@ -60,6 +60,65 @@ The chart bundles its own PostgreSQL. Community Cloud turns that off
 and points it at CloudNativePG instead — one way of running Postgres
 across the cluster is easier to back up, upgrade and reason about.
 
+## Invoice Ninja (`invoice-ninja/`)
+
+[Invoice Ninja](https://invoiceninja.com) is invoicing, quotes and
+payments. Install it with the `invoice-ninja` package, or the bundle of
+the same name; it's reached at `values.domain.invoicing`.
+
+| File | What it is |
+|---|---|
+| `InvoiceNinja.yaml` | The application: PHP-FPM, with nginx beside it in the same pod. |
+| `InvoiceNinja.database.yaml` | Its MariaDB. |
+| `InvoiceNinja.storage.yaml` | The volume for documents, PDFs and caches. |
+| `InvoiceNinja.config.yaml` | Its configuration, and nginx's. |
+| `InvoiceNinja.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+| `InvoiceNinja.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+
+The one exception to CloudNativePG: Invoice Ninja runs on MySQL or
+MariaDB and nothing else, so it has a MariaDB of its own.
+
+Its users sign in through Authentik with OpenID Connect, which
+Invoice Ninja supports itself from 5.13.38. The client portal, where
+customers open and pay invoices without an account, is left open —
+it has to be.
+
+## Documenso (`documenso/`)
+
+[Documenso](https://documenso.com) is document signing. Install it
+with the `documenso` package, or the bundle of the same name; it's
+reached at `values.domain.signing`.
+
+| File | What it is |
+|---|---|
+| `Documenso.yaml` | The application. |
+| `Documenso.database.yaml` | Its role and database in cc-postgres. |
+| `Documenso.config.yaml` | Its configuration. |
+| `Documenso.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+| `Documenso.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+
+It signs in through Authentik with OpenID Connect, and only that way:
+passwords are off, and an account is made for whoever Authentik lets
+through. Signers open documents through the links they're sent, with
+no account. Documents are kept in the database, so it needs no volume,
+and completed ones are signed with a self-signed certificate the
+installer generates. Mail has to be configured in
+`Documenso.config.yaml` before it sends any.
+
+## Single sign on
+
+Both register a client with Authentik as they're installed: the
+installer generates the client ID and secret into a Secret, then hands
+Authentik the application's `.blueprint.yaml` with them. Who may sign
+in is decided in Authentik, by what's bound to each application there.
+
+Something with no sign in of its own goes behind a gate instead: a
+package that declares one gets an oauth2-proxy in front of it,
+registered with Authentik the same way, with nothing to write here —
+the proxy and its blueprint are built by the installer. Its route then
+sends requests to `<name>-oauth2-proxy` on port 4180, rather than to
+the application.
+
 ## Mattermost (`mattermost/`)
 
 [Mattermost](https://mattermost.com) is team chat.

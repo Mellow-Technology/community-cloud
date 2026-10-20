@@ -1,0 +1,20 @@
+# Invoice Ninja's own files: generated PDFs, uploaded documents and
+# logos, and Laravel's caches and sessions.
+#
+# A volume rather than a bucket. Twenty and Authentik keep theirs in
+# Garage, but nothing in the installer provisions object storage yet,
+# and Invoice Ninja's S3 support covers documents and not the rest of
+# what it writes here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: invoice-ninja-storage
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  storageClassName: cc-local-ssd-fast
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
