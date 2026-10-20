@@ -43,6 +43,10 @@ import {
   buildVerifyAuthentikCommand,
 } from "./Authentik.ts";
 import {
+  buildApplyMailSecretCommand,
+  buildVerifyMailSecretCommand,
+} from "./Mail.ts";
+import {
   buildGateBlueprint,
   buildGateManifest,
   getGateClient,
@@ -137,7 +141,7 @@ const readStorageShapesCommand: CommandSpec = {
 /**
  * Check Helm is there before asking it for anything.
  */
-const checkHelmAvailableCommand: CommandSpec = {
+export const checkHelmAvailableCommand: CommandSpec = {
   name: "check-helm-available",
   purpose: CommandPurpose.Require,
   description: "Check Helm is installed on the control plane",
@@ -204,6 +208,17 @@ function getValuesPath(definition: PackageDefinition): string {
 }
 
 /**
+ * Whether a package has values to hand its chart, from a file or
+ * built in code.
+ *
+ * @param definition
+ * @returns
+ */
+function hasValues(definition: PackageDefinition): boolean {
+  return definition.valuesFile !== undefined || definition.valuesSource !== undefined;
+}
+
+/**
  * Add the chart's repository.
  *
  * @param definition
@@ -249,7 +264,9 @@ function buildWriteValuesCommand(definition: PackageDefinition): CommandSpec {
     // command, so nothing secret in them turns up in a process listing
     // on the control plane or in an error quoting the command back
     stdin: (config: CloudConfig, context: any) =>
-      renderInstallerFile(config, definition.valuesFile as string, context),
+      definition.valuesSource !== undefined
+        ? definition.valuesSource(config, context)
+        : renderInstallerFile(config, definition.valuesFile as string, context),
     output: OutputType.Raw,
   };
 }
@@ -358,7 +375,7 @@ function buildInstallCommand(definition: ChartedPackage): CommandSpec {
         args.push(`--version ${quoteForShell(definition.version)}`);
       }
 
-      if (definition.valuesFile !== undefined) {
+      if (hasValues(definition)) {
         args.push(`--values ${getValuesPath(definition)}`);
       }
 
@@ -466,8 +483,9 @@ function buildVerifyRolloutCommand(definition: PackageDefinition): CommandSpec {
  *
  * @param definition
  * @param madeSecrets credentials already made earlier in the same
- *   run, keyed by namespace and name, so a credential two packages
- *   both declare is made once. Added to as this goes.
+ *   run, keyed by namespace and name — and the mail server's, by
+ *   namespace — so a credential two packages both need is made once.
+ *   Added to as this goes.
  * @returns
  */
 export function buildPackageCommands(
@@ -497,7 +515,7 @@ export function buildPackageCommands(
     const charted = { ...definition, chart };
     commands.push(buildAddRepoCommand(charted));
 
-    if (definition.valuesFile !== undefined) {
+    if (hasValues(definition)) {
       commands.push(buildWriteValuesCommand(definition));
     }
 
@@ -550,6 +568,15 @@ export function buildPackageCommands(
     );
   }
 
+  // The mail server's credentials, which the manifests below refer to.
+  // Once per namespace, like the generated credentials above.
+  const mailKey = `mail:${definition.namespace}`;
+  const sendsMail = definition.mail === true && !madeSecrets.has(mailKey);
+  if (sendsMail) {
+    madeSecrets.add(mailKey);
+    commands.push(buildApplyMailSecretCommand(definition.namespace));
+  }
+
   // And what belongs with it but isn't in it
   for (const manifest of definition.manifests?.after ?? []) {
     commands.push(buildManifestCommand(definition, manifest, "after"));
@@ -571,6 +598,10 @@ export function buildPackageCommands(
     commands.push(
       buildVerifySecretsCommand(secrets, definition.namespace, definition.name),
     );
+  }
+
+  if (sendsMail) {
+    commands.push(buildVerifyMailSecretCommand(definition.namespace));
   }
 
   if (definition.chart !== undefined) {

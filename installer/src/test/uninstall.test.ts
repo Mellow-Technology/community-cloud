@@ -57,7 +57,7 @@ const CONFIG = configFrom({
 
 // What an install does to build the cluster rather than a machine.
 // None of it has any business running while a node is leaving.
-const CLUSTER_WIDE = ["cilium", "gateway", "helm", "helm-charts", "cluster"];
+const CLUSTER_WIDE = ["cilium", "gateway", "helm", "helm-charts", "dns", "cluster"];
 
 /**
  * The commands in a bundle, by name.

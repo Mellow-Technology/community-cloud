@@ -253,8 +253,8 @@ Authentik is the only way in, and an account is made for whoever
 Authentik sends. The people documents are sent to for signing use
 their links, without an account. It signs completed documents with a
 self-signed certificate the installer makes, in the `documenso-signing`
-Secret. It sends email only once SMTP is configured in
-`Documenso.config.yaml`; until then, signing links are shared by hand.
+Secret. It sends email through the cluster's mail server — see
+[`smtp`](#smtp) — and without one, signing links are shared by hand.
 Making someone a Documenso administrator is done in its database —
 add `ADMIN` to their `roles` in the `User` table.
 
@@ -335,11 +335,123 @@ is too, so `config.adminEmail` reaches a manifest as
 `.Values.adminEmail`.
 
 The manifests currently reference `adminEmail`, `domain.main`,
-`domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost` and
-`authentik.secretKey`. A few values are derived rather than written:
-`k8sApiServer` and `k8sApiPort` come from the control-plane node,
-`l2Announcements` from the gateway mode, and `networkDevices` from the
-shared interface list.
+`domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
+`domain.invoicing`, `domain.signing` and `authentik.secretKey`. A few
+values are derived rather than written: `k8sApiServer` and
+`k8sApiPort` come from the control-plane node, `l2Announcements` from
+the gateway mode, `networkDevices` from the shared interface list, and
+`mail` from [`smtp`](#smtp).
+
+### `smtp`
+
+The mail server applications send through — invoices, signing
+requests, password resets. It's assumed to be somewhere else: a
+provider, or a relay on your network. Running one well is mostly a
+matter of reputation, which a cluster in an office isn't placed to
+build.
+
+```jsonc
+"smtp": {
+  "host": "smtp.example.com",
+  "port": 587,                 // defaults to the usual port for "security"
+  "security": "starttls",      // starttls (587), tls (465) or none (25)
+  "username": "mailer@example.com",
+  "password": "…",
+  "fromDomain": "example.com"  // defaults to values.domain.main
+}
+```
+
+Leave out `username` and `password` for a relay that takes mail
+without them. Applications send as an address at `fromDomain` —
+`invoices@`, `documents@`, `auth@` — so most providers will want that
+domain verified with them first.
+
+Said once, it reaches every application in that application's own
+terms: the manifests read it as `.Values.mail`, which has every field
+whether or not there's a server, with `enabled` to tell the two apart.
+The username and password go into a `cc-smtp` Secret in each namespace
+that has something sending mail, rather than into any manifest, and
+they're applied on every install, so a changed password lands by
+changing the file and running the install again. Applications restart
+for a new server on their own; for a new password alone, restart them
+with `kubectl rollout restart`.
+
+Without `smtp`, applications keep their mail to themselves — Invoice
+Ninja in its log, Documenso not at all. `community-cloud configure
+--section mail` asks for it, and preflight checks it, including the
+usual mismatch of STARTTLS on port 465.
+
+### `dns`
+
+Publishes the hostnames applications are routed on, through
+[ExternalDNS](https://kubernetes-sigs.github.io/external-dns/latest/),
+so a name resolves as soon as its route exists — and the Let's Encrypt
+challenge after it finds the name already there.
+
+Different domains can live with different providers, and each is
+tied to the namespaces allowed to use it: the office applications in
+`cc-office` publish the office's domain, and a client or team given a
+namespace of their own publishes theirs, with their own provider
+account.
+
+```jsonc
+"dns": {
+  // What records point at. Needed behind a router forwarding ports,
+  // where the Gateway's own address is a private one.
+  "target": "203.0.113.10",
+
+  "providers": [
+    {
+      "name": "office",
+      "provider": "cloudflare",
+      "domains": ["example.com"],
+      "excludeDomains": ["clients.example.com"],
+      "namespaces": ["cc-office"],
+      "credentials": { "CF_API_TOKEN": "…" }
+    },
+    {
+      "name": "acme",
+      "provider": "aws",
+      "domains": ["acme.clients.example.com"],
+      "namespaces": ["client-acme"],
+      "credentials": { "AWS_ACCESS_KEY_ID": "…", "AWS_SECRET_ACCESS_KEY": "…" },
+      "args": ["--aws-zone-type=public"]
+    }
+  ]
+}
+```
+
+Each provider runs one ExternalDNS for each namespace it lists, in
+the `external-dns` namespace. Each instance reads only its own
+namespace's routes and writes only its own `domains`, so a route in
+`client-acme` naming `example.com` is ignored rather than published.
+`credentials` are environment variables, named as the provider's
+ExternalDNS documentation names them; they go into a Secret beside
+the instances, out of reach of anyone with access to the namespaces
+being published. `args` passes provider settings through. `target`
+can be set per provider too, and `policy` is `sync` (records go when
+their route does) or `upsert-only` (nothing is ever removed).
+
+Records are marked with an owner ID per instance, so instances sharing
+a zone — or records made by hand, or another cluster's — are left
+alone.
+
+Preflight checks that no two sets of namespaces can write the same
+names: a domain inside another provider's has to be in that provider's
+`excludeDomains`, as `clients.example.com` is above. It also insists on
+`target` when the cluster is reached through port forwarding.
+
+The `dns` bundle installs it as part of `install`, after the charts,
+and can be run again on its own after changing this section:
+
+```bash
+community-cloud run-bundle dns server-1 cc.config.json
+```
+
+A namespace publishing through ExternalDNS still needs its routes
+attached to the cluster Gateway, which means the
+`whereWereGoing: weDontNeedRoads` label on the namespace — see
+`k8s/apps/office/Office.namespace.yaml`.
 
 ### `pipelines`
 

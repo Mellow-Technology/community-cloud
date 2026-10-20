@@ -18,8 +18,18 @@
 authentik:
   # TODO: More templated values here
   secret_key: {{ .Values.authentik.secretKey | quote }}
+  # Password resets, invitations and notifications go through the
+  # cluster's mail server, from "smtp" in the configuration. The
+  # username and password come from the cc-smtp Secret, below, rather
+  # than being written into these values.
   email:
-    from: {{ printf "auth@%s" .Values.domain.main | quote }}
+    from: {{ printf "auth@%s" .Values.mail.fromDomain | quote }}
+{{ if .Values.mail.enabled }}
+    host: {{ .Values.mail.host | quote }}
+    port: {{ .Values.mail.port }}
+    use_tls: {{ .Values.mail.startTls }}
+    use_ssl: {{ .Values.mail.implicitTls }}
+{{ end }}
   # Community Cloud aims for max privacy by default
   # In most cases like this we will default to not
   # reporting
@@ -74,6 +84,20 @@ global:
     - configMapRef:
         name: authentik-bucket
   env:
+    # Optional, so a cluster without a mail server, and so without the
+    # Secret, still starts
+    - name: AUTHENTIK_EMAIL__USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: cc-smtp
+          key: username
+          optional: true
+    - name: AUTHENTIK_EMAIL__PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: cc-smtp
+          key: password
+          optional: true
     # TODO: Support read-replicas. Keep things
     # available.
     # https://docs.goauthentik.io/install-config/configuration/#read-replicas

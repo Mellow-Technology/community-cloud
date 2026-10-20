@@ -47,13 +47,21 @@ data:
   NEXT_PRIVATE_SIGNING_TRANSPORT: "local"
   NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH: "/opt/documenso/cert.p12"
 
-  # Documenso sends signing requests and receipts by email, and has
-  # no settings page for mail: it's configured here or not at all. A
-  # cluster has no mail server of its own, so until one is set here
-  # nothing is sent, and documents are shared by copying their
-  # signing links instead. The sender has to be set regardless.
+  # Documenso sends signing requests and receipts by email, through
+  # the cluster's mail server from "smtp" in the configuration. The
+  # username and password come from the cc-smtp Secret, in
+  # Documenso.yaml; with no username it doesn't try to log in. With no
+  # mail server nothing is sent, and documents are shared by copying
+  # their signing links instead. The sender has to be set regardless.
   NEXT_PRIVATE_SMTP_TRANSPORT: "smtp-auth"
-  NEXT_PRIVATE_SMTP_FROM_ADDRESS: {{ printf "documents@%s" .Values.domain.main | quote }}
+{{ if .Values.mail.enabled }}
+  NEXT_PRIVATE_SMTP_HOST: {{ .Values.mail.host | quote }}
+  NEXT_PRIVATE_SMTP_PORT: {{ .Values.mail.port | quote }}
+  # TLS from the start; otherwise it upgrades when the server offers
+  NEXT_PRIVATE_SMTP_SECURE: {{ .Values.mail.implicitTls | quote }}
+  NEXT_PRIVATE_SMTP_UNSAFE_IGNORE_TLS: {{ .Values.mail.ignoreTls | quote }}
+{{ end }}
+  NEXT_PRIVATE_SMTP_FROM_ADDRESS: {{ printf "documents@%s" .Values.mail.fromDomain | quote }}
   NEXT_PRIVATE_SMTP_FROM_NAME: "Documenso"
 
   # Community Cloud aims for privacy by default

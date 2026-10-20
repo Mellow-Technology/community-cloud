@@ -23,6 +23,7 @@ import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
+import { buildMailValues } from "./mail.ts";
 import {
   STORAGE_NODE_SELECTOR,
   buildShape,
@@ -371,6 +372,14 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   // scheduled — and an install that waits for it never finishes.
   if (values.storageControllerReplicas === undefined) {
     values.storageControllerReplicas = countStorageNodes(rawConfig);
+  }
+
+  // The mail server, in the shapes applications want it. Templates
+  // read this rather than "smtp", so they find every field whether or
+  // not there's a mail server, and have no reason to go near the
+  // password — that reaches applications through a Secret.
+  if (values.mail === undefined) {
+    values.mail = buildMailValues(rawConfig);
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

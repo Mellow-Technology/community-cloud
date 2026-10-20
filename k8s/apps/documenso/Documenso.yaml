@@ -37,6 +37,11 @@ spec:
         app: documenso
         role: server
         app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one. Nothing restarts it for a changed
+        # ConfigMap or Secret otherwise.
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
     spec:
       nodeSelector:
         node-role.kubernetes.io/worker: worker
@@ -92,6 +97,20 @@ spec:
                 secretKeyRef:
                   name: documenso-oidc
                   key: password
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: NEXT_PRIVATE_SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: NEXT_PRIVATE_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
             - name: NEXT_PRIVATE_SIGNING_PASSPHRASE
               valueFrom:
                 secretKeyRef:

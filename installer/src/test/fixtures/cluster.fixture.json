@@ -18,6 +18,37 @@
       "secretKey": "not-a-real-signing-key-this-is-a-fixture"
     }
   },
+  "smtp": {
+    "host": "smtp.example.test",
+    "port": 587,
+    "security": "starttls",
+    "username": "fixture-mailer",
+    "password": "not-a-real-password-this-is-a-fixture"
+  },
+  "dns": {
+    "target": "203.0.113.10",
+    "providers": [
+      {
+        "name": "office",
+        "provider": "cloudflare",
+        "domains": ["example.test"],
+        "excludeDomains": ["clients.example.test"],
+        "namespaces": ["cc-office"],
+        "credentials": { "CF_API_TOKEN": "not-a-real-token-this-is-a-fixture" }
+      },
+      {
+        "name": "acme",
+        "provider": "aws",
+        "domains": ["acme.clients.example.test"],
+        "namespaces": ["client-acme"],
+        "credentials": {
+          "AWS_ACCESS_KEY_ID": "not-a-real-key-id",
+          "AWS_SECRET_ACCESS_KEY": "not-a-real-secret-key"
+        },
+        "args": ["--aws-zone-type=public"]
+      }
+    ]
+  },
   "network": {
     "congestionControl": "bbr",
     "cilium": {

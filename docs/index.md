@@ -97,6 +97,7 @@ cluster in service.
 | `node-joined` | Whether a node has joined the cluster and gone Ready |
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
+| `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `invoice-ninja`, `documenso` | One application on its own, into a cluster that has the rest, registered with Authentik |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |

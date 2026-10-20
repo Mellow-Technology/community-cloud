@@ -22,9 +22,11 @@ import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
 import { getPackage, getPackageSelections } from "../cli/commands/packages.ts";
+import { checkMailConfig } from "../util/mail.ts";
+import { checkDnsConfig } from "../util/dns.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
-import { K3SInstallationType, NodeRole } from "../util/types.ts";
+import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
 import { connectToNode, NodeConnection } from "./nodeConnection.ts";
 
 /**
@@ -166,6 +168,19 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
 
   if (hasAddresses && gateways.length === 0) {
     say('There are gateway addresses configured, but no node is marked as a gateway. Set "gateway": true on the nodes that can be reached from outside.');
+  }
+
+  // A mail server that's half described fails later and quietly: mail
+  // that never arrives, from an application that says it sent it
+  for (const problem of checkMailConfig(config.getConfig())) {
+    say(problem);
+  }
+
+  // DNS that would let one namespace write another's records, or
+  // publish an address nobody outside can reach
+  const gatewayMode = config.getNetworkSection("gateway").mode ?? GatewayMode.Floating;
+  for (const problem of checkDnsConfig(config.getConfig(), gatewayMode)) {
+    say(problem);
   }
 
   // What each enabled package's templates need. Checked here because

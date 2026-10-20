@@ -56,11 +56,21 @@ data:
   OIDC_PROVIDER_LABEL: "Community Cloud"
   OIDC_SCOPES: "openid profile email"
 
-  # Mail is logged rather than sent until someone configures it, which
-  # can be done in Invoice Ninja's own settings. A cluster has no mail
-  # server of its own to point this at.
+  # Mail goes through the cluster's mail server, from "smtp" in the
+  # configuration, and to Invoice Ninja's log when there isn't one.
+  # The username and password come from the cc-smtp Secret, in
+  # InvoiceNinja.yaml. Symfony's mailer, which Laravel uses, takes
+  # the kind of TLS as a scheme: smtps for TLS from the start, smtp
+  # for upgrading to it when the server offers.
+{{ if .Values.mail.enabled }}
+  MAIL_MAILER: "smtp"
+  MAIL_HOST: {{ .Values.mail.host | quote }}
+  MAIL_PORT: {{ .Values.mail.port | quote }}
+  MAIL_SCHEME: {{ .Values.mail.scheme | quote }}
+{{ else }}
   MAIL_MAILER: "log"
-  MAIL_FROM_ADDRESS: {{ printf "invoices@%s" .Values.domain.main | quote }}
+{{ end }}
+  MAIL_FROM_ADDRESS: {{ printf "invoices@%s" .Values.mail.fromDomain | quote }}
   MAIL_FROM_NAME: "Invoice Ninja"
 ---
 # The image is PHP-FPM and nothing else. The project's own compose

@@ -46,6 +46,11 @@ spec:
         app: invoice-ninja
         role: server
         app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one. Nothing restarts it for a changed
+        # ConfigMap or Secret otherwise.
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
     spec:
       nodeSelector:
         node-role.kubernetes.io/worker: worker
@@ -82,6 +87,20 @@ spec:
                 secretKeyRef:
                   name: invoice-ninja-admin
                   key: password
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: MAIL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
             - name: OIDC_CLIENT_ID
               valueFrom:
                 secretKeyRef:

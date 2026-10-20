@@ -37,6 +37,11 @@ import type { GateDefinition } from "./OAuth2Proxy.ts";
  *   with the installer or a plain path for one on this machine.
  *   Rendered as a template first, so it can refer to the
  *   configuration through ".Values".
+ * - valuesSource: values built in code rather than read from a file,
+ *   for a package made from the configuration rather than written
+ *   down — one ExternalDNS per provider and namespace, say, where the
+ *   values are the only thing that differs. Takes the place of
+ *   "valuesFile".
  * - requires: packages that have to be installed before this one.
  *   Pulled in automatically when this package is enabled.
  * - manifests: manifests belonging to this package that aren't part of
@@ -68,6 +73,10 @@ import type { GateDefinition } from "./OAuth2Proxy.ts";
  *   "blueprint" is an Authentik blueprint describing the provider and
  *   the application, and "secret" the credentials it's given — see
  *   Authentik.ts.
+ * - mail: whether it sends email. If the configuration has a mail
+ *   server, its credentials are put in the package's namespace, as
+ *   the Secret "cc-smtp", before its manifests are applied — see
+ *   Mail.ts. Its templates read the rest from ".Values.mail".
  * - gate: an oauth2-proxy in front of the package, for something with
  *   no sign in of its own — see OAuth2Proxy.ts. Its Deployment, its
  *   credentials and its client in Authentik are all made from this;
@@ -81,6 +90,7 @@ export interface PackageDefinition {
   namespace: string;
   releaseName?: string;
   valuesFile?: string;
+  valuesSource?: (config: CloudConfig, context: any) => string;
   requires?: string[];
   after?: string[];
   manifests?: { before?: string[]; after?: string[] };
@@ -88,6 +98,7 @@ export interface PackageDefinition {
   rollout?: string[];
   values?: string[];
   authentik?: AuthentikClient;
+  mail?: boolean;
   gate?: GateDefinition;
 
   // Which plugin contributed this, when one did
@@ -279,6 +290,7 @@ const builtInPackages: PackageDefinition[] = [
     ],
 
     rollout: ["statefulset/invoice-ninja-mariadb", "deployment/invoice-ninja"],
+    mail: true,
     values: ["domain.invoicing", "domain.auth", "domain.main", "adminEmail"],
 
     authentik: {
@@ -364,6 +376,7 @@ const builtInPackages: PackageDefinition[] = [
     ],
 
     rollout: ["deployment/documenso"],
+    mail: true,
     values: ["domain.signing", "domain.auth", "domain.main"],
 
     authentik: {

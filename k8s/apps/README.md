@@ -102,8 +102,19 @@ passwords are off, and an account is made for whoever Authentik lets
 through. Signers open documents through the links they're sent, with
 no account. Documents are kept in the database, so it needs no volume,
 and completed ones are signed with a self-signed certificate the
-installer generates. Mail has to be configured in
-`Documenso.config.yaml` before it sends any.
+installer generates.
+
+## Mail
+
+Applications that send email read the cluster's mail server, from
+`smtp` in the configuration, as `.Values.mail`: `enabled`, `host`,
+`port`, `fromDomain`, and the kind of TLS in the forms different
+applications want it — `scheme` (`smtps` or `smtp`), `implicitTls`,
+`startTls`, `ignoreTls`. The username and password are in the
+`cc-smtp` Secret in the application's namespace; read them with
+`optional: true`, so the application still starts on a cluster with
+no mail server. A pod annotation of `.Values.mail.revision` restarts
+it when the server changes.
 
 ## Single sign on
 

@@ -21,7 +21,8 @@
  * 10. gateway     — a way in from outside
  * 11. helm        — Helm itself, on the control plane
  * 12. helm-charts — storage classes, databases, applications
- * 13. cluster     — record what this cluster was built from
+ * 13. dns         — publish the applications' names, now they're routed
+ * 14. cluster     — record what this cluster was built from
  *
  * Nebula is not here. A mesh is a decision about how sites reach each
  * other rather than a step in building one cluster, and a
@@ -51,6 +52,7 @@ export const INSTALL_PIPELINE = [
   "gateway",
   "helm",
   "helm-charts",
+  "dns",
   "cluster",
 ];
 

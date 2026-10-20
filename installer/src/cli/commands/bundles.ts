@@ -29,6 +29,7 @@ import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
 import { DrainCommands } from "./Drain.ts";
 import { K3sUninstallCommands, NodeRemovedCommands } from "./Uninstall.ts";
 import { CleanCommands, StorageRemoveCommands } from "./Clean.ts";
+import { DnsCommands } from "./Dns.ts";
 
 /**
  * A bundle that can be run.
@@ -92,6 +93,11 @@ const builtInBundles: BundleDefinition[] = [
     name: "cluster-online",
     description: "Check the cluster is up and answering, before joining a node to it",
     commands: ClusterOnlineCommands,
+  },
+  {
+    name: "dns",
+    description: "Install ExternalDNS for each configured DNS provider and namespace",
+    commands: DnsCommands,
   },
   {
     name: "documenso",
