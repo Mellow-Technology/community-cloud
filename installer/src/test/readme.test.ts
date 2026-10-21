@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { StorageClass } from "../cli/commands/LVM.ts";
 import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
 import { checkConfiguration } from "../runners/preflight.ts";
+import { checkSchema, getConfigSchema } from "../util/configSchema.ts";
 import { getBundleNames } from "../cli/commands/bundles.ts";
 import { packageCatalogue } from "../cli/commands/packages.ts";
 import { regions } from "../topology/regions.ts";
@@ -71,6 +72,10 @@ describe("the example configuration", () => {
     assert.deepEqual(problems, []);
   });
 
+  it("is one the schema accepts, with nothing to warn about", () => {
+    assert.deepEqual(checkSchema(example), { problems: [], warnings: [] });
+  });
+
   it("names a real gateway mode", () => {
     assert.ok(Object.values(GatewayMode).includes(example.network.gateway.mode));
   });
@@ -100,6 +105,24 @@ describe("the example configuration", () => {
 });
 
 describe("what the README lists", () => {
+  it("has a section for every part of the configuration", () => {
+    // The schema's own "$schema", and older sections kept only to be
+    // warned about, aren't parts of the configuration anyone writes
+    const sections = Object.entries(getConfigSchema().properties ?? {})
+      .filter(([name, entry]) => name !== "$schema" && entry.deprecated !== true)
+      .map(([name]) => name);
+
+    const missing = sections.filter((name) => !README.includes(`### \`${name}\``));
+    assert.deepEqual(missing, []);
+  });
+
+  it("names every value the schema describes", () => {
+    const values = getConfigSchema().properties?.["values"]?.properties ?? {};
+    const missing = Object.keys(values).filter((name) => !README.includes(`\`${name}`));
+
+    assert.deepEqual(missing, []);
+  });
+
   it("lists every package in the catalogue", () => {
     const missing = packageCatalogue
       .filter((entry) => !README.includes(`\`${entry.name}\``))

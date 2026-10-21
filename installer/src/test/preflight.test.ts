@@ -68,7 +68,7 @@ describe("what preflight catches", () => {
     [
       "a display name that isn't text",
       { k3s: { token: "t" }, nodes: [{ ...SERVER, displayName: 7 }] },
-      "isn't any text",
+      '"nodes[srv].displayName" should be text',
     ],
     [
       "two nodes displayed the same",

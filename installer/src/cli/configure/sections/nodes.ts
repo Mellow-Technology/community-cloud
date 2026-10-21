@@ -22,6 +22,11 @@ import {
   writePath,
 } from "../section.ts";
 import { K3SInstallationType, NodeRole } from "../../../util/types.ts";
+import { regions as worldRegions } from "../../../topology/regions.ts";
+
+// What the region question answers when there isn't one. Not a region
+// code, so it can't be mistaken for one.
+const NO_REGION = "";
 
 /**
  * What each role is for, so the checkbox is readable by someone who
@@ -52,11 +57,10 @@ function getNodes(draft: ConfigDraft): any[] {
 /**
  * Ask about one node, starting from whatever it already says.
  *
- * @param draft
  * @param node
  * @returns
  */
-async function askAboutNode(draft: ConfigDraft, node: any = {}): Promise<any> {
+async function askAboutNode(node: any = {}): Promise<any> {
   const answers: any = { ...node };
 
   answers.name = (
@@ -143,18 +147,37 @@ async function askAboutNode(draft: ConfigDraft, node: any = {}): Promise<any> {
 
   answers.gateway = answers.roles.includes(NodeRole.Gateway);
 
-  const regions = Array.isArray(readPath(draft, "regions")) ? (readPath(draft, "regions") as any[]) : [];
-  if (regions.length > 0) {
-    answers.region = await select({
-      message: "Which region is it in?",
-      default: node.region,
-      choices: regions.map((region: any) => ({ name: region.name, value: region.value })),
-    });
+  // Regions come from a fixed list, so that two clusters in the same
+  // part of the world call it the same thing. A zone is one physical
+  // location within a region, and workloads are spread across zones.
+  const region = await select({
+    message: "Which region is it in?",
+    default: node.region !== undefined ? node.region : NO_REGION,
+    pageSize: 12,
+    choices: [
+      ...worldRegions.map((one) => ({
+        name: `${one.name}  (${one.code})`,
+        value: one.code as string,
+        description: one.note,
+      })),
+      {
+        name: "Leave it unset",
+        value: NO_REGION,
+        description: "Kubernetes won't know where it is, so can't spread workloads by place.",
+      },
+    ],
+  });
 
+  if (region === NO_REGION) {
+    delete answers.region;
+    delete answers.zone;
+  }
+  else {
+    answers.region = region;
     answers.zone = (
       await input({
         message: "Which zone? A single physical location within the region",
-        default: node.zone !== undefined ? node.zone : `${answers.region}-0`,
+        default: node.zone !== undefined ? node.zone : `${region}-0`,
         validate: required("a zone"),
       })
     ).trim();
@@ -214,7 +237,7 @@ export const nodesSection: ConfigSection = {
       }
 
       if (action === "add") {
-        nodes.push(await askAboutNode(draft));
+        nodes.push(await askAboutNode());
         continue;
       }
 
@@ -237,7 +260,7 @@ export const nodesSection: ConfigSection = {
       }
 
       const index = Number.parseInt(action.split(":")[1] as string, 10);
-      nodes[index] = await askAboutNode(draft, nodes[index]);
+      nodes[index] = await askAboutNode(nodes[index]);
     }
 
     writePath(draft, "nodes", nodes);

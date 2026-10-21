@@ -24,6 +24,7 @@ import { getNodeName } from "../cli/commands/K3s.ts";
 import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
 import { checkMailConfig } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
+import { checkSchema } from "../util/configSchema.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
@@ -96,6 +97,12 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
 
   const say = (what: string) => problems.push({ where: "configuration", what });
 
+  // Values of the wrong type or outside what's allowed, before anything
+  // below reads them and draws conclusions
+  for (const problem of checkSchema(config.getConfig()).problems) {
+    say(problem);
+  }
+
   if (nodes.length === 0) {
     say('No nodes. Add them under "nodes", or run "community-cloud configure".');
     return problems;
@@ -155,11 +162,12 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
   // two nodes nobody can tell apart in a report
   const shown = new Map<string, string>();
   for (const node of nodes) {
-    if (node.displayName === undefined) {
+    // One that isn't text at all, the schema has already said
+    if (typeof node.displayName !== "string") {
       continue;
     }
 
-    if (typeof node.displayName !== "string" || node.displayName.trim() === "") {
+    if (node.displayName.trim() === "") {
       say(`Node "${node.name}" has a "displayName" that isn't any text. Leave it out to print the node as "${node.name}".`);
       continue;
     }
@@ -259,7 +267,8 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
  * @returns
  */
 export function findConfigurationWarnings(config: CloudConfig): string[] {
-  const warnings: string[] = [];
+  // Keys nothing reads, and older ones with somewhere better to be
+  const warnings: string[] = [...checkSchema(config.getConfig()).warnings];
   const nebula = config.getNetworkSection("nebula");
 
   // "id" reads like the network's ID, and the setting is "networkID".

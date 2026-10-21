@@ -285,10 +285,9 @@ function checkNamespaceMail(namespace: string, mail: NamespaceMail): string[] {
     return problems;
   }
 
+  // Whether it's one of the kinds there are is the schema's to say,
+  // where it's written rather than once for every namespace using it
   const security = mail.security ?? MailSecurity.StartTls;
-  if (!Object.values(MailSecurity).includes(security as MailSecurity)) {
-    problems.push(`The mail security for ${namespace} is "${security}". It should be one of ${Object.values(MailSecurity).join(", ")}.`);
-  }
 
   const port = getMailPort(mail);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {

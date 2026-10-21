@@ -55,15 +55,24 @@ Nebula API key — so it's gitignored here as `*.config.json`. What the
 installer records *in* the cluster has those stripped out; see
 [Secrets in commands](#secrets-in-commands).
 
+What the file can hold is described by a JSON Schema,
+[`cc.config.schema.json`](cc.config.schema.json). Point the file at it
+with `"$schema"`, as the example below does, and an editor will
+complete keys, explain them, and flag mistakes as you type. The path is
+relative to the configuration file. Preflight, `install`,
+`add-node` and the doctor check against the same schema, so nothing
+depends on the editor (see [Checking a configuration](#checking-a-configuration)).
+
 ### A small complete example
 
 ```jsonc
 {
-  "config": { "adminEmail": "you@example.com" },
+  "$schema": "./installer/cc.config.schema.json",
 
   "k3s": { "token": "a-long-shared-secret" },
 
   "values": {
+    "adminEmail": "you@example.com",
     "domain": { "main": "example.com" }
   },
 
@@ -328,20 +337,32 @@ forms: `auth` (base64 of `username:password`) or `identityToken`.
 `tls` takes `caFile`, `certFile`, `keyFile`, `insecureSkipVerify`.
 `endpoint` and `rewrite` are for mirroring.
 
-### `values` and `config`
+### `values`
 
 What the manifests under `k8s/` render against. Anything in `values`
-is available as `.Values.<path>`; the top level of the configuration
-is too, so `config.adminEmail` reaches a manifest as
-`.Values.adminEmail`.
+is available as `.Values.<path>`. The rest of the configuration is laid
+underneath, so `.Values.nodes` is the node list. That works key for key
+and doesn't flatten sections: `config.adminEmail` would be
+`.Values.config.adminEmail`, which nothing reads. Older configurations
+used a `config` section like that, and preflight warns about one.
 
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
-`domain.invoicing`, `domain.signing` and `authentik.secretKey`. A few
-values are derived rather than written: `k8sApiServer` and
-`k8sApiPort` come from the control-plane node, `l2Announcements` from
-the gateway mode, `networkDevices` from the shared interface list, and
-`mail` from [`smtp`](#smtp).
+`domain.invoicing`, `domain.signing` and `authentik.secretKey`. Unlike
+the rest of the configuration, `values` is open: plugins and your own
+manifests can read anything put here, and preflight won't call it
+unknown.
+
+Some values are derived rather than written. Setting one replaces what
+would have been worked out:
+
+| Key | Derived from |
+|---|---|
+| `k8sApiServer`, `k8sApiPort` | The control-plane node's `apiAddress` or `address`, and `6443`. |
+| `l2Announcements` | The gateway mode: on for `port-forward`. |
+| `networkDevices` | The shared interface list. |
+| `storageControllerReplicas` | How many TopoLVM controllers run: one per `storage-local` node, at least 1 and at most 2. They insist on separate nodes, so a replica with no node of its own never schedules and the install waits for it forever. Set it to run more on a larger cluster. |
+| `mail` | [`smtp`](#smtp), for the namespace being rendered. |
 
 ### `smtp`
 
@@ -498,11 +519,16 @@ Named sequences of bundles, for `run-pipeline`:
 
 `preflight` reads it and says what would stop an install — no server,
 two servers, a missing token, a node that can't be reached, a gateway
-with no addresses — before anything is changed:
+with no addresses — before anything is changed. That includes what the
+[schema](cc.config.schema.json) rules out, such as a value of the wrong
+type, or a node type, role or region that isn't one of those allowed:
 
 ```bash
 community-cloud preflight cc.config.json
 ```
+
+A key nothing reads doesn't stop anything. It gets a warning instead,
+naming the key it was probably meant to be when one is close.
 
 Once a cluster exists, its configuration is recorded in the cluster
 itself as a ConfigMap in `kube-system`, with the secrets stripped.

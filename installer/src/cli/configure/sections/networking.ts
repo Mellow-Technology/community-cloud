@@ -36,11 +36,6 @@ export const networkingSection: ConfigSection = {
       parts.push(`Nebula on "${nebula}"`);
     }
 
-    const tailscale = readPath(draft, "network.tailscale.mode");
-    if (tailscale !== undefined && tailscale !== "none") {
-      parts.push(`Tailscale (${tailscale})`);
-    }
-
     return parts.length > 0 ? parts.join(", ") : NOTHING_SET;
   },
 
@@ -123,66 +118,5 @@ export const networkingSection: ConfigSection = {
         readPath(draft, "network.nebula.defaultRole") ?? DEFAULT_ROLE,
       );
     }
-
-    // Tailscale is an alternative way of joining sites together
-    const tailscale = await select({
-      message:
-        "Should Tailscale be used for cluster networking? (https://docs.k3s.io/networking/distributed-multicloud)",
-      default: readPath(draft, "network.tailscale.mode") ?? "none",
-      choices: [
-        {
-          name: "Yes - install and set up Tailscale",
-          value: "auto",
-        },
-        {
-          name: "Yes - it's already installed, or I'll do it myself before setup",
-          value: "manual",
-        },
-        {
-          name: "No",
-          value: "none",
-        },
-      ],
-    });
-    writePath(draft, "network.tailscale.mode", tailscale);
-  },
-};
-
-export const storageSection: ConfigSection = {
-  name: "storage",
-  title: "Storage",
-
-  describe: (draft) => {
-    const strategy = readPath(draft, "storage.lvm.strategy");
-    return strategy !== undefined ? `LVM: ${strategy}` : NOTHING_SET;
-  },
-
-  run: async (draft: ConfigDraft) => {
-    const strategy = await select({
-      message: "How should Logical Volume Manager be set up on nodes with local storage?",
-      default: readPath(draft, "storage.lvm.strategy") ?? "vg-per-disk-type",
-      choices: [
-        {
-          name: "One volume group per disk type (Recommended)",
-          value: "vg-per-disk-type",
-          description:
-            "A volume group per type of disk, mapping onto TopoLVM device classes and a storage class each. Bulk storage lands on high capacity drives while a database gets the fast ones.",
-        },
-        {
-          name: "Cache pool",
-          value: "cache-pool",
-          description:
-            "SSDs cache a larger pool of spinning disks, in write back mode: faster, at some extra risk should a cache drive fail. Nodes with only one type of disk fall back to a volume group per disk type.",
-        },
-        {
-          name: "One volume group",
-          value: "vg-single",
-          description:
-            "A single volume group regardless of disk type. Simple, but performance is bounded by the slowest drive in the group.",
-        },
-      ],
-    });
-
-    writePath(draft, "storage.lvm.strategy", strategy);
   },
 };
