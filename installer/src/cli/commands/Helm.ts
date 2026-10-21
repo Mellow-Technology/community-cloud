@@ -24,7 +24,7 @@ import {
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
 import { CLASSES_LABEL, STORAGE_ROLE_SELECTOR, readShape } from "../../util/storage.ts";
-import { readLines } from "./output.ts";
+import { field, readLines, readRecordsOfKind } from "./output.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
 import {
   buildCreateSecretCommand,
@@ -33,6 +33,7 @@ import {
 import {
   PackageDefinition,
   getPackageSelections,
+  packageCatalogue,
   resolveInstallOrder,
   resolvePackage,
 } from "./packages.ts";
@@ -416,9 +417,9 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
     runOn: CommandTarget.ControlPlane,
     env: buildHelmEnv,
     command: [
-      `status=$(helm status ${release} --namespace ${namespace} -o json 2>/dev/null | tr -d " \\n" | sed -n 's/.*"status":"\\([a-z]*\\)".*/\\1/p')`,
-      `echo "${definition.name}: $status"`,
-      `[ "$status" = "deployed" ] || { echo "${definition.name} is \\"$status\\", not deployed" >&2; helm status ${release} --namespace ${namespace} >&2; exit 1; }`,
+      `state=$(helm status ${release} --namespace ${namespace} -o json 2>/dev/null | tr -d " \\n" | sed -n 's/.*"status":"\\([a-z]*\\)".*/\\1/p')`,
+      `echo "${definition.name}: $state"`,
+      `[ "$state" = "deployed" ] || { echo "${definition.name} is \\"$state\\", not deployed" >&2; helm status ${release} --namespace ${namespace} >&2; exit 1; }`,
     ],
     output: OutputType.Raw,
   };
@@ -485,6 +486,104 @@ function buildVerifyRolloutCommand(definition: PackageDefinition): CommandSpec {
       `[ -z "$failed" ] || { echo "${definition.name} isn't fully running" >&2; exit 1; }`,
     ],
     output: OutputType.Raw,
+  };
+}
+
+/**
+ * How to tell whether a package is on the cluster at all.
+ *
+ * Its Helm release, for a package that's a chart. For one that's only
+ * manifests, the first workload it says to wait for: what makes it an
+ * application rather than a few objects. A package with neither has
+ * nothing that says it's there, and isn't asked about.
+ *
+ * @param definition
+ * @returns a shell test that succeeds when it's there, and what's
+ *   missing when it isn't
+ */
+export function buildPresenceProbe(
+  definition: PackageDefinition,
+): { probe: string; missing: string } | undefined {
+  const namespace = quoteForShell(definition.namespace);
+
+  if (definition.chart !== undefined) {
+    const release = getReleaseName(definition);
+    return {
+      probe: `helm status ${quoteForShell(release)} --namespace ${namespace} > /dev/null 2>&1`,
+      missing: `there's no Helm release "${release}" in ${definition.namespace}`,
+    };
+  }
+
+  const workload = definition.rollout?.[0];
+  if (workload !== undefined) {
+    return {
+      probe: `kubectl -n ${namespace} get ${quoteForShell(workload)} > /dev/null 2>&1`,
+      missing: `there's no ${workload} in ${definition.namespace}`,
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * The name of a package's check that it's installed.
+ *
+ * @param definition
+ * @returns
+ */
+function getPresenceCheckName(definition: PackageDefinition): string {
+  return `verify-installed-${definition.name}`;
+}
+
+/**
+ * Check a package is on the cluster, before asking how it is.
+ *
+ * Straight after installing it, it always is. The point is everything
+ * else: a check-up of a cluster where a package the configuration
+ * enables isn't there at all. Without this every check it has fails
+ * in turn — no secrets, no rollout, no sign-in — and none of them says
+ * the one thing that's true, which is that it isn't installed. With
+ * it, that's said once, and the rest are skipped.
+ *
+ * @param definition
+ * @returns nothing for a package there's no way of asking about
+ */
+function buildPresenceCommand(definition: PackageDefinition): CommandSpec | undefined {
+  const presence = buildPresenceProbe(definition);
+  if (presence === undefined) {
+    return undefined;
+  }
+
+  return {
+    name: getPresenceCheckName(definition),
+    description: `Verify ${definition.name} is installed`,
+    purpose: CommandPurpose.Verify,
+    runOn: CommandTarget.ControlPlane,
+    env: buildHelmEnv,
+    command: [
+      `${presence.probe} || { echo "${definition.name} isn't installed: ${presence.missing}. Install it with the helm-charts bundle or \"run-bundle ${definition.name}\", or take it out of \"packages\" if it isn't wanted." >&2; exit 1; }`,
+      `echo "${definition.name} is installed"`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Skip a check when its package turned out not to be installed.
+ *
+ * @param spec
+ * @param definition
+ * @returns
+ */
+function whenInstalled(spec: CommandSpec, definition: PackageDefinition): CommandSpec {
+  const original = spec.skipWhen;
+  const presence = getPresenceCheckName(definition);
+
+  return {
+    ...spec,
+    skipWhen: (config: CloudConfig, context: any, results: any) =>
+      results?.[presence]?.error === true ||
+      (typeof original === "function" && original(config, context, results) === true),
   };
 }
 
@@ -609,9 +708,20 @@ export function buildPackageCommands(
     );
   }
 
+  // Whether it's there at all, and the package's own checks only if
+  // it is. The mail checks belong to the namespace rather than to the
+  // package, so they're asked either way.
+  const presence = buildPresenceCommand(definition);
+  if (presence !== undefined) {
+    commands.push(presence);
+  }
+
+  const ifInstalled = (spec: CommandSpec) =>
+    presence !== undefined ? whenInstalled(spec, definition) : spec;
+
   if (secrets.length > 0) {
     commands.push(
-      buildVerifySecretsCommand(secrets, definition.namespace, definition.name),
+      ifInstalled(buildVerifySecretsCommand(secrets, definition.namespace, definition.name)),
     );
   }
 
@@ -625,7 +735,7 @@ export function buildPackageCommands(
   }
 
   if (definition.chart !== undefined) {
-    commands.push(buildVerifyCommand(definition));
+    commands.push(ifInstalled(buildVerifyCommand(definition)));
   }
 
   // The gate's own Deployment is waited for like the package's
@@ -634,19 +744,80 @@ export function buildPackageCommands(
     ...(gate !== undefined ? [`deployment/${getGateName(gate)}`] : []),
   ];
   if (rollout.length > 0) {
-    commands.push(buildRolloutCommand({ ...definition, rollout }));
-    commands.push(buildVerifyRolloutCommand({ ...definition, rollout }));
+    commands.push(ifInstalled(buildRolloutCommand({ ...definition, rollout })));
+    commands.push(ifInstalled(buildVerifyRolloutCommand({ ...definition, rollout })));
   }
 
   if (authentik !== undefined) {
-    commands.push(buildVerifyAuthentikCommand(definition.name, authentik));
+    commands.push(ifInstalled(buildVerifyAuthentikCommand(definition.name, authentik)));
   }
 
   if (gate !== undefined) {
-    commands.push(buildVerifyAuthentikCommand(`${definition.name}-gate`, getGateClient(gate)));
+    commands.push(
+      ifInstalled(buildVerifyAuthentikCommand(`${definition.name}-gate`, getGateClient(gate))),
+    );
   }
 
   return commands;
+}
+
+/**
+ * Say what's on the cluster that the configuration doesn't enable.
+ *
+ * The other half of the presence checks. Those ask whether what's
+ * configured is there; this asks the reverse, of every package in the
+ * catalogue that isn't enabled. One installed on its own with
+ * run-bundle, or left behind when it was taken out of "packages", is
+ * running and nothing else would mention it.
+ *
+ * A report rather than a check, since it may well be meant: a package
+ * installed on its own is still a package somebody wanted.
+ *
+ * @param config
+ * @returns
+ */
+export function buildPackageInventoryCommand(config: CloudConfig): CommandSpec {
+  const enabled = new Set(resolveInstallOrder(config).map((definition) => definition.name));
+  const selections = getPackageSelections(config);
+
+  const others = packageCatalogue
+    .filter((definition) => !enabled.has(definition.name))
+    .flatMap((definition) => {
+      const resolved = resolvePackage(definition.name, selections[definition.name]);
+      const presence = buildPresenceProbe(resolved);
+      return presence !== undefined ? [{ name: definition.name, probe: presence.probe }] : [];
+    });
+
+  return {
+    name: "inventory-packages",
+    description: "Report packages on the cluster that the configuration doesn't enable",
+    purpose: CommandPurpose.Inspect,
+    runOn: CommandTarget.ControlPlane,
+    env: buildHelmEnv,
+    command: [
+      "true",
+      ...others.map(({ name, probe }) => `if ${probe}; then echo "unconfigured|${name}"; fi`),
+    ],
+    output: OutputType.Raw,
+    postProcessHooks: [
+      (output: any) => readRecordsOfKind(output, "unconfigured").map((fields) => field(fields, 0)),
+    ],
+    saveToContext: (output: any) => {
+      const unconfigured: string[] = output.processed ?? [];
+
+      if (unconfigured.length === 0) {
+        console.log(`  Nothing installed that the configuration doesn't enable`);
+      }
+
+      for (const name of unconfigured) {
+        console.log(
+          `  ⚠️  ${name} is installed and isn't enabled under "packages", so nothing else checks it. Enable it there, or ask about it with "doctor -b ${name}".`,
+        );
+      }
+
+      return { unconfiguredPackages: unconfigured };
+    },
+  };
 }
 
 /**
@@ -721,6 +892,7 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
           'echo "No packages are enabled in the configuration. Add them under \\"packages\\"."',
         output: OutputType.Raw,
       },
+      buildPackageInventoryCommand(config),
     ];
   }
 
@@ -734,6 +906,8 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   for (const definition of ordered) {
     commands.push(...buildPackageCommands(definition, madeSecrets));
   }
+
+  commands.push(buildPackageInventoryCommand(config));
 
   return commands;
 }

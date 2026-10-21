@@ -81,6 +81,7 @@
   "nodes": [
     {
       "name": "server-1",
+      "displayName": "Server One (Mobile)",
       "address": "server-1.test",
       "username": "someone",
       "type": "server",

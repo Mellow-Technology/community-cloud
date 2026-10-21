@@ -18,7 +18,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { CommandPurpose, TerminalCommandSpec, joinCommand } from "../cli/commands/Command.ts";
-import { buildPackageCommands } from "../cli/commands/Helm.ts";
+import { buildPackageCommands, buildPackageInventoryCommand } from "../cli/commands/Helm.ts";
 import { buildGateBlueprint, buildGateManifest } from "../cli/commands/OAuth2Proxy.ts";
 import {
   buildCreateSecretCommand,
@@ -305,5 +305,24 @@ describe("a signing certificate", () => {
     );
     assert.match(verify, /\{\.data\.certificate\}/);
     assert.match(verify, /Opaque:\?\*:\?\*/);
+  });
+});
+
+describe("what's installed that the configuration doesn't enable", () => {
+  it("asks about every package that isn't enabled, and none that are", async () => {
+    // The fixture enables cert-manager and CloudNativePG
+    const config = await loadFixtureConfig();
+    const command = buildPackageInventoryCommand(config) as TerminalCommandSpec;
+    const text = joinCommand(command.command as string[]);
+
+    assert.match(text, /unconfigured\|invoice-ninja/);
+    assert.match(text, /unconfigured\|documenso/);
+    assert.ok(!text.includes("unconfigured|cert-manager"));
+    assert.ok(!text.includes("unconfigured|cloudnative-pg"));
+  });
+
+  it("is a report, not a check, since a package installed on its own was still wanted", async () => {
+    const command = buildPackageInventoryCommand(await loadFixtureConfig());
+    assert.equal(command.purpose, CommandPurpose.Inspect);
   });
 });

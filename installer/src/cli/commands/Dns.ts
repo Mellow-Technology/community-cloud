@@ -41,6 +41,7 @@ import {
   getDnsInstances,
 } from "../../util/dns.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
+import { field, readRecordsOfKind } from "./output.ts";
 
 /**
  * The Secret holding a provider account's credentials.
@@ -200,6 +201,61 @@ function buildInspectNamesCommand(instance: DnsInstance): CommandSpec {
 }
 
 /**
+ * Say which ExternalDNS instances are running that the configuration
+ * no longer describes.
+ *
+ * An instance taken out of the configuration isn't uninstalled, and
+ * keeps publishing — and, with the "sync" policy, deleting — records
+ * for the domains it was given. Nothing else would say it's still
+ * there.
+ *
+ * Every Helm release in the namespace the instances run in counts,
+ * since nothing else is installed there.
+ *
+ * @param config
+ * @returns
+ */
+export function buildDnsInventoryCommand(config: CloudConfig): CommandSpec {
+  const configured = new Set(getDnsInstances(config.getConfig()).map((instance) => instance.release));
+
+  return {
+    name: "inventory-dns",
+    description: "Report ExternalDNS instances the configuration no longer describes",
+    purpose: CommandPurpose.Inspect,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      // No namespace and no Helm are both "nothing installed"
+      `command -v helm > /dev/null 2>&1 || exit 0`,
+      `helm list --namespace ${DNS_NAMESPACE} --short 2>/dev/null | while read -r release`,
+      "do",
+      '  [ -n "$release" ] && echo "release|$release"',
+      "done",
+      "true",
+    ],
+    output: OutputType.Raw,
+    postProcessHooks: [
+      (output: any) => readRecordsOfKind(output, "release").map((fields) => field(fields, 0)),
+    ],
+    saveToContext: (output: any) => {
+      const leftover = (output.processed as string[] ?? []).filter((release) => !configured.has(release));
+
+      if (leftover.length === 0) {
+        console.log("  No ExternalDNS instances left over from an earlier configuration");
+      }
+
+      for (const release of leftover) {
+        console.log(
+          `  ⚠️  ${release} is still running in ${DNS_NAMESPACE} and isn't in the configuration, so it keeps publishing records for its domains. Remove it with "helm uninstall ${release} --namespace ${DNS_NAMESPACE}" if it's no longer wanted.`,
+        );
+      }
+
+      return {};
+    },
+  };
+}
+
+/**
  * Build the bundle that installs ExternalDNS.
  *
  * Built from the configuration, since only the configuration knows
@@ -223,6 +279,7 @@ export function DnsCommands(config: CloudConfig): CommandSpec[] {
           'echo "No DNS providers are configured, so nothing will be published. Add them under \\"dns.providers\\"."',
         output: OutputType.Raw,
       },
+      buildDnsInventoryCommand(config),
     ];
   }
 
@@ -249,6 +306,8 @@ export function DnsCommands(config: CloudConfig): CommandSpec[] {
   for (const instance of instances) {
     commands.push(buildInspectNamesCommand(instance));
   }
+
+  commands.push(buildDnsInventoryCommand(config));
 
   return commands;
 }

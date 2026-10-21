@@ -375,9 +375,9 @@ export const RegistryCommands: CommandSpec[] = [
         `for registry in ${names}`,
         "do",
         `  response=$(curl -sS -i --max-time ${PROBE_TIMEOUT_SECONDS} "https://$registry/v2/" 2>&1 | tr -d '\\r')`,
-        `  status=$(printf '%s\\n' "$response" | awk 'NR==1 {print $2}')`,
+        `  answer=$(printf '%s\\n' "$response" | awk 'NR==1 {print $2}')`,
         `  scheme=$(printf '%s\\n' "$response" | awk 'tolower($1) == "www-authenticate:" {print $2; exit}')`,
-        '  printf "registry|%s|%s|%s\\n" "$registry" "${status:-none}" "${scheme:-none}"',
+        '  printf "registry|%s|%s|%s\\n" "$registry" "${answer:-none}" "${scheme:-none}"',
         "done",
       ];
     },

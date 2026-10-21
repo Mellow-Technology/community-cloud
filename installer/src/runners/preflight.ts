@@ -21,13 +21,14 @@ import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
-import { getPackage, getPackageSelections } from "../cli/commands/packages.ts";
+import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
 import { checkMailConfig } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
 import { connectToNode, NodeConnection } from "./nodeConnection.ts";
+import { displayNode, getDisplayNames } from "../pipeline/fleet.ts";
 
 /**
  * Options for a preflight.
@@ -150,6 +151,27 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     }
   }
 
+  // Display names are only printed, but two nodes printed the same are
+  // two nodes nobody can tell apart in a report
+  const shown = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.displayName === undefined) {
+      continue;
+    }
+
+    if (typeof node.displayName !== "string" || node.displayName.trim() === "") {
+      say(`Node "${node.name}" has a "displayName" that isn't any text. Leave it out to print the node as "${node.name}".`);
+      continue;
+    }
+
+    const display = node.displayName.trim();
+    const already = shown.get(display);
+    if (already !== undefined) {
+      say(`"${node.name}" and "${already}" are both displayed as "${display}", so nothing the installer prints could tell them apart.`);
+    }
+    shown.set(display, node.name);
+  }
+
   // A gateway needs somewhere for the traffic to arrive
   const gateways = nodes.filter(
     (node: any) =>
@@ -192,7 +214,15 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
   for (const [name, selection] of Object.entries(getPackageSelections(config))) {
     const definition = getPackage(name);
 
-    if (selection.enabled === false || definition === undefined) {
+    if (selection.enabled === false) {
+      continue;
+    }
+
+    // One the configuration describes itself is a chart of its own
+    if (definition === undefined) {
+      if (selection.chart === undefined) {
+        say(`"${name}" is enabled under "packages" and isn't a package Community Cloud knows about. ${PLUGIN_HINT}`);
+      }
       continue;
     }
 
@@ -215,6 +245,52 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
   }
 
   return problems;
+}
+
+/**
+ * Things in a configuration worth knowing about that don't stop an
+ * install.
+ *
+ * Mostly settings that look meaningful and are ignored — a key that's
+ * almost the right name — where everything still works, just not
+ * because of the setting somebody thinks is doing it.
+ *
+ * @param config
+ * @returns
+ */
+export function findConfigurationWarnings(config: CloudConfig): string[] {
+  const warnings: string[] = [];
+  const nebula = config.getNetworkSection("nebula");
+
+  // "id" reads like the network's ID, and the setting is "networkID".
+  // With a network name as well, the name finds it and nothing goes
+  // wrong; without one the network can't be found at all, which the
+  // Nebula bundles say for themselves.
+  if (nebula !== undefined && nebula !== null && nebula.id !== undefined) {
+    const fallback =
+      nebula.networkID !== undefined
+        ? `"networkID" is set as well, and is what's used`
+        : nebula.network !== undefined
+          ? `the network is found by its name, "${nebula.network}", instead`
+          : "with no \"network\" or \"networkID\" either, there's no way to find the network";
+
+    warnings.push(
+      `"network.nebula.id" isn't a setting, so it's ignored — the network's ID goes in "networkID". For now ${fallback}.`,
+    );
+  }
+
+  return warnings;
+}
+
+/**
+ * Print what findConfigurationWarnings says.
+ *
+ * @param config
+ */
+export function printConfigurationWarnings(config: CloudConfig) {
+  for (const warning of findConfigurationWarnings(config)) {
+    console.log(`  ${chalk.yellow("⚠️ ")} ${warning}`);
+  }
 }
 
 /**
@@ -260,6 +336,8 @@ export async function preflight(configPath: string, options: PreflightOptions = 
     }
   }
 
+  printConfigurationWarnings(config);
+
   const nodes =
     options.node !== undefined
       ? [config.getNode(options.node)].filter((node) => node !== null)
@@ -271,8 +349,10 @@ export async function preflight(configPath: string, options: PreflightOptions = 
     );
   }
 
+  const displayNames = getDisplayNames(config);
+
   for (const node of nodes) {
-    console.log(`\n${chalk.bold(`── ${node.name} ──`)}`);
+    console.log(`\n${chalk.bold(`── ${displayNode(displayNames, node.name)} ──`)}`);
 
     let connection: NodeConnection;
     try {

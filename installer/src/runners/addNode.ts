@@ -26,8 +26,8 @@ import chalk from "chalk";
 
 import CloudConfig from "../util/CloudConfig.ts";
 import { describeStop, executePipeline, printPlan } from "../pipeline/execute.ts";
-import { checkConfiguration } from "./preflight.ts";
-import { isServerNode } from "../pipeline/fleet.ts";
+import { checkConfiguration, printConfigurationWarnings } from "./preflight.ts";
+import { displayNode, getDisplayNames, isServerNode } from "../pipeline/fleet.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 
 /**
@@ -88,6 +88,7 @@ export async function addNode(
   loadPlugins(config);
 
   const node = config.getNode(nodeName);
+  const shown = displayNode(getDisplayNames(config), nodeName);
 
   if (node === null || node === undefined) {
     const known = configuredNodeNames(config);
@@ -106,6 +107,7 @@ export async function addNode(
   // Whatever preflight would say about the configuration, said before
   // a single connection is opened
   const problems = checkConfiguration(config);
+  printConfigurationWarnings(config);
 
   if (problems.length > 0) {
     throw new Error(
@@ -119,7 +121,7 @@ export async function addNode(
     pipeline: ADD_NODE_PIPELINE.join(","),
     nodes: [nodeName],
     what: "added",
-    heading: `\n${chalk.bold("Adding")} ${chalk.cyan(nodeName)} ${chalk.bold("to the cluster")}`,
+    heading: `\n${chalk.bold("Adding")} ${chalk.cyan(shown)} ${chalk.bold("to the cluster")}`,
     keepGoing: options.keepGoing,
     dryRun: options.dryRun,
     timeout: options.timeout,
@@ -131,7 +133,7 @@ export async function addNode(
   });
 
   if (outcome.dryRun) {
-    printPlan(outcome.plan);
+    printPlan(outcome.plan, config);
     return;
   }
 
@@ -139,7 +141,7 @@ export async function addNode(
 
   if (summary.failures.length > 0) {
     throw new Error(
-      `Adding ${nodeName} ${describeStop(summary)}. The cluster is untouched apart from this node — fix what failed and run add-node again.`,
+      `Adding ${shown} ${describeStop(summary)}. The cluster is untouched apart from this node — fix what failed and run add-node again.`,
     );
   }
 
@@ -149,11 +151,11 @@ export async function addNode(
 
   if (checks.failures.length > 0) {
     throw new Error(
-      `${nodeName} ran every step and ${checks.failures.length} check${checks.failures.length === 1 ? " doesn't" : "s don't"} pass. It is in the cluster and something about it isn't working.`,
+      `${shown} ran every step and ${checks.failures.length} check${checks.failures.length === 1 ? " doesn't" : "s don't"} pass. It is in the cluster and something about it isn't working.`,
     );
   }
 
-  console.log(chalk.green.bold(`${nodeName} is in the cluster.\n`));
+  console.log(chalk.green.bold(`${shown} is in the cluster.\n`));
 }
 
 /**

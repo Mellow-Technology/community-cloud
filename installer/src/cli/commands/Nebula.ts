@@ -37,6 +37,7 @@ import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import {
   DEFINED_API_URL,
   usesNebula,
+  DEFINED_API_ERRORS,
   buildApiHeaders,
   findNetworkCommand,
   getDefaultRoleName,
@@ -128,6 +129,7 @@ const findHostCommand: WebCommandSpec = {
     pageSize: HOST_PAGE_SIZE,
   }),
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
 
   // Nothing to look up for a node that's already on the mesh
   skipWhen: (_config: CloudConfig, context: any) => context.dnclientEnrolled === true,
@@ -176,6 +178,7 @@ const createHostCommand: WebCommandSpec = {
   url: `${DEFINED_API_URL}/v2/host-and-enrollment-code`,
   method: "POST",
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
 
   // Enrolling a node that's already on the mesh would register a
   // second host for it and orphan the first, and a host the network
@@ -241,6 +244,7 @@ const createEnrollmentCodeCommand: WebCommandSpec = {
     `${DEFINED_API_URL}/v1/hosts/${context.nebulaHostID}/enrollment-code`,
   method: "POST",
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
 
   // Only needed when the host wasn't just created, since creating one
   // hands back a code of its own

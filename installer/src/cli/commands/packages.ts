@@ -422,6 +422,12 @@ const builtInPackages: PackageDefinition[] = [
  * Everything that can be installed: what shipped, plus what plugins
  * added.
  */
+// Said wherever a package isn't found, since the likeliest reason for
+// one that's spelled right is a plugin that isn't loaded: its packages
+// only exist once it is, and having the file isn't enough
+export const PLUGIN_HINT =
+  'If it comes from a plugin, enable the plugin under "plugins" — a plugin\'s packages only exist once it\'s loaded, and being in ~/.community-cloud/plugins isn\'t enough.';
+
 export const packageCatalogue: PackageDefinition[] = [...builtInPackages];
 
 /**
@@ -508,7 +514,7 @@ export function resolvePackage(
     // Not in the catalogue, so the configuration has to say everything
     if (selection.repo === undefined || selection.chart === undefined) {
       throw new Error(
-        `"${name}" isn't a package Community Cloud knows about. Either use one of: ${packageCatalogue.map((entry) => entry.name).join(", ")}, or give it a "repo" and a "chart" in the configuration.`,
+        `"${name}" isn't a package Community Cloud knows about. Either use one of: ${packageCatalogue.map((entry) => entry.name).join(", ")}, or give it a "repo" and a "chart" in the configuration. ${PLUGIN_HINT}`,
       );
     }
 

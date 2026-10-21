@@ -24,6 +24,10 @@ import {
   getBundleCommands,
   getCheckableBundleNames,
 } from "../cli/commands/bundles.ts";
+import { Finding, findSharedCauses, headline, orderForCheckup } from "../runners/doctor.ts";
+import { INSTALL_PIPELINE } from "../runners/install.ts";
+import { Plan, Step, getRunningBundles } from "../pipeline/plan.ts";
+import { numberBundle } from "../pipeline/reporter.ts";
 import { fixtureNode, loadFixtureConfig, withoutConsole } from "./helpers.ts";
 
 // Anything that would change a node or a cluster
@@ -157,5 +161,96 @@ describe("what a check-up of everything asks about", () => {
     const checkable = getCheckableBundleNames();
     assert.ok(checkable.includes("helm-charts"));
     assert.ok(checkable.includes("dns"));
+  });
+});
+
+describe("the order a check-up asks in", () => {
+  it("is the order an install runs in, then whatever an install doesn't run", () => {
+    const order = orderForCheckup(getCheckableBundleNames());
+    const staged = order.slice(0, INSTALL_PIPELINE.length);
+
+    assert.deepEqual(staged, INSTALL_PIPELINE);
+    assert.ok(order.indexOf("k3s") < order.indexOf("cilium"), "K3s should be asked about before Cilium");
+    assert.ok(order.indexOf("helm") < order.indexOf("helm-charts"));
+  });
+
+  it("leaves out nothing it was given", () => {
+    const names = getCheckableBundleNames();
+    assert.deepEqual([...orderForCheckup(names)].sort(), [...names].sort());
+  });
+});
+
+describe("how a run's bundles are numbered", () => {
+  it("counts only the bundles with something to run, in the order they run", () => {
+    const step = (bundle: string) => ({ bundle }) as Step;
+    const plan = {
+      steps: [step("preflight"), step("k3s"), step("cilium")],
+      bundles: ["preflight", "base", "k3s", "cilium"],
+      nodes: [],
+      problems: [],
+    } as Plan;
+
+    const numbered = getRunningBundles(plan).map((bundle, index) => numberBundle(index, bundle));
+    assert.deepEqual(numbered, ["1. preflight", "2. k3s", "3. cilium"]);
+  });
+});
+
+describe("failures with one cause", () => {
+  const REFUSED = "Defined Networking refused the API key: it's been revoked. Create a new one.";
+
+  /**
+   * One node's failures in one bundle.
+   *
+   * @param bundle
+   * @param failures step and why, in pairs
+   * @returns
+   */
+  function finding(node: string, bundle: string, failures: [string, string | undefined][]): Finding {
+    return {
+      node,
+      bundle,
+      ran: failures.length,
+      skipped: 0,
+      blocked: 0,
+      failures: failures.map(([step, why]) => ({ node, bundle, step, outcome: "failed", why })),
+    };
+  }
+
+  it("says a reason once, with every step and bundle it took down", () => {
+    const shared = findSharedCauses([
+      finding("cleverswing", "nebula", [["find-nebula-network", REFUSED], ["list-nebula-roles", REFUSED]]),
+      finding("cleverswing", "nebula-network", [["verify-nebula-roles", REFUSED]]),
+      finding("cleverswing", "network", [["verify-network-settings", "Expected bbr, got cubic"]]),
+    ]);
+
+    assert.deepEqual([...shared.keys()], [REFUSED]);
+    assert.deepEqual(
+      shared.get(REFUSED)?.map(({ finding, steps }) => [finding.bundle, steps]),
+      [["nebula", ["find-nebula-network", "list-nebula-roles"]], ["nebula-network", ["verify-nebula-roles"]]],
+    );
+  });
+
+  it("matches across nodes, on the first line only", () => {
+    const shared = findSharedCauses([
+      finding("one", "network", [["verify-network-settings", "No bbr\nreno cubic"]]),
+      finding("two", "network", [["verify-network-settings", "No bbr\nreno"]]),
+    ]);
+
+    assert.deepEqual([...shared.keys()], ["No bbr"]);
+  });
+
+  it("leaves a reason given once, and failures that gave none, where they are", () => {
+    const shared = findSharedCauses([
+      finding("one", "k3s", [["verify-k3s", undefined], ["verify-agent", ""]]),
+      finding("one", "network", [["verify-network-settings", "Expected bbr, got cubic"]]),
+    ]);
+
+    assert.equal(shared.size, 0);
+  });
+
+  it("recognises a reason by the part before it explains itself", () => {
+    assert.equal(headline(REFUSED), "Defined Networking refused the API key");
+    assert.equal(headline("Expected bbr, got cubic"), "Expected bbr, got cubic");
+    assert.equal(headline("Version 1.2.3 isn't 1.3"), "Version 1.2.3 isn't 1.3");
   });
 });

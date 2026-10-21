@@ -99,9 +99,10 @@ The only required section. Each entry is one machine.
 | Key | Meaning |
 |---|---|
 | `name` | What to call it. Also how it registers in the cluster, when it can be a DNS label. |
+| `displayName` | What to print it as, when that isn't its `name`: `"Mamoru (Bangkok)"` for `mamoru-bkk`. Only what the installer prints changes. On the command line, and everywhere else, the node is still its `name`. |
 | `address` | How to reach it over SSH. Often an alias from `~/.ssh/config` rather than a name DNS knows. |
 | `type` | `server` or `agent`. Exactly one node should be a `server`. |
-| `username` | The SSH user. Needs passwordless sudo. |
+| `username` | The SSH user. Needs passwordless sudo to root for any command, not just some, and without `requiretty` — preflight and the doctor both check. |
 | `keyFile` | A private key path. Otherwise the usual `~/.ssh` keys and your agent are tried. |
 | `port` | SSH port, when it isn't 22. |
 | `apiAddress` | Where *other nodes* reach this one's Kubernetes API, when that differs from `address`. A bastion or port forward gets you to a node without being a name the cluster can use. |
@@ -532,6 +533,32 @@ with a machine down is exactly the case you'd run this for — and one
 failure doesn't stop the run, because one thing being broken is the
 most likely reason to want to know what else is.
 
+`preflight` goes first, even with `-b`, and a node has to pass it
+before anything else is asked of it. A node that can't sudo, or can't
+reach the outside world, would otherwise fail most of what follows for
+that one reason, with the reason one line among fifty. Its other
+bundles are reported as not asked, rather than failed. When the node
+that fails is the control plane, nothing run from it is asked either,
+which includes every check of what's inside the cluster.
+
+Bundles are asked in the order an install runs them and numbered that
+way, live and in the report, so the first failure is usually the lowest
+broken layer and what follows it is likely its consequence.
+
+When several checks fail with the same message — a refused Defined
+Networking key fails every call to its API — the report says it once,
+near the top, listing each check it took down, and counts it as one
+problem. Those checks point back to it from their own places in the
+report.
+
+Each enabled package is first asked whether it's installed at all. One
+that isn't fails that one check, which says so, and its other checks
+are skipped instead of each failing in turn. The other way round,
+`helm-charts` reports packages that are on the cluster without being
+enabled, and `dns` reports ExternalDNS instances still running for
+providers taken out of the configuration. Both are reported as
+warnings, since either can be intended.
+
 ## Installing a cluster
 
 ```bash
@@ -599,6 +626,15 @@ it needs kubectl. The agent has no kubeconfig, so the run borrows a
 server from the configuration to talk to the cluster with. The borrowed
 node is reachable and is not one of the nodes being worked on — no step
 runs on its behalf.
+
+The kubeconfig stays as K3s writes it, readable by root alone, since
+anyone who can read it has cluster-admin. Commands that talk to the
+cluster run `kubectl`, `helm` and `cilium` through `sudo -n` instead,
+which is one reason the SSH user needs passwordless sudo. A cluster
+installed by an earlier version of this installer has its kubeconfig
+readable by every user (`644`); to tighten it, remove
+`K3S_KUBECONFIG_MODE` from `/etc/systemd/system/k3s.service.env` on the
+server and restart K3s.
 
 ## Adding a node
 

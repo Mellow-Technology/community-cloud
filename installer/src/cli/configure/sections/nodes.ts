@@ -67,6 +67,19 @@ async function askAboutNode(draft: ConfigDraft, node: any = {}): Promise<any> {
     })
   ).trim().toLowerCase();
 
+  const displayName = (
+    await input({
+      message: "What to print it as, if not its name (e.g. \"Mamoru (Bangkok)\"; leave blank to use the name)",
+      default: node.displayName !== undefined ? node.displayName : "",
+    })
+  ).trim();
+  if (displayName !== "") {
+    answers.displayName = displayName;
+  }
+  else {
+    delete answers.displayName;
+  }
+
   answers.address = (
     await input({
       message: "How should the installer reach it over SSH? (hostname, IP, or a ~/.ssh/config alias)",
@@ -178,7 +191,7 @@ export const nodesSection: ConfigSection = {
     let done = false;
     while (!done) {
       const choices: any[] = nodes.map((node, index) => ({
-        name: `${node.name}  (${node.type ?? "no type"}, ${Array.isArray(node.roles) ? node.roles.join(" ") : "no roles"})`,
+        name: `${node.displayName ?? node.name}  (${node.type ?? "no type"}, ${Array.isArray(node.roles) ? node.roles.join(" ") : "no roles"})`,
         value: `edit:${index}`,
       }));
 

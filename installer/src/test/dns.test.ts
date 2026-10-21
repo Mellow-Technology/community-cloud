@@ -213,9 +213,10 @@ describe("the bundle", () => {
     assert.ok((command.stdin as Function)().includes("not-a-real-token"));
   });
 
-  it("has nothing to do without providers", () => {
+  it("installs nothing without providers, and still looks for instances left behind", () => {
+    // Taking the last provider out is exactly when one would be
     const names = DnsCommands(configFrom(BASE)).map((command) => command.name);
-    assert.deepEqual(names, ["no-dns-configured"]);
+    assert.deepEqual(names, ["no-dns-configured", "inventory-dns"]);
   });
 
   it("keeps the credentials out of what the cluster records about itself", () => {

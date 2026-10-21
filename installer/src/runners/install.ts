@@ -33,7 +33,7 @@ import chalk from "chalk";
 import CloudConfig from "../util/CloudConfig.ts";
 import { ALL_NODES, resolveTarget } from "../pipeline/fleet.ts";
 import { describeStop, executePipeline, printPlan } from "../pipeline/execute.ts";
-import { checkConfiguration } from "./preflight.ts";
+import { checkConfiguration, printConfigurationWarnings } from "./preflight.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 
 /**
@@ -86,6 +86,7 @@ export async function install(configPath: string, options: InstallOptions = {}) 
   // opened. A configuration with two servers in it is not going to
   // become installable halfway through.
   const problems = checkConfiguration(config);
+  printConfigurationWarnings(config);
 
   if (problems.length > 0) {
     throw new Error(
@@ -116,7 +117,7 @@ export async function install(configPath: string, options: InstallOptions = {}) 
   });
 
   if (outcome.dryRun) {
-    printPlan(outcome.plan);
+    printPlan(outcome.plan, config);
     return;
   }
 

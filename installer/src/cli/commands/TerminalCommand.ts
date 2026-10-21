@@ -22,6 +22,7 @@ import {
   formatEnvAssignments,
 } from "../../util/shell.ts";
 import { exec } from "../../util/exec.ts";
+import { buildClusterToolPrelude } from "../../util/kube.ts";
 
 export default class TerminalCommand extends Command {
   // The command itself. An array is taken as the lines of a script.
@@ -107,9 +108,15 @@ export default class TerminalCommand extends Command {
     // Work out the environment for the command, which can be a plain
     // object or, like the command itself, something derived from the
     // configuration
-    const assignments = formatEnvAssignments(
-      this.resolveEnv(config, context, commandResults),
-    );
+    const env = this.resolveEnv(config, context, commandResults);
+    const assignments = formatEnvAssignments(env);
+
+    // A command given a kubeconfig talks to the cluster, and the
+    // kubeconfig is root's. See buildClusterToolPrelude.
+    if (!this.sudo && typeof env["KUBECONFIG"] === "string" && env["KUBECONFIG"] !== "") {
+      const names = assignments.map((assignment) => assignment.slice(0, assignment.indexOf("=")));
+      cmdString = [...buildClusterToolPrelude(names), cmdString].join("\n");
+    }
 
     // If we're running with sudo then
     // we prepend sudo to the command

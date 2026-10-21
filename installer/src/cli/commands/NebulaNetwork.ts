@@ -108,6 +108,18 @@ export function usesNebula(config: CloudConfig): boolean {
 }
 
 /**
+ * What the API's failures mean.
+ *
+ * Its own errors are a code and a word — "ERR_UNAUTHORIZED",
+ * "unauthorized" — which reads like something a node is missing, sudo
+ * perhaps, rather than the key on this machine being refused.
+ */
+export const DEFINED_API_ERRORS: Record<number, string> = {
+  401: `Defined Networking refused the API key: it's been revoked, has expired, or isn't all there. Create a new one in the Defined Networking admin panel and put it under "network.nebula.apiKey", or in ${API_KEY_ENV}.`,
+  403: "Defined Networking accepted the API key but it isn't allowed to do this. Give the key the permissions the installer needs: listing networks, roles and hosts, creating roles, and creating hosts with enrollment codes.",
+};
+
+/**
  * The headers every request to the API carries.
  *
  * Built as a function so the key is read at the moment it's needed and
@@ -147,6 +159,7 @@ export const findNetworkCommand: WebCommandSpec = {
   url: `${DEFINED_API_URL}/v2/networks`,
   query: { pageSize: PAGE_SIZE },
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
   saveToContext: (output: any, _context: any, config: CloudConfig) => {
     const { network, networkID } = getNebulaConfig(config);
     const networks = output.parsed !== undefined && output.parsed !== null
@@ -196,6 +209,7 @@ export const listRolesCommand: WebCommandSpec = {
   url: `${DEFINED_API_URL}/v1/roles`,
   query: { pageSize: PAGE_SIZE },
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
   saveToContext: (output: any) => {
     const roles = output.parsed !== undefined && output.parsed !== null
       ? output.parsed.data
@@ -222,6 +236,7 @@ function buildCreateRoleCommand(role: NebulaRole): WebCommandSpec {
     url: `${DEFINED_API_URL}/v1/roles`,
     method: "POST",
     headers: buildApiHeaders,
+    explainStatus: DEFINED_API_ERRORS,
 
     // A role that's already there is the state we wanted, so there's
     // nothing to do and nothing to report
@@ -304,6 +319,7 @@ const verifyRolesCommand: WebCommandSpec = {
   url: `${DEFINED_API_URL}/v1/roles`,
   query: { pageSize: PAGE_SIZE },
   headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
   saveToContext: (output: any, context: any, config: CloudConfig) => {
     const roles = output.parsed.data;
     const byName = Object.fromEntries(roles.map((role: any) => [role.name, role.id]));
