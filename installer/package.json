@@ -13,6 +13,7 @@
     "test:watch": "bun test --watch src/test",
     "build": "bun ./scripts/build.ts",
     "build:embedded": "bun ./scripts/generateEmbedded.ts",
+    "build:plugins": "bun ./scripts/buildHeadlampPlugins.ts",
     "build:linux": "bun ./scripts/build.ts linux",
     "build:macos": "bun ./scripts/build.ts macos",
     "build:windows": "bun ./scripts/build.ts windows"

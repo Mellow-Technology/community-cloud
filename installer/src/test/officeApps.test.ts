@@ -12,7 +12,7 @@
  * backwards and the install passes on a laptop and fails on hardware.
  *
  * Gates are tested with a package made up for the purpose, so the
- * tests don't move with Headlamp's, and Headlamp's own gate is checked
+ * tests don't move with Picoclaw's, and Picoclaw's own gate is checked
  * against what it routes to.
  */
 import { describe, it } from "node:test";
@@ -330,7 +330,6 @@ describe("what's installed that the configuration doesn't enable", () => {
 });
 
 const GATED = [
-  { name: "headlamp", hostname: "domain.headlamp", host: "headlamp.example.test", upstream: "http://headlamp" },
   { name: "picoclaw", hostname: "domain.agent", host: "agent.example.test", upstream: "http://picoclaw:18800" },
 ];
 

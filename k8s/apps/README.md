@@ -149,15 +149,23 @@ in `Mattermost.yaml`.
 
 [Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
 Install it with the `headlamp` package; it's reached at
-`values.domain.headlamp`, behind an Authentik gate.
+`values.domain.headlamp`. People sign in through Authentik, and
+Headlamp talks to the cluster as them: the package also has K3s's API
+server trust Authentik, so what someone can see is what RBAC gives
+`oidc:<their email>` and their `oidc:<group>`s.
 
 | File | What it is |
 |---|---|
-| `Headlamp.values.yaml` | Helm values. |
-| `Headlamp.network.yaml` | Its listeners on the cluster Gateway, and a route to its gate. |
+| `Headlamp.values.yaml` | Helm values: OpenID Connect, and the plugins mounted. |
+| `Headlamp.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+| `Headlamp.plugins.yaml` | Community Cloud's plugins, a ConfigMap each. |
+| `Headlamp.rbac.yaml` | Cluster admin for the members of `values.clusterAdminGroup`. |
+| `Headlamp.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
 
-Community Cloud's own Headlamp plugins are in `headlamp/plugins/` at
-the top of the repository. They aren't deployed into the cluster yet.
+The plugins are built from `headlamp/plugins/` at the top of the
+repository and carried inside the installer: `bun run build:plugins`,
+then `bun run build:embedded`. Headlamp is restarted when they
+change.
 
 ## Picoclaw (`picoclaw/`)
 
@@ -200,7 +208,7 @@ package that declares one gets an oauth2-proxy in front of it,
 registered with Authentik the same way, with nothing to write here —
 the proxy and its blueprint are built by the installer. Its route then
 sends requests to `<name>-oauth2-proxy` on port 4180, rather than to
-the application. Headlamp and Picoclaw are the two that do.
+the application. Picoclaw is the one that does.
 
 ## What they share
 

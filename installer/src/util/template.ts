@@ -25,6 +25,8 @@ import { buildAllocationValues } from "./allocations.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import { buildMailValues } from "./mail.ts";
+import { getHeadlampPlugins, getHeadlampPluginsRevision } from "./headlampPlugins.ts";
+import { DEFAULT_CLUSTER_ADMIN_GROUP } from "../cli/commands/ClusterSignIn.ts";
 import {
   STORAGE_NODE_SELECTOR,
   buildShape,
@@ -410,6 +412,19 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
       host: OBJECT_STORAGE_HOST,
       region: "us-east-1",
     };
+  }
+
+  // The Authentik group whose members administer the cluster, signed
+  // in through Headlamp. See ClusterSignIn.ts.
+  if (values.clusterAdminGroup === undefined) {
+    values.clusterAdminGroup = DEFAULT_CLUSTER_ADMIN_GROUP;
+  }
+
+  // The Headlamp plugins the installer carries, for the headlamp
+  // package to put in ConfigMaps and mount. See headlampPlugins.ts.
+  if (values.headlampPlugins === undefined) {
+    values.headlampPlugins = getHeadlampPlugins();
+    values.headlampPluginsRevision = getHeadlampPluginsRevision(values.headlampPlugins);
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

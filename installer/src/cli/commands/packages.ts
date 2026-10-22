@@ -21,6 +21,7 @@ import { MailSecurity } from "../../util/mail.ts";
 import { SecretDefinition } from "./Secrets.ts";
 import type { AuthentikClient } from "./Authentik.ts";
 import type { GateDefinition } from "./OAuth2Proxy.ts";
+import { CLUSTER_CLIENT_ID } from "./ClusterSignIn.ts";
 
 /**
  * Something that can be installed.
@@ -655,36 +656,50 @@ const builtInPackages: PackageDefinition[] = [
   },
   {
     name: "headlamp",
-    description: "A web interface for the cluster, behind Authentik",
+    description: "A web interface for the cluster, signed into through Authentik",
     chart: { repo: "https://kubernetes-sigs.github.io/headlamp/", name: "headlamp" },
     version: "0.46.0",
     namespace: "cc-office",
     valuesFile: "embed://apps/headlamp/Headlamp.values.yaml",
 
-    // Its gate signs in through Authentik, which goes first when it's
-    // being installed too
+    // It signs in through Authentik, which goes first when it's being
+    // installed too. Enabling it also has K3s's API server trust
+    // Authentik, which is what lets Headlamp act as whoever signed in;
+    // see ClusterSignIn.ts.
     after: ["authentik"],
 
     manifests: {
       // The namespace again, for the label the cluster Gateway looks
-      // for, as for Documenso
-      before: ["embed://apps/office/Office.namespace.yaml"],
+      // for, as for Documenso; and the plugins, which Headlamp mounts
+      // and won't start without
+      before: [
+        "embed://apps/office/Office.namespace.yaml",
+        "embed://apps/headlamp/Headlamp.plugins.yaml",
+      ],
 
-      // The way in, which goes to the gate rather than to Headlamp
-      after: ["embed://apps/headlamp/Headlamp.network.yaml"],
+      after: [
+        "embed://apps/headlamp/Headlamp.rbac.yaml",
+        "embed://apps/headlamp/Headlamp.network.yaml",
+      ],
     },
 
-    // Headlamp assumes whoever reaches it may, and only then asks for
-    // a token to talk to the cluster with. The gate is what decides
-    // who reaches it, and there's nothing in it meant to be public.
-    gate: {
-      name: "headlamp",
-      title: "Headlamp",
-      hostname: "domain.headlamp",
-      upstream: "http://headlamp",
+    secrets: [
+      // The username is the client ID, and it's fixed: the API server
+      // is told it when K3s is installed. Only the secret is made up.
+      {
+        name: "headlamp-oidc",
+        description: "the client Headlamp signs in to Authentik as",
+        username: CLUSTER_CLIENT_ID,
+      },
+    ],
+
+    authentik: {
+      blueprint: "embed://apps/headlamp/Headlamp.blueprint.yaml",
+      secret: "headlamp-oidc",
+      slug: CLUSTER_CLIENT_ID,
     },
 
-    values: ["domain.headlamp"],
+    values: ["domain.headlamp", "domain.auth"],
   },
   {
     name: "tailscale-operator",
