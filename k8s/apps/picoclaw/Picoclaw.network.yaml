@@ -1,0 +1,88 @@
+# How Picoclaw's console is reached: a ListenerSet on the cluster
+# Gateway, as for the other applications, on values.domain.agent.
+#
+# Through its gate and nothing else. The route goes to the gate's
+# oauth2-proxy, which sends on to Picoclaw once Authentik has let
+# someone through. A route straight to Picoclaw would be a way round
+# it, to something that runs commands.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.agent }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.agent }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: picoclaw-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: picoclaw
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.agent }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: picoclaw-oauth2-proxy
+          port: 4180
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: picoclaw-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: picoclaw
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.agent }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

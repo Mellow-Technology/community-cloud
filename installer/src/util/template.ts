@@ -24,6 +24,7 @@ import { asCiliumDevices } from "./interfaces.ts";
 import { buildAllocationValues } from "./allocations.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
+import { buildMailValues } from "./mail.ts";
 import {
   STORAGE_NODE_SELECTOR,
   buildShape,
@@ -310,6 +311,10 @@ const DEFAULT_K8S_API_PORT = "6443";
 // know which volume groups to create.
 const TOPOLVM_VALUES_FILE = "embed://storage/TopoLVM/TopoLVM.values.yaml";
 
+// The SeaweedFS operator's S3 gateway: the Service it names after the
+// cluster in storage/SeaweedFS/SeaweedFS.yaml
+const OBJECT_STORAGE_HOST = "seaweed-s3.seaweedfs.svc:8333";
+
 /**
  * Build the value set handed to the template renderer.
  *
@@ -374,6 +379,16 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     values.storageControllerReplicas = countStorageNodes(rawConfig);
   }
 
+  // The mail server, in the shapes applications want it, for the
+  // namespace being rendered for — mail is configured per namespace,
+  // so a template has to know whose it is. Templates read this rather
+  // than "smtp", so they find every field whether or not there's a
+  // mail server, and have no reason to go near the password — that
+  // reaches applications through a Secret.
+  if (values.mail === undefined) {
+    values.mail = buildMailValues(rawConfig, context?.templateNamespace);
+  }
+
   // How big each service's volume is. Kept together under
   // "storage.allocations" so the claims on a node's disks can be read
   // in one place, and handed to each manifest from there.
@@ -381,6 +396,20 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     if (values[name] === undefined) {
       values[name] = size;
     }
+  }
+
+  // Where the cluster's S3 is, for applications with a bucket in it.
+  // Fixed by the names in storage/SeaweedFS/SeaweedFS.yaml: the
+  // operator calls the gateway's Service after the cluster. The host
+  // alone is for the applications that are told about TLS separately.
+  // SeaweedFS accepts whatever region a request is signed for, and
+  // this is the one S3 clients assume when they aren't told otherwise.
+  if (values.objectStorage === undefined) {
+    values.objectStorage = {
+      endpoint: `http://${OBJECT_STORAGE_HOST}`,
+      host: OBJECT_STORAGE_HOST,
+      region: "us-east-1",
+    };
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

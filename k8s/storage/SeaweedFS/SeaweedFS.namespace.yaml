@@ -1,0 +1,12 @@
+# SeaweedFS's namespace, made ahead of the operator's chart so it
+# carries the label the cluster Gateway's allowedListeners selects on,
+# in networking/cilium/gateway/Gateway.yaml. Without it the ListenerSet
+# in SeaweedFS.network.yaml is refused and S3 has no way in from
+# outside.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: seaweedfs
+  labels:
+    whereWereGoing: "weDontNeedRoads"
+    app.kubernetes.io/managed-by: "community-cloud"

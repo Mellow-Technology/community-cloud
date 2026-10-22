@@ -191,6 +191,13 @@ describe("comparing a cluster against a file", () => {
     assert.equal(compareConfigurations(redact(base), redact(changed)).length, 2);
   });
 
+  it("doesn't call a node's display name drift", () => {
+    // It only changes what's printed, so a cluster built before one
+    // was set is no different for it
+    const named = { ...base, nodes: [{ ...base.nodes[0], displayName: "Node A" }] };
+    assert.deepEqual(compareConfigurations(redact(base), redact(named)), []);
+  });
+
   it("doesn't call two different secrets drift", () => {
     // Both sides are redacted, so comparing them could only produce a
     // false sense of having checked

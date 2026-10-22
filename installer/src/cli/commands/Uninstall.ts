@@ -248,10 +248,10 @@ export const K3sUninstallCommands: CommandSpec[] = [
       // A symlink is only ours if it points at the binary we're removing
       `for link in ${SYMLINKS.join(" ")}`,
       "do",
-      `  path="${BIN_DIRECTORY}/$link"`,
-      '  [ -L "$path" ] || continue',
-      '  case "$(readlink "$path")" in',
-      "    *k3s) sudo rm -f \"$path\" ;;",
+      `  target="${BIN_DIRECTORY}/$link"`,
+      '  [ -L "$target" ] || continue',
+      '  case "$(readlink "$target")" in',
+      "    *k3s) sudo rm -f \"$target\" ;;",
       "  esac",
       "done",
 

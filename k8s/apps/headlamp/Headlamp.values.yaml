@@ -1,2 +1,12 @@
+# Headlamp's Helm values.
+#
+# Headlamp is a web interface for the cluster. It's behind a gate: the
+# "headlamp" package puts oauth2-proxy in front of it, so only people
+# Authentik lets through reach it at all, and Headlamp then asks them
+# for a token to talk to the cluster with. See Headlamp.network.yaml.
 config:
   watchPlugins: true
+
+# As per all things in Community Cloud, on the worker nodes
+nodeSelector:
+  node-role.kubernetes.io/worker: worker

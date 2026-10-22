@@ -8,7 +8,9 @@ Community Cloud configuration before being applied. `k8s/values.example.yaml`
 shows the shape those values take; the real ones come from
 `cc.config.json`. See the [installer README](../installer/README.md#configuration).
 
-Nothing here needs to be applied by hand:
+Nothing here needs to be applied by hand: the installer applies each
+file as part of the bundle or package it belongs to. To see one as it
+would be applied, or what the installer carries:
 
 ```bash
 community-cloud run-template embed://networking/cilium/gateway/Gateway.yaml cc.config.json
@@ -24,8 +26,8 @@ seen this repository.
 A file called `Thing.values.yaml` is Helm values for a chart. Anything
 else is a manifest applied with `kubectl`. Where an application needs
 several pieces, they're split by what they are — `.database.yaml`,
-`.storage.yaml`, `.cert.yaml`, `.route.yaml` — so they can be applied
-in a sensible order and read one at a time.
+`.storage.yaml`, `.config.yaml`, `.network.yaml` — so they can be read
+one at a time.
 
 ## Directory structure
 
@@ -34,18 +36,18 @@ k8s/
 ├── ai/vLLM/           # Large language model serving
 ├── apps/              # The applications a cluster runs
 │   ├── authentik/     # Identity provider
+│   ├── documenso/     # Document signing
 │   ├── headlamp/      # Kubernetes UI
+│   ├── lago/          # Billing
 │   ├── mattermost/    # Team chat
 │   ├── office/        # The cc-office namespace and its shared pieces
-│   ├── picoclaw/      # Picoclaw
+│   ├── picoclaw/      # AI agent
 │   └── twenty/        # Twenty CRM
-├── certs/             # cert-manager and its issuers
+├── certs/             # cert-manager and the cluster's issuer
 ├── crd/               # Community Cloud's own custom resources
 ├── database/Postgres/ # CloudNativePG clusters
-├── gateway/           # The default application Gateway
 ├── networking/        # CNI, the Gateway API, the mesh
-│   ├── cilium/
-│   ├── gateway/
+│   ├── cilium/        # Cilium, and gateway/ with the cluster Gateway
 │   └── tailscale/
 └── storage/           # Local and object storage
     ├── SeaweedFS/
@@ -58,7 +60,7 @@ k8s/
 | File | What it is |
 |---|---|
 | `cilium/Cilium.values.yaml` | Cilium's Helm values. The CNI, the kube-proxy replacement, the Gateway API implementation and the load balancer IP management all come from here. |
-| `gateway/Gateway.yaml` | The cluster's default Gateway, served by Cilium's Envoy. Uses `allowedListeners` so only namespaces labelled `whereWereGoing=weDontNeedRoads` may attach listeners. |
+| `cilium/gateway/Gateway.yaml` | The cluster's Gateway, `cc-letsencrypt-web-gateway`, served by Cilium's Envoy, and its namespace. Made by the `gateway` bundle. Uses `allowedListeners` so only namespaces labelled `whereWereGoing=weDontNeedRoads` may attach listeners. |
 | `tailscale/Tailscale.proxy.yaml` | A Tailscale proxy, for reaching a cluster across networks. |
 
 Cilium replaces a good deal of what K3s ships with. The installer
@@ -78,7 +80,7 @@ API controller once at startup from whatever it finds then.
 | File | What it is |
 |---|---|
 | `CertManager.values.yaml` | cert-manager's Helm values. |
-| `ClusterIssuer.yaml` | A cluster-wide Let's Encrypt issuer. |
+| `ClusterIssuer.yaml` | `cc-lets-encrypt`, the Let's Encrypt issuer every application's certificate comes from. Applied by the `cert-manager` package. |
 
 ## Storage (`storage/`)
 
@@ -87,7 +89,9 @@ API controller once at startup from whatever it finds then.
 | `TopoLVM/TopoLVM.values.yaml` | TopoLVM's Helm values, and the source of truth for the device classes. |
 | `StorageClass/cc-local-ssd-fast.yaml` | The cluster default: XFS on the `ssd` device class, `Retain`, expandable. |
 | `StorageClass/cc-local-ssd-sata.yaml` | The same on `ssd-sata`. |
-| `SeaweedFS/SeaweedFS.values.yaml` | SeaweedFS, S3-compatible object storage, as a single pod. |
+| `SeaweedFS/SeaweedFS.namespace.yaml` | Its namespace, labelled for the cluster Gateway. |
+| `SeaweedFS/SeaweedFS.yaml` | The SeaweedFS cluster the operator runs, and which namespaces may keep buckets in it. |
+| `SeaweedFS/SeaweedFS.network.yaml` | S3 on `values.domain.storage`, for signed links. |
 
 See [storage/README.md](./storage/README.md).
 

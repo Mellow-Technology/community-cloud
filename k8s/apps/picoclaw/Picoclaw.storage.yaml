@@ -1,7 +1,10 @@
-# Picoclaw uses storage on local disk
+# Picoclaw's home: its configuration, as its console last saved it,
+# and the workspace its agents work in. Local disk, so the pod stays
+# on the node this was first made on.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  # The name it was first applied with, kept so its data stays
   name: picoclaim
   namespace: cc-office
   labels:

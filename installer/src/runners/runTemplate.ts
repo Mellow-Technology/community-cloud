@@ -56,7 +56,7 @@ export async function runTemplate(
   loadPlugins(config);
 
   // Substitute the configured values into the template
-  const manifest = await renderTemplateFile(yamlFilePath, config);
+  const manifest = await renderTemplateFile(yamlFilePath, config, options.namespace);
 
   // On a dry run we show what we would have sent to
   // kubectl and stop there
@@ -140,13 +140,18 @@ export async function runTemplate(
  *
  * @param yamlFilePath
  * @param config
+ * @param namespace the namespace it's for, if one was given, so a
+ *   template that sends mail renders with that namespace's
  * @returns
  */
 async function renderTemplateFile(
   yamlFilePath: string,
   config: CloudConfig,
+  namespace?: string,
 ): Promise<string> {
-  const rendered = renderInstallerFile(config, yamlFilePath);
+  const rendered = renderInstallerFile(config, yamlFilePath, {
+    templateNamespace: namespace,
+  });
 
   // Said afterwards, so a path that turns out not to be there doesn't
   // get announced as though it were

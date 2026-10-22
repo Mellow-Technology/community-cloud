@@ -22,6 +22,25 @@ export function quoteForShell(value: string): string {
 }
 
 /**
+ * A command, to be run by /bin/sh whatever the login shell is.
+ *
+ * SSH hands a command to the connecting user's login shell, and the
+ * commands here are written for sh and checked against dash. A login
+ * shell of zsh reads them differently in ways that break them outright:
+ * a glob that matches nothing is an error rather than itself, so the
+ * usual "for f in dir/*; do [ -e "$f" ] || continue" dies on an empty
+ * directory, and "status" and "path" are names zsh keeps for itself.
+ * Saying which shell, rather than writing for every shell somebody
+ * might log in with, is what makes the dash check mean something.
+ *
+ * @param command
+ * @returns
+ */
+export function inPosixShell(command: string): string {
+  return `/bin/sh -c ${quoteForShell(command)}`;
+}
+
+/**
  * Turn a set of environment variables into shell assignments.
  *
  * Values are quoted, and anything left unset is dropped so that a

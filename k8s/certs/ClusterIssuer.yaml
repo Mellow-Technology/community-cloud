@@ -1,12 +1,15 @@
-# Main certificate issuer for Community Cloud
-# This handles certifcate management for the default
-# Gateway (cc-letsencrypt-web-gateway) used in the cluster
-# and for office applications
+# Main certificate issuer for Community Cloud.
+#
+# Every application's certificate comes from here: a ListenerSet on the
+# cluster Gateway (cc-letsencrypt-web-gateway) carries the annotation
+# "cert-manager.io/cluster-issuer: cc-lets-encrypt", and cert-manager
+# asks Let's Encrypt for one per HTTPS listener. Applied by the
+# cert-manager package, once its chart is in. Cluster-wide, so it has
+# no namespace.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: cc-lets-encrypt
-  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 spec:

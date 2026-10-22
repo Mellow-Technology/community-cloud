@@ -101,7 +101,7 @@ export async function clean(
   });
 
   if (outcome.dryRun) {
-    printPlan(outcome.plan);
+    printPlan(outcome.plan, config);
     return;
   }
 

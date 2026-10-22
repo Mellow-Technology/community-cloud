@@ -1,0 +1,86 @@
+# How Authentik is reached: a ListenerSet on the cluster Gateway, as
+# for the other applications, on values.domain.auth. The chart can make
+# a route of its own; it's switched off in the values so that this one,
+# like every other application's, is ours.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: authentik
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.auth }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.auth }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: authentik-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: authentik
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: authentik
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.auth }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # The chart's Service for the server, named after the release
+        - name: authentik-server
+          port: 80
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: authentik-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: authentik
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.auth }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

@@ -104,9 +104,9 @@ export const HelmInstallCommands: CommandSpec[] = [
       // /bin/sh is on Debian and Ubuntu. It uses sudo itself for the
       // parts that need it.
       '"$installer"',
-      "status=$?",
+      "code=$?",
       'rm -f "$installer"',
-      "exit $status",
+      "exit $code",
     ],
     output: OutputType.Raw,
   },

@@ -30,6 +30,8 @@ import {
   Fleet,
   FleetFailure,
   describeFleetFailures,
+  displayNode,
+  getDisplayNames,
   paperFleet,
   raiseFleet,
 } from "./fleet.ts";
@@ -70,6 +72,10 @@ export interface ExecuteOptions {
   verify?: boolean;
   reporter?: Reporter;
   showSummary?: boolean;
+
+  // A bundle each node has to pass before the rest is asked of it.
+  // See RunOptions.gate.
+  gate?: string;
 }
 
 /**
@@ -142,12 +148,17 @@ export async function executePipeline(
   });
 
   if (fleet.members.length === 0) {
-    throw new Error(describeFleetFailures(failures, options.nodes, what));
+    throw new Error(describeFleetFailures(failures, options.nodes, what, getDisplayNames(config)));
   }
 
   const reporter =
     options.reporter ??
-    new ConsoleReporter(process.stdout, undefined, options.showSummary !== false);
+    new ConsoleReporter(
+      process.stdout,
+      undefined,
+      options.showSummary !== false,
+      getDisplayNames(config),
+    );
 
   try {
     const plan = planFor(config, fleet, options);
@@ -157,6 +168,7 @@ export async function executePipeline(
       context: options.context,
       verbose: options.verbose,
       reporter,
+      ...(options.gate !== undefined ? { gate: options.gate } : {}),
     });
 
     const verification =
@@ -267,8 +279,11 @@ export function describeStop(summary: RunSummary): string {
  * Print what would run, without running it.
  *
  * @param plan
+ * @param config for what to print each node as
  */
-export function printPlan(plan: Plan) {
+export function printPlan(plan: Plan, config?: CloudConfig) {
+  const names = config !== undefined ? getDisplayNames(config) : new Map<string, string>();
+
   console.log(
     `\n${chalk.bold(`${plan.steps.length} step${plan.steps.length === 1 ? "" : "s"}`)} across ${chalk.bold(`${plan.nodes.length} node${plan.nodes.length === 1 ? "" : "s"}`)}, and nothing run\n`,
   );
@@ -282,7 +297,7 @@ export function printPlan(plan: Plan) {
     }
 
     console.log(
-      `  ${chalk.dim(String(index + 1).padStart(3))}  ${step.command.name.padEnd(36)} ${chalk.dim(step.nodes.join(", "))}`,
+      `  ${chalk.dim(String(index + 1).padStart(3))}  ${step.command.name.padEnd(36)} ${chalk.dim(step.nodes.map((name) => displayNode(names, name)).join(", "))}`,
     );
   }
 

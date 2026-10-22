@@ -47,6 +47,9 @@ export default class WebCommand extends Command {
   // How long to wait, in milliseconds
   timeout?: number;
 
+  // What particular response codes mean
+  explainStatus?: Record<number, string>;
+
   // The function requests are made with, so that a bundle can hand
   // over something else to call
   fetchFunction: Function;
@@ -63,6 +66,7 @@ export default class WebCommand extends Command {
       body = undefined,
       expectStatus = undefined,
       timeout = undefined,
+      explainStatus = undefined,
     } = spec;
 
     this.url = url;
@@ -72,6 +76,7 @@ export default class WebCommand extends Command {
     this.body = body;
     this.expectStatus = expectStatus;
     this.timeout = timeout;
+    this.explainStatus = explainStatus;
     this.fetchFunction = fetch;
   }
 
@@ -139,11 +144,14 @@ export default class WebCommand extends Command {
     });
 
     if (!this.isExpected(response.status)) {
+      const said = responseBody !== "" ? responseBody : response.statusText;
+      const explained = this.explainStatus?.[response.status];
+
       throw this.buildError(
         url,
         `${this.method} ${url} returned ${response.status}`,
         responseBody,
-        responseBody !== "" ? responseBody : response.statusText,
+        explained !== undefined ? `${explained}\n${said}` : said,
         response.status,
       );
     }

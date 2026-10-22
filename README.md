@@ -49,7 +49,7 @@ TopoLVM supports four device classes mapped to LVM volume groups:
 | `ssd-cache` | `cc-ssd-cache-vg` | SSD cache fronting spinning disks (reserved — see [storage](./k8s/storage/README.md#on-ssd-cache)) |
 | `hdd` | `cc-hdd-vg` | Spinning disk (capacity) |
 
-Object storage is provided by [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (S3-compatible), deployed as a single all-in-one pod on local SSD and reachable inside the cluster. How much disk it and the database claim is set under `storage.allocations` in the installer configuration.
+Object storage is provided by [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (S3-compatible), run by its operator on local SSD. Each application gets a bucket of its own, and keys to only that bucket. Applications reach it inside the cluster, and it's also on its own hostname for the signed links browsers follow. How much disk it and the database claim is set under `storage.allocations` in the installer configuration.
 
 ### Networking
 
@@ -83,14 +83,13 @@ community-cloud/
 ├── k8s/                # Kubernetes manifests & Helm values
 │   ├── ai/             # vLLM GPU inference (AMD MI300)
 │   ├── apps/           # Application deployments (Twenty CRM, Authentik, Mattermost, etc.)
-│   ├── certs/          # cert-manager issuers & certificates
+│   ├── certs/          # cert-manager values and the cluster's Let's Encrypt issuer
 │   ├── crd/            # Custom Resource Definitions (Webapp, Sites)
-│   ├── database/       # PostgreSQL, PostGIS, Redis clusters
-│   ├── gateway/        # The default application Gateway
+│   ├── database/       # PostGIS
 │   ├── k3s-config/     # K3s node configuration (registries)
 │   ├── networking/     # Cilium, the cluster Gateway, Tailscale
 │   └── storage/        # TopoLVM, SeaweedFS, StorageClasses
-├── cc-headlamp/        # Headlamp Kubernetes UI plugin
+├── headlamp/plugins/   # Community Cloud's Headlamp plugins
 ├── docs/               # Documentation
 └── README.md
 ```
@@ -103,7 +102,7 @@ community-cloud/
 | `Vagrantfile` | Local dev environment — 3 Ubuntu 24.04 VMs with 3x 25GB disks each |
 | `.gitignore` | Ignored files — `*.config.json` among them |
 | `LICENSE.md` | License information. MIT, except the installer, which is LGPL-3.0-or-later |
-| `cc-headlamp/` | The Community Cloud plugin for Headlamp |
+| `headlamp/plugins/` | Community Cloud's own Headlamp plugins |
 | `docs/index.md` | Documentation index |
 
 ## Installer
@@ -149,12 +148,15 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 
 | App | Namespace | Status |
 |---|---|---|
-| Twenty CRM | `cc-office` | Deployed — server + worker deployments, Postgres, Redis, SeaweedFS S3 |
-| Authentik | `cc-office` | Helm values configured — Postgres-backed auth, SeaweedFS S3 storage|
-| Mattermost | `cc-office` | Operator values + secret/database/storage manifests prepared |
-| Office (Back Office) | `cc-office` | Namespace prepared |
-| Umami (Analytics) | — | Template directory prepared |
-| Headlamp | — | K8s plugin values (`watchPlugins`) prepared |
+| Authentik | `cc-office` | Plugin — single sign on, on cc-postgres and a SeaweedFS bucket |
+| Twenty CRM | `cc-office` | `twenty` package — server and worker, on cc-postgres, Redis and a SeaweedFS bucket |
+| Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
+| Documenso | `cc-office` | `documenso` package — document signing, through Authentik |
+| Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
+| Headlamp | `cc-office` | `headlamp` package — cluster UI, behind an Authentik gate |
+| Picoclaw | `cc-office` | `picoclaw` package — AI agent, behind an Authentik gate |
+
+None of these has run on real hardware in its current form yet.
 
 ### AI Inference
 
@@ -163,8 +165,8 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 ## Quick Start
 
 1. **Run the installer** to provision your K3s cluster across nodes
-2. **Apply k8s manifests** in order: CRDs → storage → gateway → certs → databases → apps
-3. **Deploy applications** using the Webapp CRD or individual manifests
+2. **Enable the applications** you want under `packages` in the configuration; the install brings in what they need
+3. **Install** — the `gateway` bundle makes the cluster Gateway, and `helm-charts` installs every package in dependency order
 
 ## Tech Stack
 

@@ -1,7 +1,43 @@
+# Twenty's configuration, for its server and its worker.
+#
+# Everything here is safe to read. The secrets — the database and
+# Redis passwords, the key it signs and encrypts with, the keys to its
+# bucket and the mail server's password — come from their own Secrets
+# in Twenty.yaml.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: twenty-crm
   namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 data:
-  server_url: {{ .Values.domain.crm | quote }}
+  SERVER_URL: {{ printf "https://%s" .Values.domain.crm | quote }}
+  NODE_PORT: "3000"
+
+  # Its files are in its own bucket, from Twenty.storage.yaml, in the
+  # cluster's SeaweedFS. Twenty always addresses a bucket by path,
+  # which is what SeaweedFS wants.
+  STORAGE_TYPE: "S_3"
+  STORAGE_S3_ENDPOINT: {{ .Values.objectStorage.endpoint | quote }}
+  STORAGE_S3_REGION: {{ .Values.objectStorage.region | quote }}
+  STORAGE_S3_NAME: "twenty-crm"
+  # Files are sent on by Twenty itself rather than redirected to, since
+  # SeaweedFS's own address is inside the cluster. Twenty's default,
+  # said here so it stays that way.
+  STORAGE_S3_PRESIGNED_URL_ENABLED: "false"
+
+  # Mail goes through the cluster's mail server, from "smtp" in the
+  # configuration, with the username and password from the cc-smtp
+  # Secret in Twenty.yaml. Twenty connects with TLS from the start on
+  # port 465 and upgrades with STARTTLS anywhere else, unless told not
+  # to use TLS at all. With no mail server it only logs what it would
+  # have sent.
+{{ if .Values.mail.enabled }}
+  EMAIL_DRIVER: "smtp"
+  EMAIL_SMTP_HOST: {{ .Values.mail.host | quote }}
+  EMAIL_SMTP_PORT: {{ .Values.mail.port | quote }}
+  EMAIL_SMTP_NO_TLS: {{ .Values.mail.ignoreTls | quote }}
+{{ end }}
+  EMAIL_FROM_ADDRESS: {{ printf "crm@%s" .Values.mail.fromDomain | quote }}
+  EMAIL_FROM_NAME: "Twenty"

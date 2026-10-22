@@ -211,7 +211,7 @@ function describe(section: ConfigSection, draft: ConfigDraft): string {
 async function save(filePath: string, draft: ConfigDraft) {
   await writeFile(filePath, `${JSON.stringify(draft, null, 2)}\n`, { encoding: "utf8" });
 
-  console.log(`\n${chalk.green("✅")} Written to ${chalk.cyan(filePath)}`);
+  console.log(`\n✅ Written to ${chalk.cyan(filePath)}`);
   console.log(
     chalk.dim(
       "   It holds credentials, so keep it out of version control. Anything matching *.config.json already is.\n",

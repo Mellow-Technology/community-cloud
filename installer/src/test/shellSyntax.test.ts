@@ -15,7 +15,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { CommandType } from "../cli/commands/Command.ts";
@@ -32,13 +32,29 @@ import {
 
 // The shells a node might actually run these under. Ubuntu's /bin/sh
 // is dash, which is stricter than bash about several things we have
-// got wrong before.
-const SHELLS = ["/bin/sh", "/bin/bash"];
+// got wrong before. Remote commands are run by /bin/sh (see
+// inPosixShell), and zsh is checked too, where it's installed, for
+// anything run straight from a login shell.
+const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh"].filter((shell) => existsSync(shell));
 
 // A separator directly after one of the words that takes its body
 // next. "for x in y; do; echo" is a syntax error and an easy one to
 // write by accident when something else is doing the joining.
 const SEPARATOR_AFTER_KEYWORD = /;\s*(do|then|else)\s*;/;
+
+// Names zsh keeps for itself. Commands are run by sh now, but if
+// one ever reaches zsh as the login shell, setting one of these
+// either fails ("read-only variable: status") or quietly does something else:
+// "path" is tied to PATH, so assigning a file to it loses every
+// command after it. Only the ones a script might plausibly pick.
+const ZSH_SPECIAL = [
+  "status", "pipestatus", "path", "argv", "signals", "options", "commands",
+  "functions", "aliases", "parameters", "cdpath", "fpath", "manpath", "psvar", "watch",
+];
+const ZSH_SPECIAL_ASSIGNED = new RegExp(
+  `(^|[\\s;&|({])((${ZSH_SPECIAL.join("|")})=|for (${ZSH_SPECIAL.join("|")}) in|read( -r)? (${ZSH_SPECIAL.join("|")})\\b)`,
+  "m",
+);
 
 /**
  * Enough context that commands which read what an earlier command
@@ -197,6 +213,14 @@ describe("the shell every bundle builds", async () => {
       assert.deepEqual(broken, [], `\n  ${broken.join("\n  ")}`);
     });
   }
+
+  it("never sets a variable zsh keeps for itself", () => {
+    const broken = built
+      .filter(({ text }) => ZSH_SPECIAL_ASSIGNED.test(text))
+      .map(({ name, text }) => `${name}: ${ZSH_SPECIAL_ASSIGNED.exec(text)?.[0]?.trim()}`);
+
+    assert.deepEqual(broken, [], `\n  ${broken.join("\n  ")}`);
+  });
 
   it("never puts a separator after do, then or else", () => {
     const broken = built

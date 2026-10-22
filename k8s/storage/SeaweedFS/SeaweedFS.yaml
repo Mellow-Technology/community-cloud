@@ -1,0 +1,154 @@
+# SeaweedFS: S3-compatible object storage for the applications in the
+# cluster, run by the SeaweedFS operator.
+#
+# The smallest cluster the operator makes: one master, one volume
+# server, one filer and one S3 gateway, each keeping one copy of
+# everything. That is a single point of failure on purpose: it's where
+# most clusters start, and it's simple enough to be sure of before
+# anything is spread across machines. Growing it is a matter of the
+# replica counts and the replication setting here.
+#
+# Every volume is local SSD, through TopoLVM, for the same reason the
+# database is. A claim on local storage pins its pod to the node it was
+# made on, so the nodeSelector is also where these will stay.
+#
+# Applications don't use the cluster's own keys. Each asks for a
+# bucket, and keys to only that bucket, with the operator's Bucket,
+# S3Identity and S3Credentials in its own namespace; the operator
+# writes the keys into a Secret beside it. See k8s/apps/lago/
+# Lago.bucket.yaml.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Seaweed
+metadata:
+  name: seaweed
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # The operator doesn't choose one, and its samples float on
+  # "latest". This is the release the SeaweedFS chart of the same
+  # version ships.
+  image: chrislusf/seaweedfs:4.48
+
+  # Where TopoLVM can provide the volumes
+  nodeSelector:
+    node-role.kubernetes.io/storage-local: storage-local
+
+  volumeServerDiskCount: 1
+
+  master:
+    replicas: 1
+
+    # One copy of everything: no extra copy in another data center,
+    # another rack or on another server
+    defaultReplication: "000"
+
+    # The size a volume file is allowed to grow to, not the size of
+    # anything on disk. The volume server works out how many it has
+    # room for from its disk, and every bucket is a collection of
+    # volumes of its own, so at the default 30 GB a 50 GiB disk would
+    # have room for one bucket.
+    volumeSizeLimitMB: 1024
+
+    # How many volume files a bucket is given at a time when it needs
+    # more. Seven by default, which with one copy of everything is room
+    # for about seven buckets on a 50 GiB disk before any of them has
+    # written a byte.
+    config: |
+      [master.volume_growth]
+      copy_1 = 2
+
+    # Where the master keeps the cluster's identity and which volume
+    # numbers it has handed out. Without it each restart begins again.
+    # Can't be added later without recreating the master, so it's here
+    # from the start.
+    persistence:
+      enabled: true
+      storageClassName: cc-local-ssd-fast
+      resources:
+        requests:
+          storage: 1Gi
+
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+  volume:
+    replicas: 1
+    storageClassName: cc-local-ssd-fast
+
+    # The data, sized from "storage.allocations.objectStorageGb" in the
+    # configuration. The class allows expansion, so this can be raised
+    # later and the claim grows with it. It can't be lowered.
+    requests:
+      storage: {{ .Values.objectStorageVolumeSize }}
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  filer:
+    replicas: 1
+
+    # The names of everything stored, which buckets there are, and the
+    # identities and keys applications sign in with. Kept on the
+    # filer's own disk, which is why there's one filer: a second would
+    # have a different disk and a different idea of what exists.
+    config: |
+      [leveldb2]
+      enabled = true
+      dir = "/data/filerldb2"
+
+    persistence:
+      enabled: true
+      storageClassName: cc-local-ssd-fast
+      resources:
+        requests:
+          storage: 5Gi
+
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # S3, as "seaweed-s3" on port 8333 inside the cluster, and on
+  # values.domain.storage outside it, from SeaweedFS.network.yaml.
+  # Applications address buckets by path, and any region is accepted.
+  s3:
+    replicas: 1
+    requests:
+      cpu: 50m
+      memory: 128Mi
+---
+# Which namespaces may keep buckets here: those carrying the label.
+# Without a grant the operator refuses a Bucket, S3Identity or
+# S3Credentials from another namespace, so a namespace has to be let in
+# on purpose.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: ResourceReferenceGrant
+metadata:
+  name: buckets
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  from:
+    - group: seaweed.seaweedfs.com
+      kind: Bucket
+      namespaceSelector:
+        matchLabels:
+          storage.community-cloud.technology/buckets: "true"
+    - group: seaweed.seaweedfs.com
+      kind: S3Identity
+      namespaceSelector:
+        matchLabels:
+          storage.community-cloud.technology/buckets: "true"
+    - group: seaweed.seaweedfs.com
+      kind: S3Credentials
+      namespaceSelector:
+        matchLabels:
+          storage.community-cloud.technology/buckets: "true"
+  to:
+    - group: seaweed.seaweedfs.com
+      kind: Seaweed
+      name: seaweed

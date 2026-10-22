@@ -345,6 +345,11 @@ export interface WebCommandSpec extends BaseCommandSpec {
   body?: unknown;
   expectStatus?: number[];
   timeout?: number;
+
+  // What a particular response code means, in words someone can act
+  // on, for an API whose own errors don't say. Reported ahead of the
+  // response body rather than instead of it.
+  explainStatus?: Record<number, string>;
 }
 
 /**

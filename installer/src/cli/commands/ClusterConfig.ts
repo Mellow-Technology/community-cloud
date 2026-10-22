@@ -146,6 +146,11 @@ export interface Difference {
   current: unknown;
 }
 
+// Settings on a node that only change what the installer prints. A
+// cluster built before one was set, or with a different one, isn't
+// any different for it, so they aren't drift.
+const PRINT_ONLY_NODE_KEYS = ["displayName"];
+
 /**
  * Compare what the cluster has against what the file says.
  *
@@ -181,7 +186,9 @@ export function compareConfigurations(
       : [{ path: path.join(".") || "(whole configuration)", stored, current }];
   }
 
-  const keys = [...new Set([...Object.keys(stored), ...Object.keys(current)])];
+  const keys = [...new Set([...Object.keys(stored), ...Object.keys(current)])].filter(
+    (key) => !(path.length === 2 && path[0] === "nodes" && PRINT_ONLY_NODE_KEYS.includes(key)),
+  );
 
   return keys.flatMap((key) =>
     compareConfigurations(stored[key], current[key], [...path, key]),
