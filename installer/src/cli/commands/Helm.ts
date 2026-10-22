@@ -330,6 +330,13 @@ function buildManifestCommand(
   const path = `${WORK_DIR}/${toKubernetesName(definition.name)}-${getManifestName(manifest)}.yaml`;
   const quoted = quoteForShell(path);
 
+  // Server-side for a package that asks: a client-side apply keeps
+  // the whole object in an annotation, which can't hold more than
+  // 256 KB, and some operators' CRDs are larger than that. Taking
+  // over the fields a client-side apply or a person set is what
+  // re-running an install should do anyway.
+  const apply = definition.serverSideApply === true ? "kubectl apply --server-side --force-conflicts" : "kubectl apply";
+
   return {
     name: `helm-manifest-${when}-${definition.name}-${getManifestName(manifest)}`,
     description: `Apply ${manifest.split("/").pop()} for ${definition.name}`,
@@ -348,10 +355,10 @@ function buildManifestCommand(
       // creating it.
       "applied=",
       waitUntil(
-        `{ kubectl apply -f ${quoted} && applied=yes; }`,
+        `{ ${apply} -f ${quoted} && applied=yes; }`,
         getWaitSeconds(context, MANIFEST_TIMEOUT_SECONDS),
       ),
-      `[ "$applied" = "yes" ] || kubectl apply -f ${quoted} || { echo "Couldn't apply ${manifest} for ${definition.name}" >&2; rm -f ${quoted}; exit 1; }`,
+      `[ "$applied" = "yes" ] || ${apply} -f ${quoted} || { echo "Couldn't apply ${manifest} for ${definition.name}" >&2; rm -f ${quoted}; exit 1; }`,
       `rm -f ${quoted}`,
     ],
     stdin: render,

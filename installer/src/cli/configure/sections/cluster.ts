@@ -69,6 +69,7 @@ export const clusterSection: ConfigSection = {
       { key: "billing", label: "Lago (billing)", prefix: "billing" },
       { key: "billingApi", label: "Lago's API", prefix: "billing-api" },
       { key: "signing", label: "Documenso (document signing)", prefix: "sign" },
+      { key: "plane", label: "Plane (projects)", prefix: "plane" },
       { key: "headlamp", label: "Headlamp (cluster interface)", prefix: "headlamp" },
       { key: "storage", label: "S3 object storage (SeaweedFS)", prefix: "s3" },
     ];

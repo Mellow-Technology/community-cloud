@@ -240,8 +240,9 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`seaweedfs`, `redis-operator`, `headlamp`, `tailscale-operator`,
-`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`. Dependencies
+`seaweedfs`, `redis-operator`, `rabbitmq-operator`, `headlamp`,
+`tailscale-operator`, `twenty`, `lago`, `documenso`, `mattermost`,
+`picoclaw`, `plane`. Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too.
 
@@ -263,6 +264,25 @@ needs keys or a link signed with them. See
 `redis-operator` installs the OpsTree Redis operator and, through it,
 the one Redis the applications in `cc-office` share, with its password
 in the `cc-redis` Secret there.
+
+`rabbitmq-operator` installs the RabbitMQ team's Cluster Operator and
+Messaging Topology Operator, vendored at pinned versions in
+`k8s/mq/RabbitMQ/` and applied server-side, and through them the one
+RabbitMQ the applications in `cc-office` share, `rabbitmq` on 5672. An
+application asks for its own vhost and a user limited to it with
+`Vhost`, `User` and `Permission` resources, and the operator writes
+the user's credentials into `<user>-user-credentials` beside it.
+
+Plane is projects, issues and docs, on `values.domain.plane`, with its
+web app, public pages, admin pages and API all on that hostname. Its
+database is in cc-postgres, its cache in the shared Redis, its job
+queue in a vhost of the shared RabbitMQ, and its files in a SeaweedFS
+bucket that browsers reach through Plane's own hostname, at
+`/uploads`. Its free edition has no OpenID Connect, so it isn't
+signed into through Authentik: sign up is off, and the install makes
+its first administrator with `values.adminEmail` and the password in
+the `plane-admin` Secret, before anyone else can claim its admin
+pages.
 
 `twenty`, `lago`, `documenso`, `mattermost` and `picoclaw` are
 applications in `cc-office`, each with a ListenerSet of its own on the

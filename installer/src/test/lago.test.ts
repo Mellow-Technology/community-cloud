@@ -81,7 +81,8 @@ describe("installing Lago", () => {
   });
 
   it("waits for its bucket and the keys to it before its own workloads", () => {
-    assert.ok(position("ready-lago") > position("helm-manifest-after-lago-Lago-bucket"));
+    assert.ok(position("helm-manifest-after-lago-lago-bucket") >= 0, names.join("\n"));
+    assert.ok(position("ready-lago") > position("helm-manifest-after-lago-lago-bucket"));
     assert.ok(position("ready-lago") < position("rollout-lago"));
     assert.deepEqual(LAGO.ready, ["buckets.seaweed.seaweedfs.com/lago", "s3credentials.seaweed.seaweedfs.com/lago"]);
   });

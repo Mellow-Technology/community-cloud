@@ -29,6 +29,7 @@ community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
 | `Office.database.yaml` | The shared CloudNativePG cluster, `cc-postgres`. |
 | `Office.roles.yaml` | The database roles for Twenty, Mattermost and Authentik. |
 | `RedisStandalone.yaml` | The Redis the applications share, made by the OpsTree operator. |
+| `RabbitmqCluster.yaml` | The RabbitMQ the applications share, made by the RabbitMQ Cluster Operator. |
 
 The cluster and the roles come with the `cloudnative-pg` package,
 which also makes each role's Secret. Applications added since bring
@@ -38,6 +39,14 @@ The Redis comes with the `redis-operator` package, which installs the
 operator and applies `RedisStandalone.yaml`. It's `redis` on 6379 in
 `cc-office`, with its password in the `cc-redis` Secret; each
 application keeps to a database number of its own.
+
+The RabbitMQ comes with the `rabbitmq-operator` package, which
+installs the RabbitMQ team's operators and applies
+`RabbitmqCluster.yaml`. It's `rabbitmq` on 5672 in `cc-office`. Each
+application has a vhost of its own and a user that can only use it,
+from `Vhost`, `User` and `Permission` resources the Messaging Topology
+Operator carries out; it writes the user's credentials into
+`<user>-user-credentials`.
 
 ## Authentik (`authentik/`)
 
@@ -77,6 +86,38 @@ Its queues are in the shared Redis. It signs and encrypts with a key
 the installer generates, in the `twenty-crm-app-secret` Secret, and
 sends mail through the namespace's mail server. It has its own
 accounts; signing in through Authentik needs Twenty's enterprise key.
+
+## Plane (`plane/`)
+
+[Plane](https://plane.so) is projects, issues and docs. Install it
+with the `plane` package; it's reached at `values.domain.plane`, with
+its parts divided by path — `/api` and `/auth` to its API, `/live` to
+its live collaboration server, `/spaces` to its public pages,
+`/god-mode` to its admin pages, and everything else to its web app.
+
+| File | What it is |
+|---|---|
+| `Plane.yaml` | Its API, worker, scheduler and live server, and its three web apps. |
+| `Plane.database.yaml` | Its role and database in cc-postgres. |
+| `Plane.queue.yaml` | Its vhost in the shared RabbitMQ, and a user limited to it. |
+| `Plane.bucket.yaml` | Its bucket in SeaweedFS, `uploads`, and keys to only that. |
+| `Plane.config.yaml` | Its settings, and the script that makes its first administrator. |
+| `Plane.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+
+Plane signs the links it gives browsers for its files for its own
+hostname, with the bucket in the path, so `/uploads` on that hostname
+goes to SeaweedFS — through a ReferenceGrant in `seaweedfs` that lets
+Plane's route reach SeaweedFS's Service — and SeaweedFS checks the
+signature against the hostname the request arrives with. The bucket
+has to be called `uploads`, which Plane's exports assume.
+
+Its free edition has no OpenID Connect, so it isn't signed into
+through Authentik. Sign up is off. Its admin pages make whoever
+reaches them first its administrator, so the install does that
+first: with `values.adminEmail` and the password in the `plane-admin`
+Secret, and only while there's no administrator at all. Most of its
+settings, mail among them, live in its database once it's running,
+and are changed from its admin pages.
 
 ## Lago (`lago/`)
 

@@ -1,0 +1,152 @@
+# How Plane is reached: a ListenerSet on the cluster Gateway, as for the
+# other applications, on values.domain.plane, with its parts divided
+# by path the way Plane's own proxy divides them.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.plane }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.plane }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: plane-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: plane
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.plane }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /auth
+        - path:
+            type: PathPrefix
+            value: /static
+      backendRefs:
+        - name: plane-api
+          port: 8000
+    # Its documents' live collaboration, over a WebSocket
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /live
+      backendRefs:
+        - name: plane-live
+          port: 3000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /spaces
+      backendRefs:
+        - name: plane-space
+          port: 3000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /god-mode
+      backendRefs:
+        - name: plane-admin
+          port: 3000
+    # Its bucket, through Plane's own hostname. Plane signs the links it
+    # gives browsers for this hostname, with the bucket in the path, and
+    # SeaweedFS checks the signature against the hostname the request
+    # arrives with — which the Gateway passes on unchanged. Nothing
+    # rewrites it, or the signatures stop matching.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /uploads
+      backendRefs:
+        - name: seaweed-s3
+          namespace: seaweedfs
+          port: 8333
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: plane-web
+          port: 3000
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: plane-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: plane
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.plane }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# Letting Plane's route send /uploads to SeaweedFS's S3 gateway. A
+# route may only reach a Service in another namespace when that
+# namespace says so, and this says so for Plane's routes alone.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: plane-uploads
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: cc-office
+  to:
+    - group: ""
+      kind: Service
+      name: seaweed-s3

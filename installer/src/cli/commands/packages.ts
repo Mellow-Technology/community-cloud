@@ -71,6 +71,9 @@ import type { GateDefinition } from "./OAuth2Proxy.ts";
  *   be mistaken for another project's. Waited for until the operator
  *   marks it Ready, ahead of the rollout, since the workloads are
  *   what use it.
+ * - serverSideApply: apply its manifests server-side. For vendored
+ *   operator manifests whose CRDs are too large for client-side
+ *   apply's annotation.
  * - values: the configuration values its templates can't do without,
  *   as paths under "values". A template renders a missing value as
  *   nothing at all, which for a hostname is a route that matches no
@@ -107,6 +110,7 @@ export interface PackageDefinition {
   secrets?: SecretDefinition[];
   rollout?: string[];
   ready?: string[];
+  serverSideApply?: boolean;
   values?: string[];
   authentik?: AuthentikClient;
   mail?: boolean;
@@ -333,6 +337,36 @@ const builtInPackages: PackageDefinition[] = [
     },
   },
   {
+    name: "rabbitmq-operator",
+    description: "The RabbitMQ operators, and the one RabbitMQ the applications in cc-office share",
+    namespace: "rabbitmq-system",
+
+    // Its webhooks' certificates come from cert-manager, and the shared
+    // cluster's queues are on "cc-local-ssd-fast"
+    requires: ["cert-manager", "topolvm"],
+
+    // No chart: the RabbitMQ team publishes the operators as plain
+    // manifests, vendored here at pinned versions
+    manifests: {
+      // cc-office, for the shared cluster, which goes in it
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://mq/RabbitMQ/RabbitMQ.cluster-operator.yaml",
+        "embed://mq/RabbitMQ/RabbitMQ.topology-operator.yaml",
+
+        // Once the operator's webhook answers, which the retries in
+        // applying a manifest wait out
+        "embed://apps/office/RabbitmqCluster.yaml",
+      ],
+    },
+    serverSideApply: true,
+
+    // The operators. The cluster they run is in cc-office, and the
+    // applications that use it wait for it, as they do for the Redis.
+    rollout: ["deployment/rabbitmq-cluster-operator", "deployment/messaging-topology-operator"],
+  },
+  {
     name: "redis-operator",
     description: "The Redis operator, and the one Redis the applications in cc-office share",
     chart: { repo: "https://ot-container-kit.github.io/helm-charts/", name: "redis-operator" },
@@ -504,6 +538,92 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
 
     values: ["domain.crm"],
+  },
+  {
+    name: "plane",
+    description: "Projects, issues and docs",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, its cache in the shared Redis,
+    // its job queue in the shared RabbitMQ, and its files in a bucket
+    // in SeaweedFS
+    requires: ["cloudnative-pg", "redis-operator", "rabbitmq-operator", "seaweedfs"],
+
+    // No chart: the project's runs its own database, Redis, RabbitMQ
+    // and MinIO, and stamps every pod with the time so each upgrade
+    // restarts all of them
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/plane/Plane.database.yaml",
+        "embed://apps/plane/Plane.queue.yaml",
+        "embed://apps/plane/Plane.bucket.yaml",
+        "embed://apps/plane/Plane.config.yaml",
+        "embed://apps/plane/Plane.yaml",
+        "embed://apps/plane/Plane.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres, brought with it as Lago's is
+      {
+        name: "plane-db",
+        description: "the Plane database role",
+        username: "plane",
+        labels: { "cnpg.io/reload": "true" },
+      },
+
+      // What it signs sessions with, and what the settings it keeps in
+      // its database are encrypted with — the mail password among
+      // them. Losing it loses those.
+      {
+        name: "plane-secret-key",
+        description: "the key Plane signs and encrypts with",
+        keyBytes: 32,
+      },
+
+      // What the API and the live server prove themselves to each
+      // other with
+      {
+        name: "plane-live-secret-key",
+        description: "the key Plane's live server and API share",
+        keyBytes: 32,
+      },
+
+      // The first administrator, made by the install with the
+      // cluster's admin address; see Plane.config.yaml
+      {
+        name: "plane-admin",
+        description: "Plane's first administrator's password",
+      },
+    ],
+
+    // The shared Redis and RabbitMQ first, since the operators make
+    // them; then its vhost, user, bucket and keys; then its own
+    ready: [
+      "vhosts.rabbitmq.com/plane",
+      "users.rabbitmq.com/plane",
+      "permissions.rabbitmq.com/plane",
+      "buckets.seaweed.seaweedfs.com/plane-uploads",
+      "s3credentials.seaweed.seaweedfs.com/plane",
+    ],
+    rollout: [
+      "statefulset/redis",
+      "statefulset/rabbitmq-server",
+      "deployment/plane-api",
+      "deployment/plane-worker",
+      "deployment/plane-beat",
+      "deployment/plane-live",
+      "deployment/plane-web",
+      "deployment/plane-space",
+      "deployment/plane-admin",
+    ],
+    mail: true,
+
+    values: ["domain.plane", "adminEmail"],
   },
   {
     name: "mattermost",

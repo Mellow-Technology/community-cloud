@@ -416,6 +416,10 @@
               "type": "string",
               "description": "Headlamp, behind its Authentik gate."
             },
+            "plane": {
+              "type": "string",
+              "description": "Plane, its web app, admin pages and API on the one hostname."
+            },
             "storage": {
               "type": "string",
               "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."

@@ -1,0 +1,128 @@
+# Plane's configuration, for its API, worker and scheduler.
+#
+# Everything here is safe to read. The secrets — the database, Redis
+# and RabbitMQ credentials, the keys it signs with, the keys to its
+# bucket and the mail server's password — come from their own Secrets
+# in Plane.yaml.
+#
+# Plane keeps most of its settings in its own database, edited in its
+# admin pages at /god-mode/. The sign up and mail settings here only
+# seed those the first time it starts; after that, change them there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  WEB_URL: {{ printf "https://%s" .Values.domain.plane | quote }}
+  CORS_ALLOWED_ORIGINS: {{ printf "https://%s" .Values.domain.plane | quote }}
+  DEBUG: "0"
+  DOCKERIZED: "1"
+  GUNICORN_WORKERS: "2"
+  API_KEY_RATE_LIMIT: "60/minute"
+
+  # Its files are in its bucket, "uploads", from Plane.bucket.yaml.
+  # Plane talks to SeaweedFS inside the cluster for its own work, but
+  # signs the links it gives browsers for its own hostname — that's
+  # what "MinIO" mode does — and Plane.network.yaml sends /uploads on
+  # that hostname to SeaweedFS. So browsers never leave Plane's origin
+  # and SeaweedFS never needs to be reached for Plane.
+  USE_MINIO: "1"
+  MINIO_ENDPOINT_SSL: "1"
+  AWS_S3_ENDPOINT_URL: {{ .Values.objectStorage.endpoint | quote }}
+  AWS_REGION: {{ .Values.objectStorage.region | quote }}
+  AWS_S3_BUCKET_NAME: "uploads"
+  FILE_SIZE_LIMIT: "5242880"
+
+  # Nobody signs up. The first account is its administrator, made on
+  # first start with the cluster's admin address, and everyone else is
+  # invited from inside Plane. Plane's free edition has no OpenID
+  # Connect, so this is its own sign in rather than Authentik's.
+  ENABLE_SIGNUP: "0"
+
+  # Mail through the cluster's mail server, from "smtp" in the
+  # configuration, with the username and password from the cc-smtp
+  # Secret in Plane.yaml.
+{{ if .Values.mail.enabled }}
+  ENABLE_SMTP: "1"
+  EMAIL_HOST: {{ .Values.mail.host | quote }}
+  EMAIL_PORT: {{ .Values.mail.port | quote }}
+  EMAIL_USE_TLS: {{ .Values.mail.startTlsBit | quote }}
+  EMAIL_USE_SSL: {{ .Values.mail.implicitTlsBit | quote }}
+{{ end }}
+  EMAIL_FROM: {{ printf "Plane <plane@%s>" .Values.mail.fromDomain | quote }}
+---
+# The live collaboration server's own settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plane-live
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  API_BASE_URL: "http://plane-api:8000/"
+  LIVE_BASE_PATH: "/live"
+  PORT: "3000"
+---
+# Claiming Plane for its administrator, before anyone else can.
+#
+# Plane's admin pages make whoever reaches them first, on a new
+# install, its administrator — and they're on the public hostname. So
+# the first administrator is made here, as Plane makes one itself,
+# with the cluster's admin address and the password in the plane-admin
+# Secret. Only while there's no administrator at all, so it never
+# changes one that exists, or adds a second.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plane-claim
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  claim.py: |
+    import os
+    import uuid
+
+    from django.contrib.auth.hashers import make_password
+    from django.db import transaction
+    from django.utils import timezone
+
+    from plane.db.models import Profile, User
+    from plane.license.models import Instance, InstanceAdmin
+
+    with transaction.atomic():
+        instance = Instance.objects.select_for_update().first()
+        if instance is None:
+            raise SystemExit("Plane's instance isn't registered yet")
+
+        if instance.is_setup_done or InstanceAdmin.objects.exists():
+            print("Plane already has an administrator")
+        else:
+            email = os.environ["PLANE_ADMIN_EMAIL"].strip().lower()
+            user = User.objects.filter(email=email).first()
+
+            if user is None:
+                user = User.objects.create(
+                    email=email,
+                    username=uuid.uuid4().hex,
+                    password=make_password(os.environ["PLANE_ADMIN_PASSWORD"]),
+                    is_password_autoset=False,
+                    first_name="Admin",
+                )
+                Profile.objects.create(user=user, company_name=os.environ["PLANE_INSTANCE_NAME"])
+
+            user.is_active = True
+            user.last_active = timezone.now()
+            user.save()
+
+            InstanceAdmin.objects.create(user=user, instance=instance)
+            instance.is_setup_done = True
+            instance.instance_name = os.environ["PLANE_INSTANCE_NAME"]
+            # Community Cloud aims for privacy by default
+            instance.is_telemetry_enabled = False
+            instance.save()
+            print(f"Made {email} Plane's administrator")

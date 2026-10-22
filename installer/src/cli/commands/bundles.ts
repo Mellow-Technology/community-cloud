@@ -188,6 +188,12 @@ const builtInBundles: BundleDefinition[] = [
     checkedBy: "helm-charts",
   },
   {
+    name: "plane",
+    description: "Install Plane into cc-office",
+    commands: buildSinglePackageBundle("plane"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "preflight",
     description: "Check a node could be installed on, changing nothing",
     commands: PreflightCommands,

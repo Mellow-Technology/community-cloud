@@ -1,0 +1,48 @@
+# Plane's vhost in the shared RabbitMQ, and a user that can only use
+# that vhost.
+#
+# Requests the Messaging Topology Operator carries out, from the
+# rabbitmq-operator package. It makes up the user's name and password
+# and writes them into the Secret "plane-user-credentials" here, which
+# Plane's API, worker and scheduler build their AMQP_URL from. Both are
+# URL safe as generated.
+apiVersion: rabbitmq.com/v1beta1
+kind: Vhost
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  name: plane
+  rabbitmqClusterReference:
+    name: rabbitmq
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: User
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  rabbitmqClusterReference:
+    name: rabbitmq
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Permission
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  vhost: plane
+  userReference:
+    name: plane
+  permissions:
+    configure: ".*"
+    write: ".*"
+    read: ".*"
+  rabbitmqClusterReference:
+    name: rabbitmq

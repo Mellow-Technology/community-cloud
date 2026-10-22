@@ -42,10 +42,12 @@ k8s/
 │   ├── mattermost/    # Team chat
 │   ├── office/        # The cc-office namespace and its shared pieces
 │   ├── picoclaw/      # AI agent
+│   ├── plane/         # Projects
 │   └── twenty/        # Twenty CRM
 ├── certs/             # cert-manager and the cluster's issuer
 ├── crd/               # Community Cloud's own custom resources
 ├── database/Postgres/ # CloudNativePG clusters
+├── mq/                # Message queues: the RabbitMQ operators
 ├── networking/        # CNI, the Gateway API, the mesh
 │   ├── cilium/        # Cilium, and gateway/ with the cluster Gateway
 │   └── tailscale/

@@ -112,6 +112,8 @@ describe("what templates are told about a namespace's mail", () => {
     assert.equal(values.port, "587");
     assert.equal(values.startTls, "true");
     assert.equal(values.implicitTls, "false");
+    assert.equal(values.startTlsBit, "1");
+    assert.equal(values.implicitTlsBit, "0");
     assert.equal(values.scheme, "smtp");
   });
 
@@ -120,6 +122,8 @@ describe("what templates are told about a namespace's mail", () => {
 
     assert.equal(values.port, "465");
     assert.equal(values.implicitTls, "true");
+    assert.equal(values.implicitTlsBit, "1");
+    assert.equal(values.startTlsBit, "0");
     assert.equal(values.scheme, "smtps");
   });
 
