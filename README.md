@@ -49,7 +49,7 @@ TopoLVM supports four device classes mapped to LVM volume groups:
 | `ssd-cache` | `cc-ssd-cache-vg` | SSD cache fronting spinning disks (reserved — see [storage](./k8s/storage/README.md#on-ssd-cache)) |
 | `hdd` | `cc-hdd-vg` | Spinning disk (capacity) |
 
-Object storage is provided by [Garage](https://garagehq.deuxfleurs.fr) (S3-compatible), deployed as a single-node StatefulSet with NodePort access.
+Object storage is provided by [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (S3-compatible), deployed as a single all-in-one pod on local SSD and reachable inside the cluster. How much disk it and the database claim is set under `storage.allocations` in the installer configuration.
 
 ### Networking
 
@@ -89,7 +89,7 @@ community-cloud/
 │   ├── gateway/        # The default application Gateway
 │   ├── k3s-config/     # K3s node configuration (registries)
 │   ├── networking/     # Cilium, the cluster Gateway, Tailscale
-│   └── storage/        # TopoLVM, Garage, StorageClasses
+│   └── storage/        # TopoLVM, SeaweedFS, StorageClasses
 ├── cc-headlamp/        # Headlamp Kubernetes UI plugin
 ├── docs/               # Documentation
 └── README.md
@@ -149,8 +149,8 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 
 | App | Namespace | Status |
 |---|---|---|
-| Twenty CRM | `cc-office` | Deployed — server + worker deployments, Postgres, Redis, Garage S3 |
-| Authentik | `cc-office` | Helm values configured — Postgres-backed auth, Garage S3 storage|
+| Twenty CRM | `cc-office` | Deployed — server + worker deployments, Postgres, Redis, SeaweedFS S3 |
+| Authentik | `cc-office` | Helm values configured — Postgres-backed auth, SeaweedFS S3 storage|
 | Mattermost | `cc-office` | Operator values + secret/database/storage manifests prepared |
 | Office (Back Office) | `cc-office` | Namespace prepared |
 | Umami (Analytics) | — | Template directory prepared |
@@ -171,7 +171,7 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 - **Runtime**: Bun (installer), K3s (Kubernetes)
 - **Languages**: TypeScript, YAML
 - **CLI Framework**: Ink (React), Commander.js, Inquirer
-- **Storage**: TopoLVM, Garage
+- **Storage**: TopoLVM, SeaweedFS
 - **Networking**: Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale
 - **Databases**: CloudNative-PG (PostgreSQL/PostGIS), Redis (Opstree)
 - **AI**: vLLM (ROCm/AMD GPU)

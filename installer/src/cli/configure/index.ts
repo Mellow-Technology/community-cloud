@@ -10,7 +10,7 @@
 import { ConfigSection } from "./section.ts";
 import { clusterSection } from "./sections/cluster.ts";
 import { nodesSection } from "./sections/nodes.ts";
-import { networkingSection } from "./sections/networking.ts";
+import { networkingSection, storageSection } from "./sections/networking.ts";
 import { k3sSection, packagesSection, registriesSection } from "./sections/packages.ts";
 import { mailSection } from "./sections/mail.ts";
 
@@ -18,6 +18,7 @@ export const configSections: ConfigSection[] = [
   clusterSection,
   nodesSection,
   networkingSection,
+  storageSection,
   k3sSection,
   registriesSection,
   packagesSection,

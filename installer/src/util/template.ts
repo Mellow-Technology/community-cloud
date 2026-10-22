@@ -21,6 +21,7 @@ import { parse as parseYaml } from "yaml";
 import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
+import { buildAllocationValues } from "./allocations.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import { buildMailValues } from "./mail.ts";
@@ -382,6 +383,15 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   // reaches applications through a Secret.
   if (values.mail === undefined) {
     values.mail = buildMailValues(rawConfig, context?.templateNamespace);
+  }
+
+  // How big each service's volume is. Kept together under
+  // "storage.allocations" so the claims on a node's disks can be read
+  // in one place, and handed to each manifest from there.
+  for (const [name, size] of Object.entries(buildAllocationValues(rawConfig))) {
+    if (values[name] === undefined) {
+      values[name] = size;
+    }
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

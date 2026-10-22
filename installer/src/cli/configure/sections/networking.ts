@@ -13,6 +13,7 @@ import {
   writePath,
 } from "../section.ts";
 import { API_KEY_ENV, DEFAULT_ROLE } from "../../commands/NebulaNetwork.ts";
+import { ALLOCATIONS, getAllocations } from "../../../util/allocations.ts";
 
 export const networkingSection: ConfigSection = {
   name: "networking",
@@ -117,6 +118,49 @@ export const networkingSection: ConfigSection = {
         "network.nebula.defaultRole",
         readPath(draft, "network.nebula.defaultRole") ?? DEFAULT_ROLE,
       );
+    }
+  },
+};
+
+export const storageSection: ConfigSection = {
+  name: "storage",
+  title: "Storage",
+
+  describe: (draft) => {
+    const allocations = readPath(draft, "storage.allocations") ?? {};
+
+    const parts = ALLOCATIONS.filter((entry) => allocations[entry.key] !== undefined).map(
+      (entry) => `${entry.key.replace(/Gb$/, "")}: ${allocations[entry.key]} GiB`,
+    );
+
+    return parts.length > 0 ? parts.join(", ") : NOTHING_SET;
+  },
+
+  run: async (draft: ConfigDraft) => {
+    console.log(`
+  How much of the local disk each service claims, in GiB. These come
+  out of the same volume groups, so together they have to fit on the
+  storage nodes. A size can be raised later; it can't be lowered.
+`);
+
+    // What's there already, or the defaults where nothing is, so that
+    // pressing enter through this keeps whatever was decided before
+    let current: Record<string, number>;
+    try {
+      current = getAllocations(draft);
+    } catch {
+      current = Object.fromEntries(ALLOCATIONS.map((entry) => [entry.key, entry.defaultGb]));
+    }
+
+    for (const allocation of ALLOCATIONS) {
+      const answer = await input({
+        message: `${allocation.description} (GiB)`,
+        default: String(current[allocation.key]),
+        validate: (value) =>
+          /^[1-9][0-9]*$/.test(value.trim()) || "A whole number of GiB, above zero",
+      });
+
+      writePath(draft, `storage.allocations.${allocation.key}`, Number(answer.trim()));
     }
   },
 };

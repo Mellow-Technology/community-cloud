@@ -233,7 +233,7 @@
       }
     },
     "storage": {
-      "$ref": "#/$defs/storage"
+      "$ref": "#/$defs/clusterStorage"
     },
     "packages": {
       "type": "object",
@@ -718,30 +718,72 @@
       "additionalProperties": false,
       "properties": {
         "disks": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Consider only these, by path. Narrows what's considered; never overrides a safety check."
+          "$ref": "#/$defs/storageDisks"
         },
         "diskClasses": {
-          "type": "object",
-          "description": "Put a disk in a class other than the one its hardware suggests, by path.",
-          "additionalProperties": {
-            "enum": [
-              "ssd",
-              "ssd-sata",
-              "ssd-cache",
-              "hdd"
-            ]
-          }
+          "$ref": "#/$defs/storageDiskClasses"
         },
         "minimumSizeGb": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Ignore disks smaller than this. Defaults to 1."
+          "$ref": "#/$defs/storageMinimumSizeGb"
         }
       }
+    },
+    "clusterStorage": {
+      "type": "object",
+      "description": "Which disks TopoLVM may carve volumes out of, on every node, and how much each service claims from them.",
+      "additionalProperties": false,
+      "properties": {
+        "disks": {
+          "$ref": "#/$defs/storageDisks"
+        },
+        "diskClasses": {
+          "$ref": "#/$defs/storageDiskClasses"
+        },
+        "minimumSizeGb": {
+          "$ref": "#/$defs/storageMinimumSizeGb"
+        },
+        "allocations": {
+          "type": "object",
+          "description": "How much local disk each service claims, in whole GiB. They share the same volume groups, so together they have to fit on the storage nodes. A size can be raised later; it can't be lowered.",
+          "additionalProperties": false,
+          "properties": {
+            "databaseGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The shared Postgres cluster, cc-postgres. Defaults to 30."
+            },
+            "objectStorageGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "SeaweedFS's volume server. Defaults to 50."
+            }
+          }
+        }
+      }
+    },
+    "storageDisks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Consider only these, by path. Narrows what's considered; never overrides a safety check."
+    },
+    "storageDiskClasses": {
+      "type": "object",
+      "description": "Put a disk in a class other than the one its hardware suggests, by path.",
+      "additionalProperties": {
+        "enum": [
+          "ssd",
+          "ssd-sata",
+          "ssd-cache",
+          "hdd"
+        ]
+      }
+    },
+    "storageMinimumSizeGb": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Ignore disks smaller than this. Defaults to 1."
     },
     "mail": {
       "type": "object",

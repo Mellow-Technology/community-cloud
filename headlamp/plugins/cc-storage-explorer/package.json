@@ -1,0 +1,38 @@
+{
+  "name": "cc-storage-explorer",
+  "version": "0.1.0",
+  "description": "Shows local disk usage per node and the node-local PersistentVolumes bound to them.",
+  "license": "LGPL-3.0-or-later",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "deploy:local": "node scripts/deploy-local.mjs",
+    "check": "npm run tsc && npm run lint && npm run format:check",
+    "tsc": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint --ext .js,.ts,.tsx src",
+    "lint:fix": "eslint --ext .js,.ts,.tsx src --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
+  },
+  "keywords": [
+    "headlamp",
+    "headlamp-plugin",
+    "kubernetes",
+    "kubernetes-ui",
+    "kubernetes-debugging",
+    "plugins"
+  ],
+  "prettier": "@headlamp-k8s/eslint-config/prettier-config",
+  "eslintConfig": {
+    "extends": [
+      "@headlamp-k8s",
+      "prettier",
+      "plugin:jsx-a11y/recommended"
+    ]
+  },
+  "overrides": {
+    "typescript": "5.6.2"
+  },
+  "devDependencies": {
+    "@kinvolk/headlamp-plugin": "^0.14.0"
+  }
+}

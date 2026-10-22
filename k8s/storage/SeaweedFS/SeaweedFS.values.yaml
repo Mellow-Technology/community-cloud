@@ -1,0 +1,80 @@
+# SeaweedFS: S3-compatible object storage for the applications in the
+# cluster.
+#
+# The smallest install the chart can do. One pod runs the master, a
+# volume server, the filer and the S3 gateway together, on one volume,
+# keeping one copy of everything. That is a single point of failure on
+# purpose: it's where most clusters start, and it's simple enough to
+# be sure of before anything is spread across machines.
+#
+# The volume is local SSD, through TopoLVM, for the same reason the
+# database is. How SeaweedFS might make use of slower, larger disks —
+# it can tier volumes by disk type — is a question for later.
+
+# The chart's separate components. "allInOne" doesn't switch these off
+# by itself, and left on they'd be a second master, volume server and
+# filer beside the all-in-one pod.
+master:
+  enabled: false
+
+  # One copy of everything: no extra copy in another data center,
+  # another rack or on another server. The all-in-one pod reads this
+  # even with the separate master switched off.
+  defaultReplication: "000"
+
+volume:
+  enabled: false
+
+  # Only the first entry's "maxVolumes" is read, and the all-in-one pod
+  # is the one reading it. Zero sizes the number of volumes to the free
+  # space on the disk. Without it "weed server" allows 8, which at
+  # 1000 MB each caps the store at about 8 GB however large the claim.
+  dataDirs:
+    - name: data
+      type: emptyDir
+      maxVolumes: 0
+
+filer:
+  enabled: false
+
+  # The filer's own idea of the same thing, for files written through
+  # it — which includes everything written over S3
+  defaultReplicaPlacement: "000"
+
+allInOne:
+  enabled: true
+  replicas: 1
+
+  s3:
+    enabled: true
+
+    # Applications authenticate. The chart generates an admin and a
+    # read-only key pair into the Secret "seaweedfs-s3-secret" on first
+    # install, and keeps it across upgrades.
+    enableAuth: true
+
+  data:
+    type: persistentVolumeClaim
+    storageClass: cc-local-ssd-fast
+
+    # From "storage.allocations" in the configuration. The class allows
+    # expansion, so this can be raised later and the claim grows with
+    # it. It can't be lowered.
+    size: {{ .Values.objectStorageVolumeSize }}
+
+  # Where TopoLVM can provide the volume. A claim on local storage pins
+  # the pod to the node it was made on, so this is also where the pod
+  # will stay.
+  nodeSelector: |
+    node-role.kubernetes.io/storage-local: storage-local
+
+  # Requests well below the chart's half a core and a gigabyte, which
+  # is a lot to reserve for something an idle cluster barely touches.
+  # The chart's limits stay, so it still has room when it's busy.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi

@@ -43,10 +43,10 @@ const components = await checkbox({
       checked: true,
     },
     {
-      name: "Garage",
-      value: "garage",
+      name: "SeaweedFS",
+      value: "seaweedfs",
       description:
-        "S3 compatible storage service designed for resiliency and a wide variety of operating environments (https://garagehq.deuxfleurs.fr/)",
+        "S3 compatible object storage, simple to run small and able to grow (https://github.com/seaweedfs/seaweedfs)",
     },
     {
       name: "PostgreSql",
