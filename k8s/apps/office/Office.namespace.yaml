@@ -10,4 +10,8 @@ metadata:
     # networking/cilium/gateway/Gateway.yaml. Without it a ListenerSet
     # here is refused and the applications have no way in.
     whereWereGoing: "weDontNeedRoads"
+    # What SeaweedFS's grant selects on, in storage/SeaweedFS/
+    # SeaweedFS.yaml. Without it the applications here can't have
+    # buckets.
+    storage.community-cloud.technology/buckets: "true"
     app.kubernetes.io/managed-by: "community-cloud"

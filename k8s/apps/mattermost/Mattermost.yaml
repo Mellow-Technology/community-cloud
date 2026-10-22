@@ -1,38 +1,63 @@
+# Mattermost, as an installation the Mattermost operator runs.
+#
+# The operator makes the Deployment and the configuration from this.
+# Its database is in cc-postgres and its files in a bucket in the
+# cluster's SeaweedFS, both from the other files here, and it's
+# reached through the cluster Gateway, from Mattermost.network.yaml,
+# rather than the Ingress the operator would make.
 apiVersion: installation.mattermost.com/v1beta1
 kind: Mattermost
 metadata:
   name: mattermost
   namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
-  # Size automatically sets resources based
-  # on Mattermost user sizing guidelines.
-  #
-  # We don't have HA in non-enterprise land
-  # but we setup 2 replicas for some level of redundancy
-  #
-  # Process:
-  # - Install in this order
-  # - Storage
-  # - Database
-  #
-  size: "100users" # Example: 5000users
-  replicas: 2
-  ingress:
-    enabled: true
-    host: {{ .Values.domain.mattermost }}
-    annotations:
-      kubernetes.io/ingress.class: traefik
   version: "v10.11.19"
+
+  # Sets resources by Mattermost's own sizing guidelines
+  size: "100users"
+
+  # One, which overrides whatever the size would. Running more than one
+  # server needs an Enterprise licence; without one they don't share
+  # what's happening, and people see different things depending on
+  # which they reached.
+  replicas: 1
+
+  # Routed by the cluster Gateway instead
+  ingress:
+    enabled: false
+
   database:
     external:
-      secret:
-  fileStore:
-    objectSore:
+      # The whole connection string, built by the installer from the
+      # role's credentials, under DB_CONNECTION_STRING
+      secret: mattermost-db
 
+  fileStore:
     external:
-      url:
-      bucket:
-      secret:
+      # Host and port only: Mattermost is told whether to use TLS
+      # separately, below
+      url: {{ .Values.objectStorage.host | quote }}
+      bucket: mattermost
+      # The keys, from Mattermost.storage.yaml
+      secret: mattermost-s3
+
+  mattermostEnv:
+    # What links in notifications point to. The operator works it out
+    # from the Ingress, which there isn't one of.
+    - name: MM_SERVICESETTINGS_SITEURL
+      value: {{ printf "https://%s" .Values.domain.mattermost | quote }}
+    # The operator assumes an external file store speaks TLS. SeaweedFS
+    # inside the cluster doesn't, so this replaces what it sets.
+    - name: MM_FILESETTINGS_AMAZONS3SSL
+      value: "false"
+    - name: MM_FILESETTINGS_AMAZONS3REGION
+      value: {{ .Values.objectStorage.region | quote }}
+
+  scheduling:
+    nodeSelector:
+      node-role.kubernetes.io/worker: worker
 
 # For enterprise installations
 # licenseSecret: name-here

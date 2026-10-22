@@ -1,0 +1,91 @@
+# S3 from outside the cluster, on values.domain.storage.
+#
+# For the links applications hand to browsers. Authentik's web
+# interface loads icons and backgrounds straight from links it signs
+# for its bucket, so browsers have to be able to reach SeaweedFS. The
+# applications themselves still talk to it inside the cluster, at
+# seaweed-s3:8333, and sign their links for this hostname.
+#
+# Every request still needs keys, or a link signed with them: no
+# bucket here is readable anonymously.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: s3
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.storage }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.storage }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: s3-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: s3
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: s3
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.storage }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: seaweed-s3
+          port: 8333
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: s3-redirect
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: s3
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.storage }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

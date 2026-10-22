@@ -3,13 +3,19 @@
 The applications a Community Cloud instance runs. Most live in the
 `cc-office` namespace, created by `office/Office.namespace.yaml`.
 
-Each application is split by what each piece is, so they can be
-applied in order and read one at a time: `.database.yaml` before the
-application that needs it, `.storage.yaml` before anything that writes,
-`.cert.yaml` and `.route.yaml` for how it's reached. A
-`.values.yaml` is Helm values rather than a manifest.
+Each one is a package in the installer — `community-cloud run-bundle
+<name> <node> cc.config.json` installs it and what it needs on its
+own, and the `helm-charts` bundle installs every package the
+configuration enables. Authentik is the exception, and comes from a
+plugin.
 
-All of them are templates, rendered against `cc.config.json`:
+Each application is split by what each piece is, so it can be read
+one at a time: `.database.yaml` for its database, `.storage.yaml` or
+`.bucket.yaml` for where it keeps files, `.config.yaml` for its
+settings, `.network.yaml` for how it's reached. A `.values.yaml` is
+Helm values rather than a manifest. All of them are templates,
+rendered against `cc.config.json`; to see one as the installer would
+apply it:
 
 ```bash
 community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
@@ -19,75 +25,95 @@ community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
 
 | File | What it is |
 |---|---|
-| `Office.namespace.yaml` | The `cc-office` namespace, labelled so its listeners may attach to the cluster Gateway. |
+| `Office.namespace.yaml` | The `cc-office` namespace, labelled so its listeners may attach to the cluster Gateway and its applications may keep buckets in SeaweedFS. |
+| `Office.database.yaml` | The shared CloudNativePG cluster, `cc-postgres`. |
+| `Office.roles.yaml` | The database roles for Twenty, Mattermost and Authentik. |
+| `RedisStandalone.yaml` | The Redis the applications share, made by the OpsTree operator. |
 
-The applications reach the outside through the cluster's own Gateway
-in `networking/gateway/`, rather than one of their own.
-| `Office.issuer.yaml` | A Let's Encrypt issuer scoped to the namespace. |
-| `Office.database.yaml` | The shared CloudNativePG cluster. |
-| `RedisStandalone.yaml` | Redis, for the applications that want a cache. |
+The cluster and the roles come with the `cloudnative-pg` package,
+which also makes each role's Secret. Applications added since bring
+their own role instead.
 
-## Twenty CRM (`twenty/`)
-
-[Twenty](https://twenty.com) is an open-source CRM, deployed as a
-server and a worker.
-
-| File | What it is |
-|---|---|
-| `Twenty.yaml` | The server and worker deployments. |
-| `Twenty.install.yaml` | The one-off database setup job. |
-| `Twenty.database.yaml` | Its CloudNativePG database. |
-| `Twenty.storage.yaml` | Volumes for uploads. |
-| `Twenty.config.yaml` | Configuration and secrets. |
-| `Twenty.cert.yaml` | Its certificate. |
-| `Twenty.route.yaml` | The HTTPRoute that reaches it. |
-| `Twenty.network.yaml` | Network policy. |
+The Redis comes with the `redis-operator` package, which installs the
+operator and applies `RedisStandalone.yaml`. It's `redis` on 6379 in
+`cc-office`, with its password in the `cc-redis` Secret; each
+application keeps to a database number of its own.
 
 ## Authentik (`authentik/`)
 
 [Authentik](https://goauthentik.io) is the identity provider, and what
-everything else authenticates against.
+everything else authenticates against. It's installed by the
+Authentik plugin, from these files; it's reached at
+`values.domain.auth`.
 
 | File | What it is |
 |---|---|
 | `Authentik.values.yaml` | Helm values. |
-| `Authentik.database.yaml` | A CloudNativePG database. |
-| `Authentik.storage.yaml` | Media and template volumes. |
-| `Authentik.config.yaml` | Configuration and secrets. |
-| `Authentik.cert.yaml` | Its certificate. |
+| `Authentik.database.yaml` | Its CloudNativePG database. |
+| `Authentik.storage.yaml` | Its bucket in SeaweedFS, for icons, backgrounds and reports, and keys to only that. |
+| `Authentik.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
 
 The chart bundles its own PostgreSQL. Community Cloud turns that off
 and points it at CloudNativePG instead — one way of running Postgres
 across the cluster is easier to back up, upgrade and reason about.
+Browsers load its icons and backgrounds straight from its bucket,
+through links it signs for `values.domain.storage`.
 
-## Invoice Ninja (`invoice-ninja/`)
+## Twenty CRM (`twenty/`)
 
-[Invoice Ninja](https://invoiceninja.com) is invoicing, quotes and
-payments. Install it with the `invoice-ninja` package, or the bundle of
-the same name; it's reached at `values.domain.invoicing`.
+[Twenty](https://twenty.com) is an open-source CRM, deployed as a
+server and a worker. Install it with the `twenty` package; it's
+reached at `values.domain.crm`.
 
 | File | What it is |
 |---|---|
-| `InvoiceNinja.yaml` | The application: PHP-FPM, with nginx beside it in the same pod. |
-| `InvoiceNinja.database.yaml` | Its MariaDB. |
-| `InvoiceNinja.storage.yaml` | The volume for documents, PDFs and caches. |
-| `InvoiceNinja.config.yaml` | Its configuration, and nginx's. |
-| `InvoiceNinja.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
-| `InvoiceNinja.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+| `Twenty.yaml` | The server, which sets up and migrates its database as it starts, and the worker. |
+| `Twenty.database.yaml` | Its CloudNativePG database. |
+| `Twenty.storage.yaml` | Its bucket in SeaweedFS, for uploads, and keys to only that. |
+| `Twenty.config.yaml` | Its settings, mail included. |
+| `Twenty.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
 
-The one exception to CloudNativePG: Invoice Ninja runs on MySQL or
-MariaDB and nothing else, so it has a MariaDB of its own.
+Its queues are in the shared Redis. It signs and encrypts with a key
+the installer generates, in the `twenty-crm-app-secret` Secret, and
+sends mail through the namespace's mail server. It has its own
+accounts; signing in through Authentik needs Twenty's enterprise key.
 
-Its users sign in through Authentik with OpenID Connect, which
-Invoice Ninja supports itself from 5.13.38. The client portal, where
-customers open and pay invoices without an account, is left open —
-it has to be.
+## Lago (`lago/`)
+
+[Lago](https://getlago.com) is billing: plans, subscriptions, usage
+and invoices. Install it with the `lago` package; its web app is
+reached at `values.domain.billing` and its API at
+`values.domain.billingApi`.
+
+| File | What it is |
+|---|---|
+| `Lago.yaml` | The API, which migrates first, and the worker and the clock, which wait for it. |
+| `Lago.front.yaml` | The web app. |
+| `Lago.pdf.yaml` | Gotenberg, which renders the invoices. |
+| `Lago.database.yaml` | Its role and database in cc-postgres. |
+| `Lago.bucket.yaml` | Its bucket in SeaweedFS, for PDFs, exports and logos, and keys to only that. |
+| `Lago.config.yaml` | Its configuration, the web app's, and a Rails initializer of ours. |
+| `Lago.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+
+Lago has no OpenID Connect, so it isn't signed into through Authentik.
+Sign up is off, and the first account is made on first start with
+`values.adminEmail` and a generated password, in the `lago-admin`
+Secret; everyone else is invited from inside Lago. Its queues and
+cache are in the shared Redis, and its files in a bucket in the
+cluster's SeaweedFS, so it needs the `redis-operator` and `seaweedfs`
+packages, which it brings with it.
+
+Links to its files go to its API, which fetches them from the bucket
+and sends them on, rather than redirecting to the bucket as Rails
+would by default. Rails would sign that redirect for the address Lago
+reaches SeaweedFS on, inside the cluster, so a customer following it
+to an invoice would get nowhere. Lago has no setting for it, so it's a
+one line initializer in `Lago.config.yaml`.
 
 ## Documenso (`documenso/`)
 
 [Documenso](https://documenso.com) is document signing. Install it
-with the `documenso` package, or the bundle of the same name; it's
-reached at `values.domain.signing`.
+with the `documenso` package; it's reached at `values.domain.signing`.
 
 | File | What it is |
 |---|---|
@@ -104,6 +130,50 @@ no account. Documents are kept in the database, so it needs no volume,
 and completed ones are signed with a self-signed certificate the
 installer generates.
 
+## Mattermost (`mattermost/`)
+
+[Mattermost](https://mattermost.com) is team chat. Install it with the
+`mattermost` package; it's reached at `values.domain.mattermost`. The
+package installs the Mattermost operator, which runs the installation
+in `Mattermost.yaml`.
+
+| File | What it is |
+|---|---|
+| `Mattermost.yaml` | The installation the operator runs: one replica, external database and file store. |
+| `Mattermost.values.yaml` | Helm values for the operator. |
+| `Mattermost.database.yaml` | Its CloudNativePG database. |
+| `Mattermost.storage.yaml` | Its bucket in SeaweedFS, for uploads, and keys to only that. |
+| `Mattermost.network.yaml` | A Service for its pods, and its listeners and routes on the cluster Gateway. |
+
+## Headlamp (`headlamp/`)
+
+[Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
+Install it with the `headlamp` package; it's reached at
+`values.domain.headlamp`, behind an Authentik gate.
+
+| File | What it is |
+|---|---|
+| `Headlamp.values.yaml` | Helm values. |
+| `Headlamp.network.yaml` | Its listeners on the cluster Gateway, and a route to its gate. |
+
+Community Cloud's own Headlamp plugins are in `headlamp/plugins/` at
+the top of the repository. They aren't deployed into the cluster yet.
+
+## Picoclaw (`picoclaw/`)
+
+An AI agent with a web console. Install it with the `picoclaw`
+package; it's reached at `values.domain.agent`, behind an Authentik
+gate, since its agents run commands.
+
+| File | What it is |
+|---|---|
+| `Picoclaw.yaml` | The agent and its console, and their Service. |
+| `Picoclaw.config.yaml` | The configuration it starts with, the first time. |
+| `Picoclaw.storage.yaml` | Its home: its saved configuration and its workspace. |
+| `Picoclaw.network.yaml` | Its listeners on the cluster Gateway, and a route to its gate. |
+
+See [picoclaw/README.md](./picoclaw/README.md).
+
 ## Mail
 
 Mail is configured per namespace, under `smtp` in the configuration.
@@ -119,9 +189,10 @@ restarts it when the server changes.
 
 ## Single sign on
 
-Both register a client with Authentik as they're installed: the
-installer generates the client ID and secret into a Secret, then hands
-Authentik the application's `.blueprint.yaml` with them. Who may sign
+Applications that sign in through Authentik, like Documenso, register
+a client with Authentik as they're installed: the installer generates
+the client ID and secret into a Secret, then hands Authentik the
+application's `.blueprint.yaml` with them. Who may sign
 in is decided in Authentik, by what's bound to each application there.
 
 Something with no sign in of its own goes behind a gate instead: a
@@ -129,45 +200,17 @@ package that declares one gets an oauth2-proxy in front of it,
 registered with Authentik the same way, with nothing to write here —
 the proxy and its blueprint are built by the installer. Its route then
 sends requests to `<name>-oauth2-proxy` on port 4180, rather than to
-the application.
-
-## Mattermost (`mattermost/`)
-
-[Mattermost](https://mattermost.com) is team chat.
-
-| File | What it is |
-|---|---|
-| `Mattermost.yaml` | The installation. |
-| `Mattermost.values.yaml` | Helm values for the operator. |
-| `Mattermost.database.yaml` | Its CloudNativePG database. |
-| `Mattermost.storage.yaml` | Volumes for uploads. |
-
-## Headlamp (`headlamp/`)
-
-[Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
-
-| File | What it is |
-|---|---|
-| `Headlamp.values.yaml` | Helm values. |
-| `Headlamp.plugins.yaml` | The plugins it loads, including Community Cloud's own. |
-
-## Picoclaw (`picoclaw/`)
-
-| File | What it is |
-|---|---|
-| `Picoclaw.deployment.yaml` | The deployment. |
-| `Picoclaw.config.yaml` | Its configuration. |
-| `Picoclaw.storage.yaml` | Its volumes. |
-| `Picoclaw.route.yaml` | The HTTPRoute that reaches it. |
-
-See [picoclaw/README.md](./picoclaw/README.md).
+the application. Headlamp and Picoclaw are the two that do.
 
 ## What they share
 
 - **Databases** are CloudNativePG, never a chart's bundled one
-- **Storage** is TopoLVM through `cc-local-ssd-fast`
-- **Certificates** are cert-manager and Let's Encrypt
+- **Files** are in a bucket each in SeaweedFS, or on a TopoLVM volume
+  through `cc-local-ssd-fast` where an application needs a disk
+- **Certificates** are cert-manager and Let's Encrypt, from the
+  `cc-lets-encrypt` ClusterIssuer the `cert-manager` package applies
 - **Ingress** is the Gateway API, served by Cilium's Envoy, through a
-  listener on the cluster Gateway
+  ListenerSet on the cluster Gateway, `cc-letsencrypt-web-gateway`,
+  which the `gateway` bundle makes
 - **Domains** come from `values.domain.*` in the configuration, so an
   instance is rehomed by changing one file

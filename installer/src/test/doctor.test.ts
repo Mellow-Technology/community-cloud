@@ -148,10 +148,10 @@ describe("what a check-up of everything asks about", () => {
   it("leaves out the bundles another bundle's checks already cover", () => {
     // Their checks are the package's own, which helm-charts asks for
     // every package enabled — and for one that isn't, they'd report a
-    // cluster without Invoice Ninja as a broken Invoice Ninja
+    // cluster without Lago as a broken Lago
     const checkable = getCheckableBundleNames();
 
-    for (const name of ["invoice-ninja", "documenso"]) {
+    for (const name of ["lago", "documenso"]) {
       assert.ok(!checkable.includes(name), name);
       assert.ok(getBundle(name) !== undefined, `${name} can still be asked about by name`);
     }

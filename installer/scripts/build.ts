@@ -129,7 +129,7 @@ async function main() {
   }
 
   if (failed.length > 0) {
-    console.log(`\n⛔ Failed: ${failed.join(", ")}\n`);
+    console.log(`\n🛑 Failed: ${failed.join(", ")}\n`);
     process.exit(1);
   }
 

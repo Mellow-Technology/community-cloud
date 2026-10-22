@@ -66,7 +66,7 @@ export const MAIL_SECRET = "cc-smtp";
  * - port: defaults to the usual one for "security"
  * - security: see MailSecurity. Defaults to starttls.
  * - fromDomain: the domain mail is sent from. Applications send as
- *   something@ this — invoices@, documents@ — and most providers only
+ *   something@ this — billing@, documents@ — and most providers only
  *   accept mail from a domain they've verified. Defaults to the
  *   cluster's main domain.
  */
@@ -116,7 +116,7 @@ export interface MailConfig {
  * - implicitTls: "true" when TLS starts with the connection — what
  *   Node's mailer calls "secure" and Authentik "use_ssl"
  * - startTls: "true" when the connection is upgraded — Authentik's
- *   "use_tls"
+ *   "use_tls", and Rails' "enable_starttls_auto"
  * - ignoreTls: "true" when TLS isn't to be attempted at all
  * - scheme: "smtps" or "smtp", which is how Symfony's mailer, and so
  *   Laravel's, says the same thing
@@ -207,7 +207,7 @@ export function getNamespaceMail(
  * @param mail
  * @returns
  */
-function getSecurity(mail: MailServer): MailSecurity {
+export function getMailSecurity(mail: MailServer): MailSecurity {
   return mail.security !== undefined ? (mail.security as MailSecurity) : MailSecurity.StartTls;
 }
 
@@ -218,7 +218,7 @@ function getSecurity(mail: MailServer): MailSecurity {
  * @returns
  */
 export function getMailPort(mail: MailServer): number {
-  return mail.port !== undefined && mail.port !== "" ? Number(mail.port) : DEFAULT_PORTS[getSecurity(mail)];
+  return mail.port !== undefined && mail.port !== "" ? Number(mail.port) : DEFAULT_PORTS[getMailSecurity(mail)];
 }
 
 /**
@@ -249,7 +249,7 @@ export function buildMailValues(raw: Record<string, any>, namespace?: string): M
     };
   }
 
-  const security = getSecurity(mail);
+  const security = getMailSecurity(mail);
   const port = String(getMailPort(mail));
   const fromDomain = mail.fromDomain !== undefined && mail.fromDomain !== "" ? mail.fromDomain : mainDomain;
 

@@ -696,9 +696,9 @@ describe("what commands say on the console", () => {
       lines.filter((line) => line.startsWith(node)).map((line) => line.slice(node.length).trim());
 
     for (const node of ["one", "two"]) {
-      assert.deepEqual(of(node), ["✓ chatty", `│ first from ${node}`, `│ second from ${node}`]);
+      assert.deepEqual(of(node), ["✅ chatty", `｜ first from ${node}`, `｜ second from ${node}`]);
 
-      const start = lines.findIndex((line) => line.startsWith(`${node} `) && line.includes("✓"));
+      const start = lines.findIndex((line) => line.startsWith(`${node} `) && line.includes("✅"));
       assert.deepEqual(
         lines.slice(start, start + 3).map((line) => line.split(" ")[0]),
         [node, node, node],
@@ -727,7 +727,7 @@ describe("what commands say on the console", () => {
 
     // eslint-disable-next-line no-control-regex
     const text = written.join("").replace(/\u001b\[[0-9;]*m/g, "");
-    assert.match(text, /one\s+✗ broken\none\s+│ got this far\none\s+│ and no further/);
+    assert.match(text, /one\s+🛑 broken\none\s+｜ got this far\none\s+｜ and no further/);
   });
 
   it("is put back once the run is over", async () => {
@@ -769,7 +769,7 @@ describe("what a node is printed as", () => {
 
     // eslint-disable-next-line no-control-regex
     const text = written.join("").replace(/\u001b\[[0-9;]*m/g, "");
-    assert.match(text, /Mamoru \(Bangkok\) ✓ check/);
+    assert.match(text, /Mamoru \(Bangkok\) ✅ check/);
     assert.ok(!text.includes("mamoru-bkk"), "the name shouldn't be printed where a display name is set");
   });
 });

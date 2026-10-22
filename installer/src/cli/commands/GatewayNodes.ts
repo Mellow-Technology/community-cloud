@@ -30,10 +30,10 @@
  * what a workload that has to run near the edge can be scheduled
  * against.
  *
- * The Gateway itself isn't applied here. It's an ordinary manifest
- * with listeners and hostnames in it:
- *
- *   community-cloud run-template embed://networking/gateway/Gateway.yaml cc.config.json
+ * Then the Gateway itself, cc-letsencrypt-web-gateway, from
+ * networking/cilium/gateway/Gateway.yaml. It's the one every
+ * application attaches its listeners to, with a ListenerSet in its own
+ * namespace, so it's made here, before any application is installed.
  *
  * Every command runs on the control plane, since all of this is done
  * to the cluster rather than to a node.
@@ -59,6 +59,7 @@ import {
   readInterfacesCommand,
 } from "./Network.ts";
 import { getNodeName } from "./K3s.ts";
+import { renderInstallerFile } from "../../util/template.ts";
 
 // What the pool and the policy are called when the configuration
 // doesn't say. One name for both, since they describe one thing.
@@ -68,6 +69,12 @@ const DEFAULT_NAME = "community-cloud-gateway";
 // Gateway API support is actually switched on rather than merely
 // installed.
 const GATEWAY_CLASS = "cilium";
+
+// The Gateway every application attaches to, and where it's written
+// down
+const CLUSTER_GATEWAY = "cc-letsencrypt-web-gateway";
+const CLUSTER_GATEWAY_NAMESPACE = "community-cloud";
+const CLUSTER_GATEWAY_MANIFEST = "embed://networking/cilium/gateway/Gateway.yaml";
 
 // Where Cilium keeps the settings it was installed with. Read rather
 // than the CLI, so this works on a node that only has kubectl.
@@ -913,14 +920,55 @@ export const GatewayCommands: CommandSpec[] = [
         );
       }
 
-      console.log(
-        `\n  A Gateway can now be created against the "${GATEWAY_CLASS}" GatewayClass, e.g.\n    community-cloud run-template embed://networking/gateway/Gateway.yaml cc.config.json`,
-      );
-
       return {
         gatewayPool: getName(config),
         gatewayAddressesAvailable: free,
       };
     },
+  },
+
+  /**
+   * Make the Gateway applications attach to.
+   *
+   * Made whether or not there are addresses for it yet: a ListenerSet
+   * whose parent doesn't exist is refused, and one whose parent has no
+   * address is merely waiting. Over standard input, like the pool.
+   */
+  {
+    name: "apply-cluster-gateway",
+    description: `Create ${CLUSTER_GATEWAY}, the Gateway applications attach to`,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: "kubectl apply -f -",
+    stdin: (config: CloudConfig) => renderInstallerFile(config, CLUSTER_GATEWAY_MANIFEST),
+    output: OutputType.Raw,
+  },
+
+  /**
+   * Check Cilium has taken the Gateway on and given it an address.
+   *
+   * Only where there are addresses to give: without them it's accepted
+   * and never programmed, which is the configuration's doing rather
+   * than anything wrong with the Gateway.
+   */
+  {
+    name: "verify-cluster-gateway",
+    purpose: CommandPurpose.Verify,
+    description: `Check ${CLUSTER_GATEWAY} is programmed and has an address`,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    skipWhen: (config: CloudConfig) => !hasGateway(config),
+    command: (_config: CloudConfig, context: any) => [
+      waitUntil(
+        `[ "$(kubectl -n ${CLUSTER_GATEWAY_NAMESPACE} get gateway ${CLUSTER_GATEWAY} -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null)" = "True" ]`,
+        getWaitSeconds(context, POOL_TIMEOUT_SECONDS),
+      ),
+      `state=$(kubectl -n ${CLUSTER_GATEWAY_NAMESPACE} get gateway ${CLUSTER_GATEWAY} -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}|{.status.addresses[*].value}' 2>/dev/null)`,
+      `case "$state" in`,
+      `  True\|?*) echo "${CLUSTER_GATEWAY} is programmed, on \${state#*|}" ;;`,
+      `  *) echo "${CLUSTER_GATEWAY} isn't programmed, so nothing attached to it is reachable" >&2; kubectl -n ${CLUSTER_GATEWAY_NAMESPACE} describe gateway ${CLUSTER_GATEWAY} >&2; exit 1 ;;`,
+      "esac",
+    ],
+    output: OutputType.Raw,
   },
 ];

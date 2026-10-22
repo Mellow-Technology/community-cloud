@@ -400,13 +400,25 @@
             "mattermost": {
               "type": "string"
             },
-            "invoicing": {
+            "billing": {
               "type": "string",
-              "description": "Invoice Ninja."
+              "description": "Lago's web app."
+            },
+            "billingApi": {
+              "type": "string",
+              "description": "Lago's API, which its web app and anything billing through it call."
             },
             "signing": {
               "type": "string",
               "description": "Documenso."
+            },
+            "headlamp": {
+              "type": "string",
+              "description": "Headlamp, behind its Authentik gate."
+            },
+            "storage": {
+              "type": "string",
+              "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."
             }
           },
           "additionalProperties": {

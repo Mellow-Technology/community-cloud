@@ -311,6 +311,10 @@ const DEFAULT_K8S_API_PORT = "6443";
 // know which volume groups to create.
 const TOPOLVM_VALUES_FILE = "embed://storage/TopoLVM/TopoLVM.values.yaml";
 
+// The SeaweedFS operator's S3 gateway: the Service it names after the
+// cluster in storage/SeaweedFS/SeaweedFS.yaml
+const OBJECT_STORAGE_HOST = "seaweed-s3.seaweedfs.svc:8333";
+
 /**
  * Build the value set handed to the template renderer.
  *
@@ -392,6 +396,20 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     if (values[name] === undefined) {
       values[name] = size;
     }
+  }
+
+  // Where the cluster's S3 is, for applications with a bucket in it.
+  // Fixed by the names in storage/SeaweedFS/SeaweedFS.yaml: the
+  // operator calls the gateway's Service after the cluster. The host
+  // alone is for the applications that are told about TLS separately.
+  // SeaweedFS accepts whatever region a request is signed for, and
+  // this is the one S3 clients assume when they aren't told otherwise.
+  if (values.objectStorage === undefined) {
+    values.objectStorage = {
+      endpoint: `http://${OBJECT_STORAGE_HOST}`,
+      host: OBJECT_STORAGE_HOST,
+      region: "us-east-1",
+    };
   }
 
   // Which lvmd serves which nodes. Worked out last, because doing it

@@ -31,6 +31,7 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, MARK_WIDTH, SUCCESS, padMark } from "../util/chalk.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { ALL_NODES, displayNode, getDisplayNames, resolveTarget } from "../pipeline/fleet.ts";
 import {
@@ -286,7 +287,7 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
   // Anything that couldn't be asked at all comes first: a node that's
   // down is a bigger fact than anything the nodes that are up said
   for (const failure of outcome.failures) {
-    console.log(`  ${chalk.red("✗")} ${displayNode(displayNames, failure.name)}`);
+    console.log(`  ${FAILURE} ${displayNode(displayNames, failure.name)}`);
     say(failure.why, "      ");
     problems.push(`${failure.name}: ${failure.kind}`);
   }
@@ -295,7 +296,7 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
   // which is a problem in its own right, not a footnote: a run whose
   // only finding is this would otherwise call itself clean
   for (const problem of outcome.plan.problems) {
-    console.log(`  ${chalk.red("✗")} ${problem.bundle}`);
+    console.log(`  ${FAILURE} ${problem.bundle}`);
     say(problem.why, "      ");
     problems.push(`${problem.bundle}: couldn't be checked`);
   }
@@ -311,7 +312,7 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
     // labelled with the one place, and said once underneath
     for (const [index, { finding, steps }] of where.entries()) {
       const bundle = numberBundle(order.indexOf(finding.bundle), finding.bundle);
-      const mark = index === 0 ? chalk.red("✗") : " ";
+      const mark = index === 0 ? FAILURE : " ".repeat(MARK_WIDTH);
       console.log(`  ${mark} ${chalk.dim(`${displayNode(displayNames, finding.node)} · ${bundle}:`)} ${chalk.yellow(steps.join(", "))}`);
     }
 
@@ -343,13 +344,13 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
     // Everything it would have asked turned out not to apply to this
     // cluster, which is not the same as everything being fine
     if (finding.ran === 0) {
-      console.log(`    ${chalk.dim("·")} ${bundle} ${chalk.dim("nothing to check")}`);
+      console.log(`    ${chalk.dim(padMark("·"))} ${bundle} ${chalk.dim("nothing to check")}`);
       continue;
     }
 
     asked += finding.ran;
 
-    const mark = finding.failures.length > 0 ? chalk.red("✗") : chalk.green("✓");
+    const mark = finding.failures.length > 0 ? FAILURE : SUCCESS;
     const detail =
       finding.failures.length > 0
         ? chalk.red(`${finding.failures.length} of ${finding.ran}`)

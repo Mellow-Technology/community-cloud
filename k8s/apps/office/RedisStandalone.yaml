@@ -1,8 +1,20 @@
+# The Redis the applications in cc-office share.
+#
+# Made by the OpsTree Redis operator, which the redis-operator package
+# installs along with this. It's reached as "redis" in cc-office, on
+# 6379, and each application keeps to a database number of its own so
+# that their keys can't collide.
+#
+# It has a password, in the cc-redis Secret the installer makes. Every
+# pod in the namespace can reach this, and some of what's queued here
+# is on its way to a payment provider.
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: Redis
 metadata:
   namespace: cc-office
   name: redis
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
   podSecurityContext:
     runAsUser: 1000
@@ -10,6 +22,9 @@ spec:
   kubernetesConfig:
     image: quay.io/opstree/redis:v7.0.15
     imagePullPolicy: IfNotPresent
+    redisSecret:
+      name: cc-redis
+      key: password
     resources:
       requests:
         cpu: 1

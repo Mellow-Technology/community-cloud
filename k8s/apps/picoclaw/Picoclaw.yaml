@@ -1,0 +1,107 @@
+# Picoclaw: an AI agent, with a web console.
+#
+# One replica, replaced rather than rolled: it's built to run as one
+# process on one machine, and its home is a volume only one node can
+# mount. The console is behind the "picoclaw" package's gate, so only
+# people Authentik lets through reach it, and it asks them for its own
+# token after that. Its agents can run commands in this container,
+# which is the reason for both.
+apiVersion: v1
+kind: Service
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: picoclaw
+  ports:
+    - name: http
+      port: 18800
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: picoclaw
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: picoclaw
+  template:
+    metadata:
+      labels:
+        app: picoclaw
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      initContainers:
+        # The starting configuration, the first time only. After that
+        # the console's saved copy is the one that counts.
+        - name: seed-config
+          image: sipeed/picoclaw:v0.3.1-launcher
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              [ -f /root/.picoclaw/config.json ] || cp /seed/config.json /root/.picoclaw/config.json
+          volumeMounts:
+            - name: home
+              mountPath: /root/.picoclaw
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+      containers:
+        - name: picoclaw
+          image: sipeed/picoclaw:v0.3.1-launcher
+          imagePullPolicy: IfNotPresent
+          env:
+            # Its agent answers on every address, so the health check
+            # below can reach it
+            - name: PICOCLAW_GATEWAY_HOST
+              value: "0.0.0.0"
+            # The console's token, fixed rather than made up afresh on
+            # every start
+            - name: PICOCLAW_LAUNCHER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: picoclaw-launcher
+                  key: password
+          ports:
+            - name: http
+              containerPort: 18800
+            - name: gateway
+              containerPort: 18790
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: gateway
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: gateway
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: 100m
+          volumeMounts:
+            - name: home
+              mountPath: /root/.picoclaw
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: picoclaim
+        - name: seed
+          configMap:
+            name: picoclaw

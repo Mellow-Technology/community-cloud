@@ -66,9 +66,9 @@ export interface BundleDefinition {
   // checks are the package's checks, which "helm-charts" asks too for
   // every package the configuration enables — so in a check-up of
   // everything they would either say the same thing twice, or, for a
-  // package the cluster doesn't have, report it as broken: Invoice
-  // Ninja's checks fail on a cluster with no Invoice Ninja, which is
-  // the right answer to a question nobody asked. Left out of a
+  // package the cluster doesn't have, report it as broken: Lago's
+  // checks fail on a cluster with no Lago, which is the right answer
+  // to a question nobody asked. Left out of a
   // check-up of everything, and run as normal when asked for by name.
   checkedBy?: string;
 }
@@ -144,12 +144,6 @@ const builtInBundles: BundleDefinition[] = [
     commands: HelmCommands,
   },
   {
-    name: "invoice-ninja",
-    description: "Install Invoice Ninja into cc-office, signing in through Authentik",
-    commands: buildSinglePackageBundle("invoice-ninja"),
-    checkedBy: "helm-charts",
-  },
-  {
     name: "k3s",
     description: "Install K3s, as a server or an agent depending on the node",
     commands: K3sCommands,
@@ -161,9 +155,21 @@ const builtInBundles: BundleDefinition[] = [
     teardown: true,
   },
   {
+    name: "lago",
+    description: "Install Lago billing into cc-office",
+    commands: buildSinglePackageBundle("lago"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "lvm",
     description: "Set up LVM volumes for node local storage",
     commands: LvmCommands,
+  },
+  {
+    name: "mattermost",
+    description: "Install Mattermost chat into cc-office",
+    commands: buildSinglePackageBundle("mattermost"),
+    checkedBy: "helm-charts",
   },
   {
     name: "nebula",
@@ -174,6 +180,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "nebula-network",
     description: "Set up the Nebula network and the roles on it",
     commands: NebulaNetworkCommands,
+  },
+  {
+    name: "picoclaw",
+    description: "Install the Picoclaw agent into cc-office, behind Authentik",
+    commands: buildSinglePackageBundle("picoclaw"),
+    checkedBy: "helm-charts",
   },
   {
     name: "preflight",
@@ -205,6 +217,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "nodeLabels",
     description: "Label a node with its roles, its own labels, and what was detected on it",
     commands: NodeLabelCommands,
+  },
+  {
+    name: "twenty",
+    description: "Install the Twenty CRM into cc-office",
+    commands: buildSinglePackageBundle("twenty"),
+    checkedBy: "helm-charts",
   },
   {
     name: "storage-remove",

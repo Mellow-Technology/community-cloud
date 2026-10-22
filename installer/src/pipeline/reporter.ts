@@ -15,6 +15,7 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, SUCCESS, padMark } from "../util/chalk.ts";
 import { layOut } from "../util/prose.ts";
 
 /**
@@ -82,11 +83,17 @@ export interface StepOutcome {
 // another and from the red a failure uses.
 const NODE_COLOURS = ["cyan", "magenta", "yellow", "blue", "green", "white"] as const;
 
+// What runs down the side of a step's output, in the column the step's
+// mark is in. The fullwidth bar, since it's as wide as the emoji marks
+// and drawn centred in them, where a box drawing one would hug the
+// left of the column.
+const GUTTER = "｜";
+
 const MARKS: Record<Outcome, string> = {
-  ok: "✓",
-  skipped: "·",
-  failed: "✗",
-  blocked: "–",
+  ok: SUCCESS,
+  skipped: padMark("·"),
+  failed: FAILURE,
+  blocked: padMark("–"),
 };
 
 /**
@@ -230,12 +237,8 @@ export class ConsoleReporter implements Reporter {
   }
 
   nodeFinished(step: string, node: string, outcome: Outcome) {
-    const mark =
-      outcome === "failed"
-        ? chalk.red(MARKS[outcome])
-        : outcome === "skipped"
-          ? chalk.dim(MARKS[outcome])
-          : chalk.green(MARKS[outcome]);
+    // The emoji bring their own colour
+    const mark = outcome === "skipped" || outcome === "blocked" ? chalk.dim(MARKS[outcome]) : MARKS[outcome];
 
     const name = outcome === "skipped" ? chalk.dim(step) : step;
 
@@ -247,7 +250,7 @@ export class ConsoleReporter implements Reporter {
     const lines = message
       .split("\n")
       .filter((line) => line.trim() !== "")
-      .map((line) => `${this.label(node)} ${chalk.dim("│")} ${line}`);
+      .map((line) => `${this.label(node)} ${chalk.dim(GUTTER)} ${line}`);
     const held = this.held.get(node);
 
     if (held !== undefined) {
@@ -282,13 +285,13 @@ export class ConsoleReporter implements Reporter {
 
     if (summary.failures.length === 0) {
       this.write(
-        `\n${chalk.green.bold("✓")} ${chalk.bold(`${summary.completed} steps`)} in ${seconds}s\n\n`,
+        `\n${SUCCESS} ${chalk.bold(`${summary.completed} steps`)} in ${seconds}s\n\n`,
       );
       return;
     }
 
     this.write(
-      `\n${chalk.red.bold("✗")} stopped after ${chalk.bold(`${summary.completed} of ${summary.total} steps`)} in ${seconds}s\n\n`,
+      `\n${FAILURE} stopped after ${chalk.bold(`${summary.completed} of ${summary.total} steps`)} in ${seconds}s\n\n`,
     );
 
     for (const failure of summary.failures) {

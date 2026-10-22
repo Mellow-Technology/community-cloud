@@ -1,0 +1,61 @@
+# Lago's web app: static files served by nginx, which talk to the API
+# from the browser. It holds nothing, so it's rolled like anything
+# stateless.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lago-front
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: lago
+    role: front
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lago-front
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lago
+      role: front
+  template:
+    metadata:
+      labels:
+        app: lago
+        role: front
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: front
+          # The same release as the API, which it has to match
+          image: getlago/front:v1.55.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: lago-front
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: 50m

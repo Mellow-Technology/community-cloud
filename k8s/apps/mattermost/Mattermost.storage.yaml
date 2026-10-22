@@ -1,10 +1,58 @@
-apiVersion: objectbucket.io/v1alpha1
-kind: ObjectBucketClaim
+# Mattermost's bucket in the cluster's SeaweedFS, for uploads and
+# attachments, and keys to it and nothing else.
+#
+# Requests the SeaweedFS operator carries out, as for Lago: the bucket,
+# an S3 user called "mattermost", and a key pair for it, written into
+# the Secret "mattermost-s3" here. See k8s/storage/README.md.
+#
+# The bucket stays if this is ever removed — "Retain" is the operator's
+# default. The user and its keys go.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Identity
 metadata:
-  name: mattermost-bucket
+  name: mattermost
   namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
-  generateBucketName: mattermost
-  storageClassName: cc-s3-storage
-  additionalConfig:
-    maxSize: "30G"
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Credentials
+metadata:
+  name: mattermost
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+  identityRef:
+    name: mattermost
+  # Made and owned by the operator. The Mattermost operator insists on
+  # these names for the keys, in lower case.
+  secretRef:
+    name: mattermost-s3
+    accessKeyField: accesskey
+    secretKeyField: secretkey
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Bucket
+metadata:
+  name: mattermost
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  clusterRef:
+    name: seaweed
+    namespace: seaweedfs
+  # Capped, as the claim it replaces was
+  quota:
+    size: 30Gi
+  access:
+    - user: mattermost
+      actions: [Read, Write, List, Tagging]

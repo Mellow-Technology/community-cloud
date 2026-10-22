@@ -1,9 +1,9 @@
 # Documenso's role and database, in the shared cc-postgres cluster.
 #
 # The documents themselves live here too. Documenso stores uploads in
-# its database unless it's given S3, and with no object storage in the
-# cluster yet that's the simplest place for them — and it means the
-# cc-postgres backups are the Documenso backups.
+# its database unless it's given S3. That's the simplest place for
+# them, and it means the cc-postgres backups are the Documenso
+# backups. A bucket in SeaweedFS is there if that stops being enough.
 #
 # The role is here rather than in office/Office.roles.yaml with the
 # others, so that installing Documenso on its own brings everything it

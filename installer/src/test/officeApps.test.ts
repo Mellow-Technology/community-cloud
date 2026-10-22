@@ -11,15 +11,22 @@
  * cluster with no Authentik to sign in through. Get any of those
  * backwards and the install passes on a laptop and fails on hardware.
  *
- * Gates are tested with a package made up for the purpose, since
- * nothing in the catalogue uses one yet.
+ * Gates are tested with a package made up for the purpose, so the
+ * tests don't move with Headlamp's, and Headlamp's own gate is checked
+ * against what it routes to.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { CommandPurpose, TerminalCommandSpec, joinCommand } from "../cli/commands/Command.ts";
 import { buildPackageCommands, buildPackageInventoryCommand } from "../cli/commands/Helm.ts";
-import { buildGateBlueprint, buildGateManifest } from "../cli/commands/OAuth2Proxy.ts";
+import {
+  OAUTH2_PROXY_PORT,
+  buildGateBlueprint,
+  buildGateManifest,
+  getGateName,
+} from "../cli/commands/OAuth2Proxy.ts";
+import { renderInstallerFile } from "../util/template.ts";
 import {
   buildCreateSecretCommand,
   buildSecretManifest,
@@ -35,7 +42,7 @@ import { configFrom, loadFixtureConfig, withoutConsole } from "./helpers.ts";
 import { parseAllDocuments } from "yaml";
 import { execFileSync } from "node:child_process";
 
-const APPLICATIONS = ["invoice-ninja", "documenso"];
+const APPLICATIONS = ["documenso"];
 
 /**
  * The names of a package's install commands, in order.
@@ -109,11 +116,10 @@ describe("the order they're installed in", () => {
   it("puts Authentik first when it's being installed too", async () => {
     const config = await loadFixtureConfig({
       // Listed after, so only "after" can be what puts it first
-      packages: { "invoice-ninja": true, documenso: true, authentik },
+      packages: { documenso: true, authentik },
     });
     const order = await withoutConsole(() => resolveInstallOrder(config).map((entry) => entry.name));
 
-    assert.ok(order.indexOf("authentik") < order.indexOf("invoice-ninja"));
     assert.ok(order.indexOf("authentik") < order.indexOf("documenso"));
   });
 
@@ -132,10 +138,6 @@ describe("keys that aren't passwords", () => {
     return (parseAllDocuments(buildSecretManifest(definition, "cc-office"))[0]!.toJS() as any)
       .stringData.password as string;
   };
-
-  it("gives Laravel a key of exactly 32 characters", () => {
-    assert.match(manifest("invoice-ninja", "invoice-ninja-app-key"), /^[0-9a-f]{32}$/);
-  });
 
   it("gives Documenso keys of at least 32 characters", () => {
     for (const secret of ["documenso-session", "documenso-encryption", "documenso-encryption-secondary"]) {
@@ -158,7 +160,7 @@ describe("preflight, for an application", () => {
   it("is satisfied by the fixture", async () => {
     const config = await loadFixtureConfig();
     const raw = JSON.parse(JSON.stringify(config.getConfig()));
-    raw.packages = { "invoice-ninja": true, documenso: true };
+    raw.packages = { lago: true, documenso: true };
 
     assert.deepEqual(checkConfiguration(configFrom(raw)).map((problem) => problem.what), []);
   });
@@ -315,7 +317,7 @@ describe("what's installed that the configuration doesn't enable", () => {
     const command = buildPackageInventoryCommand(config) as TerminalCommandSpec;
     const text = joinCommand(command.command as string[]);
 
-    assert.match(text, /unconfigured\|invoice-ninja/);
+    assert.match(text, /unconfigured\|lago/);
     assert.match(text, /unconfigured\|documenso/);
     assert.ok(!text.includes("unconfigured|cert-manager"));
     assert.ok(!text.includes("unconfigured|cloudnative-pg"));
@@ -326,3 +328,40 @@ describe("what's installed that the configuration doesn't enable", () => {
     assert.equal(command.purpose, CommandPurpose.Inspect);
   });
 });
+
+const GATED = [
+  { name: "headlamp", hostname: "domain.headlamp", host: "headlamp.example.test", upstream: "http://headlamp" },
+  { name: "picoclaw", hostname: "domain.agent", host: "agent.example.test", upstream: "http://picoclaw:18800" },
+];
+
+for (const gated of GATED) {
+  describe(`${gated.name}'s gate`, async () => {
+    const definition = getPackage(gated.name)!;
+    const config = await loadFixtureConfig();
+    const network = parseAllDocuments(
+      renderInstallerFile(config, definition.manifests!.after!.at(-1)!, { templateNamespace: "cc-office" }),
+    ).map((document) => document.toJS() as any);
+    const route = network.find(
+      (document) => document.kind === "HTTPRoute" && document.metadata.name === gated.name,
+    );
+
+    it("is the only way in", () => {
+      assert.deepEqual(route.spec.rules[0].backendRefs, [
+        { name: getGateName(definition.gate!), port: OAUTH2_PROXY_PORT },
+      ]);
+    });
+
+    it("is on the hostname the route serves", () => {
+      assert.equal(definition.gate!.hostname, gated.hostname);
+      assert.deepEqual(route.spec.hostnames, [gated.host]);
+    });
+
+    it("sends on to the application's own Service", () => {
+      assert.equal(definition.gate!.upstream, gated.upstream);
+    });
+
+    it("checks Authentik is there before installing anything", () => {
+      assert.equal(buildPackageCommands(definition).map((command) => command.name)[0], `require-authentik-${gated.name}`);
+    });
+  });
+}

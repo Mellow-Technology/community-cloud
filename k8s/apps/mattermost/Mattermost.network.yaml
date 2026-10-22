@@ -1,0 +1,103 @@
+# How Mattermost is reached: a ListenerSet on the cluster Gateway, as
+# for the other applications, on values.domain.mattermost.
+#
+# The operator's own Service is headless, which a route can't
+# reliably send to, so there's a plain one here selecting the same
+# pods by the labels the operator gives them.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mattermost-web
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: mattermost
+    installation.mattermost.com/installation: mattermost
+  ports:
+    - name: http
+      port: 8065
+      targetPort: 8065
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: mattermost
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.mattermost }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.mattermost }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mattermost-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mattermost
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: mattermost
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.mattermost }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: mattermost-web
+          port: 8065
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mattermost-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: mattermost
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.mattermost }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

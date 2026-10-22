@@ -240,36 +240,75 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`seaweedfs`, `headlamp`, `tailscale-operator`, `invoice-ninja`,
-`documenso`.
-Dependencies are worked out and installed first — TopoLVM needs
-cert-manager, so enabling it enables that too.
+`seaweedfs`, `redis-operator`, `headlamp`, `tailscale-operator`,
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`. Dependencies
+are worked out and installed first — TopoLVM needs cert-manager, so
+enabling it enables that too.
 
-`invoice-ninja` and `documenso` are applications in `cc-office`, each
-on a hostname of its own (`values.domain.invoicing` and
-`values.domain.signing`), and each signs people in through Authentik
-over OpenID Connect. They have no chart, only manifests, and they need
-Authentik running — from the Authentik plugin, or installed by hand as
-the release `authentik` — which the install checks for before it
-starts on them. When the Authentik package is being installed in the
-same run, it goes first. Either can also be installed on its own, into
-a cluster that already has the rest:
+`cert-manager` also applies `cc-lets-encrypt`, the ClusterIssuer every
+application's certificate comes from, with `values.adminEmail` as the
+Let's Encrypt account. The Gateway those certificates are for,
+`cc-letsencrypt-web-gateway`, is made by the `gateway` bundle, which
+runs before the charts.
+
+`seaweedfs` installs the SeaweedFS operator and, through it, the
+cluster's S3-compatible object storage. Applications get a bucket
+each, and keys to only that bucket, which the operator writes into a
+Secret in their namespace. They talk to it inside the cluster; it's
+also on `values.domain.storage`, for the links Authentik hands
+browsers to its icons and backgrounds. Every request there still
+needs keys or a link signed with them. See
+[Object storage](../k8s/storage/README.md#object-storage-seaweedfs).
+
+`redis-operator` installs the OpsTree Redis operator and, through it,
+the one Redis the applications in `cc-office` share, with its password
+in the `cc-redis` Secret there.
+
+`twenty`, `lago`, `documenso`, `mattermost` and `picoclaw` are
+applications in `cc-office`, each with a ListenerSet of its own on the
+cluster Gateway. Any of them can be installed on its own, into a
+cluster that already has the rest:
 
 ```bash
-community-cloud run-bundle invoice-ninja server-1 cc.config.json
+community-cloud run-bundle lago server-1 cc.config.json
 community-cloud run-bundle documenso server-1 cc.config.json
 ```
 
-Invoice Ninja's first account is made with `values.adminEmail` and a
-generated password, in the `invoice-ninja-admin` Secret; signing in
-through Authentik with that address links the two. Anyone else needs
-inviting in Invoice Ninja first, since its OpenID Connect sign in never
-creates accounts. Its client portal, where customers open and pay
-invoices, stays open to the world, as it has to.
+Twenty is a CRM, on `values.domain.crm`. Its database is in
+cc-postgres, with the `twenty_crm` role CloudNativePG's package makes,
+its queues in the shared Redis and its uploads in a SeaweedFS bucket.
+The server sets up and migrates the database as it starts. It signs
+and encrypts with a key in the `twenty-crm-app-secret` Secret, and
+sends mail through the namespace's server.
 
-Documenso is the other way round: passwords are switched off, so
-Authentik is the only way in, and an account is made for whoever
-Authentik sends. The people documents are sent to for signing use
+Lago is billing: plans, subscriptions, usage and invoices. Its web app
+is on `values.domain.billing` and its API, which the web app calls
+from the browser and anything billing through Lago calls too, on
+`values.domain.billingApi`. It keeps its database in cc-postgres, its
+queues in the shared Redis and its files — invoices, exports, logos —
+in a bucket of its own in SeaweedFS, so it brings `cloudnative-pg`,
+`redis-operator` and `seaweedfs` with it. Lago has no OpenID Connect,
+so it isn't signed into through Authentik: sign up is off, the first
+account is made with `values.adminEmail` and a generated password, in
+the `lago-admin` Secret, and everyone else is invited from inside
+Lago.
+
+Mattermost is team chat, on `values.domain.mattermost`, installed by
+its operator. It keeps its database in cc-postgres, with the
+`mattermost` role CloudNativePG's package makes, and its files in a
+bucket in SeaweedFS. The operator wants the database as one connection
+string, which the installer builds from that role's credentials into
+the `mattermost-db` Secret on every install. It runs one replica:
+more needs an Enterprise licence. It isn't signed into through
+Authentik, and sends no mail yet.
+
+Documenso is on `values.domain.signing`, and signs people in through
+Authentik over OpenID Connect. It needs Authentik running — from the
+Authentik plugin, or installed by hand as the release `authentik` —
+which the install checks for before it starts on it. When the
+Authentik package is being installed in the same run, it goes first.
+Passwords are switched off, so Authentik is the only way in, and an
+account is made for whoever Authentik sends. The people documents are sent to for signing use
 their links, without an account. It signs completed documents with a
 self-signed certificate the installer makes, in the `documenso-signing`
 Secret. It sends email through the cluster's mail server — see
@@ -277,7 +316,7 @@ Secret. It sends email through the cluster's mail server — see
 Making someone a Documenso administrator is done in its database —
 add `ADMIN` to their `roles` in the `User` table.
 
-In both cases, who may sign in is decided in Authentik, by binding
+Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
@@ -285,8 +324,10 @@ A package for something with no sign in of its own — a cluster
 interface like Headlamp — can declare a `gate` instead, and gets an
 oauth2-proxy in front of it signing in through Authentik, with the
 proxy, its credentials and its Authentik client all made by the
-installer. See `installer/src/cli/commands/OAuth2Proxy.ts`. Nothing in
-the catalogue uses one yet.
+installer. See `installer/src/cli/commands/OAuth2Proxy.ts`. The
+`headlamp` package is the one that does: it's on
+`values.domain.headlamp`, only Authentik's users get through, and
+Headlamp then asks them for a token to talk to the cluster with.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
@@ -357,7 +398,8 @@ used a `config` section like that, and preflight warns about one.
 
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
-`domain.invoicing`, `domain.signing` and `authentik.secretKey`. Unlike
+`domain.billing`, `domain.billingApi`, `domain.signing`,
+`domain.headlamp`, `domain.storage` and `authentik.secretKey`. Unlike
 the rest of the configuration, `values` is open: plugins and your own
 manifests can read anything put here, and preflight won't call it
 unknown.
@@ -420,8 +462,10 @@ connecting to a mail server of its own.
 A namespace naming its own `host` is using a different server, so it
 takes nothing from `defaults` but `fromDomain`. Leave out `username`
 and `password` for a relay that takes mail without them. Applications
-send as an address at `fromDomain` — `invoices@`, `documents@`,
+send as an address at `fromDomain` — `billing@`, `documents@`,
 `auth@` — so most providers will want that domain verified first.
+Lago can only upgrade a connection with STARTTLS, so its namespace's
+server can't be one that wants TLS from the start; preflight says so.
 
 Each application is told about its own namespace's server in its own
 terms: manifests read it as `.Values.mail`, rendered for the namespace
@@ -433,8 +477,8 @@ the file and running the install again. Applications restart for a new
 server on their own; for a new password alone, restart them with
 `kubectl rollout restart`.
 
-A namespace without mail keeps it to itself — Invoice Ninja in its
-log, Documenso not at all. `community-cloud configure --section mail`
+A namespace without mail keeps it to itself — Lago and Documenso send
+nothing. `community-cloud configure --section mail`
 asks for all of this, and the doctor checks each namespace's server
 can be reached from the cluster.
 
@@ -534,7 +578,12 @@ type, or a node type, role or region that isn't one of those allowed:
 
 ```bash
 community-cloud preflight cc.config.json
+community-cloud preflight cc.config.json --config-only   # the file alone, no SSH
 ```
+
+Without `--config-only` it goes on to connect to every node. That's
+where sudo, the kernel and the network are checked, and it happens
+even when the file has problems, so you see everything at once.
 
 A key nothing reads doesn't stop anything. It gets a warning instead,
 naming the key it was probably meant to be when one is close.

@@ -10,23 +10,29 @@
 # Every entry is found by its identifiers and made to match, so this
 # can be applied as often as the install is run.
 #
-# Who may sign in is left to Authentik, and it matters more here than
-# for Invoice Ninja: Documenso makes an account for anyone Authentik
-# sends it. With no policy bound to the application, that's everyone
-# with an Authentik account. Bind a group to it in Authentik to narrow
-# that down; this blueprint won't undo it.
+# Who may sign in is left to Authentik, and that matters: Documenso
+# makes an account for anyone Authentik sends it. With no policy bound
+# to the application, that's everyone with an Authentik account. Bind
+# a group to it in Authentik to narrow that down; this blueprint won't
+# undo it.
 version: 1
 metadata:
   name: Community Cloud - Documenso
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 entries:
-  # The same mapping InvoiceNinja.blueprint.yaml declares, and for the
-  # same reason: Documenso refuses a sign in whose address isn't
-  # verified, and Authentik's own mapping calls every address that.
-  # Declared in both so either can be installed alone; identical, so
-  # whichever is applied last changes nothing. Why "verified" is safe
-  # only while administrators make the accounts is explained there.
+  # Authentik's own email mapping says every address is unverified,
+  # and Documenso refuses a sign in whose address isn't verified.
+  # Without this, nobody could ever sign in through Authentik.
+  #
+  # Saying "verified" is a statement about how accounts get into this
+  # Authentik: an administrator makes them, so the address on one is
+  # the one they gave. If self service enrolment is ever switched on,
+  # this has to change, or anyone could register someone else's
+  # address and be signed in as them.
+  #
+  # Gates declare the same mapping, so either can be applied alone;
+  # identical, so whichever is applied last changes nothing.
   - model: authentik_providers_oauth2.scopemapping
     id: email-verified
     identifiers:

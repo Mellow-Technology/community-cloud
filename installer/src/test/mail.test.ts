@@ -252,7 +252,7 @@ describe("a namespace's credentials", () => {
 });
 
 describe("applications that send mail", () => {
-  for (const name of ["invoice-ninja", "documenso"]) {
+  for (const name of ["lago", "documenso"]) {
     it(`${name} is given its namespace's credentials before it starts`, () => {
       const names = buildPackageCommands(getPackage(name)!).map((command) => command.name);
       const firstManifest = names.findIndex((each) => each.startsWith("helm-manifest-after-"));
@@ -265,7 +265,7 @@ describe("applications that send mail", () => {
   it("share their namespace's one set of credentials", () => {
     const made = new Set<string>();
     const names = [
-      ...buildPackageCommands(getPackage("invoice-ninja")!, made),
+      ...buildPackageCommands(getPackage("lago")!, made),
       ...buildPackageCommands(getPackage("documenso")!, made),
     ].map((command) => command.name);
 
@@ -278,10 +278,10 @@ describe("applications that send mail", () => {
     delete config.getConfig().smtp.namespaces["cc-office"];
     const forOffice = { templateNamespace: "cc-office" };
 
-    it("Invoice Ninja logs what it would have sent", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml", forOffice);
-      assert.match(rendered, /MAIL_MAILER: "log"/);
-      assert.ok(!rendered.includes("MAIL_HOST"));
+    it("Lago is given no server, and still a sender", () => {
+      const rendered = renderInstallerFile(config, "embed://apps/lago/Lago.config.yaml", forOffice);
+      assert.ok(!rendered.includes("LAGO_SMTP_ADDRESS"));
+      assert.match(rendered, /LAGO_FROM_EMAIL: "billing@example.test"/);
     });
 
     it("Documenso is given no server", () => {
@@ -295,10 +295,10 @@ describe("applications that send mail", () => {
     const config = await loadFixtureConfig();
     const forOffice = { templateNamespace: "cc-office" };
 
-    it("Invoice Ninja sends through its namespace's server", () => {
-      const rendered = renderInstallerFile(config, "embed://apps/invoice-ninja/InvoiceNinja.config.yaml", forOffice);
-      assert.match(rendered, /MAIL_MAILER: "smtp"/);
-      assert.match(rendered, /MAIL_HOST: "smtp.example.test"/);
+    it("Lago sends through its namespace's server, upgrading to TLS", () => {
+      const rendered = renderInstallerFile(config, "embed://apps/lago/Lago.config.yaml", forOffice);
+      assert.match(rendered, /LAGO_SMTP_ADDRESS: "smtp.example.test"/);
+      assert.match(rendered, /LAGO_SMTP_ENABLE_STARTTLS_AUTO: "true"/);
     });
 
     it("Documenso sends through its namespace's server", () => {
@@ -317,7 +317,7 @@ describe("applications that send mail", () => {
 
     it("no template is handed a password", () => {
       for (const file of [
-        "embed://apps/invoice-ninja/InvoiceNinja.config.yaml",
+        "embed://apps/lago/Lago.config.yaml",
         "embed://apps/documenso/Documenso.config.yaml",
         "embed://apps/authentik/Authentik.values.yaml",
       ]) {

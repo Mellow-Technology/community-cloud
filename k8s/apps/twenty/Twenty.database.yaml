@@ -1,9 +1,12 @@
-# Database for Twenty CRM
+# Twenty's database in cc-postgres. Its role, "twenty_crm", is one of
+# those in Office.roles.yaml, made with CloudNativePG.
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: twenty-crm
   namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
   name: twenty_crm
   owner: twenty_crm

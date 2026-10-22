@@ -3,7 +3,7 @@
  * A sign in in front of something that has none of its own.
  *
  * Some of what a cluster runs can sign people in through Authentik by
- * itself — Invoice Ninja and Documenso both speak OpenID Connect. A
+ * itself — Documenso speaks OpenID Connect. A
  * good deal can't: the web interfaces that come with infrastructure,
  * Headlamp among them, assume whoever reaches them is allowed to, and
  * put nothing in the way. For those the answer is a gate: oauth2-proxy
@@ -277,8 +277,8 @@ entries:
   # oauth2-proxy turns away an address Authentik calls unverified, and
   # Authentik's own mapping calls every address that. The same mapping
   # the applications' own blueprints declare; see
-  # k8s/apps/invoice-ninja/InvoiceNinja.blueprint.yaml for why it's
-  # safe only while administrators make the accounts.
+  # k8s/apps/documenso/Documenso.blueprint.yaml for why it's safe only
+  # while administrators make the accounts.
   - model: authentik_providers_oauth2.scopemapping
     id: email-verified
     identifiers:

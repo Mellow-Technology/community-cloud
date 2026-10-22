@@ -1,5 +1,4 @@
 import { program } from "commander";
-import chalk from "chalk";
 
 /**
  * Report a failure the way a command line tool should.
@@ -14,7 +13,7 @@ process.on("unhandledRejection", (reason: any) => {
     ? reason.message
     : String(reason);
 
-  console.error(`\n${chalk.red("⛔")} ${message}\n`);
+  console.error(`\n🛑 ${message}\n`);
 
   if (process.env["CC_DEBUG"] !== undefined && reason?.stack !== undefined) {
     console.error(reason.stack);
@@ -202,6 +201,7 @@ program
   .description("Check a configuration could be installed, before installing it")
   .argument("<ccFilePath>", "Path to the Community Cloud configuration file")
   .option("-n, --node <node>", "Check this node only")
+  .option("--config-only", "Check the configuration file alone, without connecting to any node")
   .option("--timeout <seconds>", "How long to give a node to answer before calling it unreachable", "8")
   .option("--verbose", "Print each command's output as well as the report")
   .action(preflight);

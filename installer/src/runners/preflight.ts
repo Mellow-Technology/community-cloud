@@ -17,12 +17,13 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, SUCCESS } from "../util/chalk.ts";
 import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
 import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
-import { checkMailConfig } from "../util/mail.ts";
+import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
 import { checkSchema } from "../util/configSchema.ts";
 import CloudConfig from "../util/CloudConfig.ts";
@@ -36,11 +37,15 @@ import { displayNode, getDisplayNames } from "../pipeline/fleet.ts";
  *
  * - node: check this node only
  * - verbose: print each command's output as well as the report
+ * - configOnly: check the configuration and stop, without connecting
+ *   to any node. For a file being written somewhere the nodes can't be
+ *   reached from, or before they exist.
  */
 export interface PreflightOptions {
   node?: string;
   verbose?: boolean;
   timeout?: string;
+  configOnly?: boolean;
 }
 
 // How long to give a node to answer before calling it unreachable. A
@@ -250,6 +255,17 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
         say(`${name} needs "values.${path}", and it isn't set. Its manifests would render without it and apply as though nothing were wrong.`);
       }
     }
+
+    // A connection it can't make fails as a hang, from an application
+    // that says the mail is on its way
+    const mail = definition.mail === true ? getNamespaceMail(raw, definition.namespace) : undefined;
+    if (mail !== undefined && definition.mailSecurity !== undefined) {
+      const security = getMailSecurity(mail);
+
+      if (!definition.mailSecurity.includes(security)) {
+        say(`${name} can't send mail with "security" ${security}, which ${definition.namespace}'s mail server is set to. It can use: ${definition.mailSecurity.join(", ")}.`);
+      }
+    }
   }
 
   return problems;
@@ -337,15 +353,29 @@ export async function preflight(configPath: string, options: PreflightOptions = 
   problems.push(...configProblems);
 
   if (configProblems.length === 0) {
-    console.log(`  ${chalk.green("✓")} describes a cluster that could exist`);
+    console.log(`  ${SUCCESS} describes a cluster that could exist`);
   }
   else {
     for (const problem of configProblems) {
-      console.log(`  ${chalk.red("✗")} ${problem.what}`);
+      console.log(`  ${FAILURE} ${problem.what}`);
     }
   }
 
   printConfigurationWarnings(config);
+
+  if (options.configOnly === true) {
+    console.log(
+      configProblems.length === 0
+        ? `\n${chalk.green("The configuration is ready to install.")} ${chalk.dim("No nodes were checked.")}\n`
+        : `\n${chalk.red(`${configProblems.length} thing${configProblems.length === 1 ? "" : "s"} to fix`)} in the configuration.\n`,
+    );
+
+    if (configProblems.length > 0) {
+      process.exitCode = 1;
+    }
+
+    return;
+  }
 
   const nodes =
     options.node !== undefined
@@ -369,7 +399,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
         timeout: getConnectTimeout(options),
       });
     } catch (error: any) {
-      console.log(`  ${chalk.red("✗")} can't be reached: ${error.message}`);
+      console.log(`  ${FAILURE} can't be reached: ${error.message}`);
       problems.push({ where: node.name, what: `unreachable: ${error.message}` });
       continue;
     }
@@ -401,14 +431,14 @@ export async function preflight(configPath: string, options: PreflightOptions = 
         checks += 1;
         if (result.error === true) {
           const why = (result.stderr !== "" ? result.stderr : "failed").split("\n")[0];
-          console.log(`  ${chalk.red("✗")} ${chalk.yellow(name)}: ${why}`);
+          console.log(`  ${FAILURE} ${chalk.yellow(name)}: ${why}`);
           problems.push({ where: node.name, what: `${name}: ${why}` });
         }
       }
 
       const failed = bundle.getFailedCommands().length;
       if (failed === 0) {
-        console.log(`  ${chalk.green("✓")} ready`);
+        console.log(`  ${SUCCESS} ready`);
       }
     } finally {
       await connection.disconnect();

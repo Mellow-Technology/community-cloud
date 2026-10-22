@@ -429,9 +429,8 @@ function buildVerifyCommand(definition: PackageDefinition): CommandSpec {
  * Wait for a package's own workloads to come up.
  *
  * A Settle rather than a Verify, because the first start can be slow
- * for reasons that are nobody's fault: Invoice Ninja migrates and
- * seeds its database before it opens a port, and that takes minutes
- * on a quiet machine.
+ * for reasons that are nobody's fault: Lago migrates its database
+ * before it starts, and that takes minutes on a quiet machine.
  *
  * @param definition
  * @returns
@@ -484,6 +483,66 @@ function buildVerifyRolloutCommand(definition: PackageDefinition): CommandSpec {
         "esac",
       ]),
       `[ -z "$failed" ] || { echo "${definition.name} isn't fully running" >&2; exit 1; }`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Wait for what a package asked an operator for.
+ *
+ * Some of what a package applies is a request rather than a workload:
+ * a bucket, the keys to it, a whole SeaweedFS cluster. The operator
+ * says when it has done what was asked by setting the resource's
+ * "Ready" condition, which is a thing "rollout status" can't see.
+ *
+ * @param definition
+ * @returns
+ */
+function buildReadyCommand(definition: PackageDefinition): CommandSpec {
+  const namespace = quoteForShell(definition.namespace);
+
+  return {
+    name: `ready-${definition.name}`,
+    description: `Wait for what ${definition.name} asked for to be ready`,
+    purpose: CommandPurpose.Settle,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: (definition.ready ?? []).map(
+      (resource) =>
+        `kubectl -n ${namespace} wait ${quoteForShell(resource)} --for=condition=Ready --timeout=${READY_TIMEOUT} || { echo "${resource} in ${definition.namespace} isn't ready" >&2; kubectl -n ${namespace} describe ${quoteForShell(resource)} >&2; exit 1; }`,
+    ),
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Check what a package asked an operator for is ready, without
+ * waiting for it.
+ *
+ * @param definition
+ * @returns
+ */
+function buildVerifyReadyCommand(definition: PackageDefinition): CommandSpec {
+  const namespace = quoteForShell(definition.namespace);
+
+  return {
+    name: `verify-ready-${definition.name}`,
+    description: `Verify what ${definition.name} asked for is ready`,
+    purpose: CommandPurpose.Verify,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      "failed=",
+      ...(definition.ready ?? []).flatMap((resource) => [
+        `state=$(kubectl -n ${namespace} get ${quoteForShell(resource)} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)`,
+        `case "$state" in`,
+        `  True) echo "  ${resource}: ready" ;;`,
+        `  "") echo "  ${resource}: missing, or not reporting yet" >&2; failed=yes ;;`,
+        `  *) echo "  ${resource}: not ready" >&2; failed=yes ;;`,
+        "esac",
+      ]),
+      `[ -z "$failed" ] || { echo "Not everything ${definition.name} asked for is ready" >&2; exit 1; }`,
     ],
     output: OutputType.Raw,
   };
@@ -736,6 +795,13 @@ export function buildPackageCommands(
 
   if (definition.chart !== undefined) {
     commands.push(ifInstalled(buildVerifyCommand(definition)));
+  }
+
+  // Before the workloads, since those are what use it: Lago starts
+  // once the keys to its bucket are there
+  if ((definition.ready ?? []).length > 0) {
+    commands.push(ifInstalled(buildReadyCommand(definition)));
+    commands.push(ifInstalled(buildVerifyReadyCommand(definition)));
   }
 
   // The gate's own Deployment is waited for like the package's

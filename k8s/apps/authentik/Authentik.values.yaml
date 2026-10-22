@@ -1,19 +1,14 @@
-# Authentik authentication system
+# Authentik's Helm values.
 #
-# Authentik is a default component of Community Cloud
-# It supports user authentication for Community Cloud Office apps
-# as well as for user-facing applications.
+# Authentik is the identity provider the office applications sign in
+# through. Installed by the Authentik plugin, from the chart at
+# https://charts.goauthentik.io, with these values rendered against
+# the configuration. Its database is in cc-postgres and its files in a
+# bucket in SeaweedFS, from Authentik.database.yaml and
+# Authentik.storage.yaml; it's reached through the cluster Gateway,
+# from Authentik.network.yaml.
 #
-# Installation documentation here https://docs.goauthentik.io/install-config/install/kubernetes/
-#
-# To install:
-#
-# 1. Apply database
-# 2. Apply storage
-# 3. Apply secret
-# 4. helm repo add authentik https://charts.goauthentik.io
-# 5. helm repo update
-# 6. helm upgrade --install authentik authentik/authentik -f k8s/apps/authentik/Authentik.values.yaml --namespace cc-office
+# https://docs.goauthentik.io/install-config/install/kubernetes/
 
 authentik:
   # TODO: More templated values here
@@ -53,14 +48,10 @@ server:
     - name: postgres-creds
       mountPath: /postgres-creds
       readOnly: true
+  # Routed by Authentik.network.yaml instead
   route:
     main:
-      enabled: true
-      hostnames:
-        - {{ .Values.domain.auth }}
-      parentRefs:
-        - name: cc-office-web-gateway
-          namespace: cc-office
+      enabled: false
 worker:
   volumes:
     - name: postgres-creds
@@ -79,10 +70,6 @@ global:
   # We run everything on worker nodes
   nodeSelector:
     node-role.kubernetes.io/worker: worker
-  envFrom:
-    # Bucket configuration
-    - configMapRef:
-        name: authentik-bucket
   env:
     # Optional, so a cluster without a mail server, and so without the
     # Secret, still starts
@@ -101,31 +88,36 @@ global:
     # TODO: Support read-replicas. Keep things
     # available.
     # https://docs.goauthentik.io/install-config/configuration/#read-replicas
-    #
-    # TODO: Probably need some amount of
-    # logic to figure out things between
-    # SeaweedFS. In YOLO mode it should
-    # typically be SeaweedFS. We may also support
-    # directly using TopoLVM, but this would
-    # make cluster expansion more difficult
+
+    # Its files are in its own bucket in the cluster's SeaweedFS, from
+    # Authentik.storage.yaml, reached inside the cluster and addressed
+    # by path.
     - name: AUTHENTIK_STORAGE__BACKEND
       value: "s3"
-      # SeaweedFS accepts whatever region a request
-      # is signed for. This is the one S3 clients
-      # assume when they aren't told otherwise.
-    - name: AUTHENTIK_STORAGE__S3__REGION
-      value: "us-east-1"
     - name: AUTHENTIK_STORAGE__S3__ENDPOINT
-      value: "http://$(BUCKET_HOST):$(BUCKET_PORT)"
+      value: {{ .Values.objectStorage.endpoint | quote }}
+    - name: AUTHENTIK_STORAGE__S3__REGION
+      value: {{ .Values.objectStorage.region | quote }}
+    - name: AUTHENTIK_STORAGE__S3__ADDRESSING_STYLE
+      value: "path"
     - name: AUTHENTIK_STORAGE__S3__BUCKET_NAME
-      value: "$(BUCKET_NAME)"
+      value: "authentik"
+    # Browsers fetch icons and backgrounds straight from S3, through
+    # links Authentik signs. SeaweedFS's own address is inside the
+    # cluster, so the links are for the public one, with the bucket in
+    # the path; Authentik signs the link it hands out rather than the
+    # address it uses itself.
+    - name: AUTHENTIK_STORAGE__S3__CUSTOM_DOMAIN
+      value: {{ printf "%s/authentik" .Values.domain.storage | quote }}
+    - name: AUTHENTIK_STORAGE__S3__SECURE_URLS
+      value: "true"
     - name: AUTHENTIK_STORAGE__S3__ACCESS_KEY
       valueFrom:
         secretKeyRef:
-          name: authentik-bucket
-          key: AWS_ACCESS_KEY_ID
+          name: authentik-s3
+          key: accessKey
     - name: AUTHENTIK_STORAGE__S3__SECRET_KEY
       valueFrom:
         secretKeyRef:
-          name: authentik-bucket
-          key: AWS_SECRET_ACCESS_KEY
+          name: authentik-s3
+          key: secretKey

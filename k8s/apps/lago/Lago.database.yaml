@@ -1,0 +1,36 @@
+# Lago's role and database, in the shared cc-postgres cluster.
+#
+# Lago partitions its events table with pg_partman when it's there,
+# and when it isn't, as in cc-postgres, its migrations make an ordinary
+# table instead. That's fine for the volume of events an office bills
+# for; the partitioning is for millions a day.
+#
+# The role is here rather than in office/Office.roles.yaml, so that
+# installing Lago on its own brings everything it connects with, as
+# Documenso does. Its password is the lago-db Secret the installer
+# makes for the lago package.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: lago
+  namespace: cc-office
+spec:
+  name: lago
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Lago
+  passwordSecret:
+    name: lago-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: lago
+  namespace: cc-office
+spec:
+  name: lago
+  owner: lago
+  cluster:
+    name: cc-postgres

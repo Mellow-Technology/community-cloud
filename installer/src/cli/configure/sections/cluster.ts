@@ -66,8 +66,11 @@ export const clusterSection: ConfigSection = {
       { key: "agent", label: "Picoclaw agent", prefix: "agent" },
       { key: "crm", label: "Twenty (CRM)", prefix: "crm" },
       { key: "mattermost", label: "Mattermost (chat)", prefix: "chat" },
-      { key: "invoicing", label: "Invoice Ninja (invoicing)", prefix: "invoice" },
+      { key: "billing", label: "Lago (billing)", prefix: "billing" },
+      { key: "billingApi", label: "Lago's API", prefix: "billing-api" },
       { key: "signing", label: "Documenso (document signing)", prefix: "sign" },
+      { key: "headlamp", label: "Headlamp (cluster interface)", prefix: "headlamp" },
+      { key: "storage", label: "S3 object storage (SeaweedFS)", prefix: "s3" },
     ];
 
     for (const service of services) {

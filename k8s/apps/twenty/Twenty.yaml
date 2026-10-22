@@ -1,206 +1,235 @@
+# Twenty
+#
+# A server and a worker from the one image. The image's entrypoint
+# sets up an empty database and migrates an existing one before the
+# server starts, so the server does that and the worker is told not
+# to; the worker also leaves registering the recurring jobs to the
+# server, so they're registered once.
 apiVersion: v1
 kind: Service
 metadata:
-    name: twenty-crm
-    namespace: cc-office
+  name: twenty-crm
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
-    selector:
+  selector:
+    app: twenty-crm
+    role: server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: twenty-crm
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: twenty-crm
+      role: server
+  template:
+    metadata:
+      labels:
         app: twenty-crm
         role: server
-    ports:
-        - protocol: TCP
-          port: 8000
-          targetPort: 3000
-    sessionAffinity: ClientIP
-    sessionAffinityConfig:
-        clientIP:
-            timeoutSeconds: 10800
-    type: ClusterIP
+        app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: twenty-crm
+          image: twentycrm/twenty:v2.7.3
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: twenty-crm
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: password
+            # The generated password is words and hyphens, so it goes
+            # into a URL as it is
+            - name: PG_DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/twenty_crm"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
+            # What it signs tokens with, and encrypts what it stores
+            # with, since no separate encryption key is set
+            - name: APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-app-secret
+                  key: password
+            - name: STORAGE_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-s3
+                  key: accessKey
+            - name: STORAGE_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 3000
+          # Migrations run before the server listens, and can take a
+          # while on a first start
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: 250m
 ---
-# Twenty Uses a Servers and workers setup
-# We setup deployments for each one.
-# We use 2 replicas for the front-end
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-    name: twenty-crm
-    namespace: cc-office
+  name: twenty-crm-worker
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
 spec:
-    replicas: 1
-    selector:
-        matchLabels:
-            app: twenty-crm
-            role: server
-    template:
-        metadata:
-            labels:
-                app: twenty-crm
-                role: server
-        spec:
-            nodeSelector:
-                node-role.kubernetes.io/worker: worker
-            containers:
-                - name: twenty-crm
-                  image: twentycrm/twenty:v2.7.3
-                  imagePullPolicy: IfNotPresent
-                  env:
-                      - name: DISABLE_DB_MIGRATIONS
-                        value: "true"
-                      - name: SERVER_URL
-                        valueFrom:
-                            configMapKeyRef:
-                                name: twenty-crm
-                                key: server_url
-                      - name: ENCRYPTION_KEY
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm
-                                key: encryptionKey
-                      - name: DB_USER
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm
-                                key: username
-                      - name: DB_PASS
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm
-                                key: password
-                      - name: DB_HOST
-                        valueFrom:
-                            secretKeyRef:
-                                name: cc-postgres-app
-                                key: host
-                      - name: DB_PORT
-                        valueFrom:
-                            secretKeyRef:
-                                name: cc-postgres-app
-                                key: port
-                      # Note here that the database name is hard-coded
-                      # to "twenty_crm". There should be no need to change this
-                      - name: PG_DATABASE_URL
-                        value: "postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/twenty_crm"
-                      - name: REDIS_URL
-                        value: "redis://$(REDIS_SERVICE_HOST):$(REDIS_SERVICE_PORT)/0"
-                      - name: STORAGE_TYPE
-                        value: S_3
-                      - name: BUCKET_HOST
-                        valueFrom:
-                            configMapKeyRef:
-                                name: twenty-crm-bucket
-                                key: BUCKET_HOST
-                      - name: STORAGE_S3_ENDPOINT
-                        value: "http://$(BUCKET_HOST):80"
-                      # SeaweedFS accepts whatever region a request is
-                      # signed for. This is the one S3 clients assume.
-                      - name: STORAGE_S3_REGION
-                        value: "us-east-1"
-                      - name: STORAGE_S3_NAME
-                        valueFrom:
-                            configMapKeyRef:
-                                name: twenty-crm-bucket
-                                key: BUCKET_NAME
-                      - name: STORAGE_S3_ACCESS_KEY_ID
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm-bucket
-                                key: AWS_ACCESS_KEY_ID
-                      - name: STORAGE_S3_SECRET_ACCESS_KEY
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm-bucket
-                                key: AWS_SECRET_ACCESS_KEY
-                  ports:
-                      - containerPort: 3000
-                  resources:
-                      requests:
-                          memory: "256Mi"
-                          cpu: 1
----
-# TODO: Add horizontal pod autoscaler
-# for worker pods
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-    name: twenty-crm-workers
-    namespace: cc-office
-spec:
-    replicas: 1
-    selector:
-        matchLabels:
-            app: twenty-crm
-            role: worker
-    template:
-        metadata:
-            labels:
-                app: twenty-crm
-                role: worker
-        spec:
-            nodeSelector:
-                node-role.kubernetes.io/worker: worker
-            containers:
-                - name: twenty-crm
-                  image: twentycrm/twenty:v2.7.3
-                  imagePullPolicy: IfNotPresent
-                  env:
-                      - name: DISABLE_DB_MIGRATIONS
-                        value: "true"
-                      - name: DB_USER
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm
-                                key: username
-                      - name: DB_PASS
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm
-                                key: password
-                      - name: DB_HOST
-                        valueFrom:
-                            secretKeyRef:
-                                name: cc-postgres-app
-                                key: host
-                      - name: DB_PORT
-                        valueFrom:
-                            secretKeyRef:
-                                name: cc-postgres-app
-                                key: port
-                      - name: PG_DATABASE_URL
-                        value: "postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/twenty_crm"
-                      - name: REDIS_URL
-                        value: "redis://$(REDIS_SERVICE_HOST):$(REDIS_SERVICE_PORT)/0"
-                      - name: STORAGE_TYPE
-                        value: S_3
-                      - name: BUCKET_HOST
-                        valueFrom:
-                            configMapKeyRef:
-                                name: twenty-crm-bucket
-                                key: BUCKET_HOST
-                      - name: STORAGE_S3_ENDPOINT
-                        value: "http://$(BUCKET_HOST):80"
-                      # SeaweedFS accepts whatever region a request is
-                      # signed for. This is the one S3 clients assume.
-                      - name: STORAGE_S3_REGION
-                        value: "us-east-1"
-                      - name: STORAGE_S3_NAME
-                        valueFrom:
-                            configMapKeyRef:
-                                name: twenty-crm-bucket
-                                key: BUCKET_NAME
-                      - name: STORAGE_S3_ACCESS_KEY_ID
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm-bucket
-                                key: AWS_ACCESS_KEY_ID
-                      - name: STORAGE_S3_SECRET_ACCESS_KEY
-                        valueFrom:
-                            secretKeyRef:
-                                name: twenty-crm-bucket
-                                key: AWS_SECRET_ACCESS_KEY
-                  command:
-                      - yarn
-                      - worker:prod
-                  resources:
-                      requests:
-                          memory: "512Mi"
-                          cpu: 1
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: twenty-crm
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: twenty-crm
+        role: worker
+        app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: twenty-crm
+          image: twentycrm/twenty:v2.7.3
+          imagePullPolicy: IfNotPresent
+          command: ["yarn", "worker:prod"]
+          envFrom:
+            - configMapRef:
+                name: twenty-crm
+          env:
+            - name: DISABLE_DB_MIGRATIONS
+              value: "true"
+            - name: DISABLE_CRON_JOBS_REGISTRATION
+              value: "true"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm
+                  key: password
+            # The generated password is words and hyphens, so it goes
+            # into a URL as it is
+            - name: PG_DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/twenty_crm"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
+            # What it signs tokens with, and encrypts what it stores
+            # with, since no separate encryption key is set
+            - name: APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-app-secret
+                  key: password
+            - name: STORAGE_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-s3
+                  key: accessKey
+            - name: STORAGE_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: 100m

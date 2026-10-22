@@ -77,6 +77,14 @@ export const BASIC_AUTH = "kubernetes.io/basic-auth";
  *   For something that signs rather than something that logs in —
  *   Documenso puts a signature in every document it completes, and
  *   won't sign anything without a certificate to do it with.
+ * - privateKey: make an RSA private key instead, with no certificate
+ *   around it. The Secret holds it in PEM under "privateKey". For
+ *   something that signs its own tokens with a key it's handed — Lago
+ *   signs every session with one, and won't start without it.
+ * - connectionString: build a URL for connecting to cc-postgres out
+ *   of a role's credentials, rather than make anything up. For
+ *   something that won't take a username and a password separately —
+ *   the Mattermost operator reads one whole connection string.
  */
 export interface SecretDefinition {
   name: string;
@@ -87,6 +95,8 @@ export interface SecretDefinition {
   labels?: Record<string, string>;
   keyBytes?: number;
   certificate?: SelfSignedCertificate;
+  privateKey?: PrivateKey;
+  connectionString?: ConnectionString;
 }
 
 /**
@@ -102,9 +112,68 @@ export interface SelfSignedCertificate {
   days: number;
 }
 
-// The Secret type a certificate is kept as. Not basic auth, because
-// what's in it isn't a username and a password.
+/**
+ * A private key to make up.
+ *
+ * - bits: its size. Replacing it is by hand, as for a certificate,
+ *   and what it signed stops being accepted when it is.
+ */
+export interface PrivateKey {
+  bits: number;
+}
+
+/**
+ * A connection string to build.
+ *
+ * - role: the Secret holding the role's username and password, in the
+ *   same namespace. Another package's, usually — the database roles
+ *   in Office.roles.yaml are made with CloudNativePG.
+ * - database: the database it connects to
+ * - key: what it's kept under in the Secret
+ *
+ * Unlike everything else here it's rebuilt on every install, since
+ * there's nothing in it that wasn't already somewhere: a role whose
+ * password changed gets a connection string that matches on the next
+ * install. What reads it only does so as it starts.
+ */
+export interface ConnectionString {
+  role: string;
+  database: string;
+  key: string;
+}
+
+// Where every connection string points: the shared cluster's primary.
+// TLS is always on in CloudNativePG; "require" uses it without asking
+// the client to trust the cluster's own certificate authority.
+const POSTGRES_ADDRESS = "cc-postgres-rw:5432";
+const POSTGRES_OPTIONS = "sslmode=require&connect_timeout=10";
+
+// The Secret type a certificate or a key is kept as. Not basic auth,
+// because what's in it isn't a username and a password.
 export const OPAQUE = "Opaque";
+
+/**
+ * The keys a Secret has to have filled in to be usable, in the order
+ * a check reads them.
+ *
+ * @param definition
+ * @returns
+ */
+function getSecretFields(definition: SecretDefinition): string[] {
+  if (definition.certificate !== undefined) {
+    return ["certificate", "password"];
+  }
+
+  if (definition.privateKey !== undefined) {
+    return ["privateKey"];
+  }
+
+  if (definition.connectionString !== undefined) {
+    return [definition.connectionString.key];
+  }
+
+  return ["username", "password"];
+}
 
 /**
  * Where a secret goes, which is its own namespace if it named one and
@@ -188,6 +257,14 @@ export function buildCreateSecretCommand(
     return buildCreateCertificateCommand(definition, definition.certificate, fallbackNamespace);
   }
 
+  if (definition.privateKey !== undefined) {
+    return buildCreatePrivateKeyCommand(definition, definition.privateKey, fallbackNamespace);
+  }
+
+  if (definition.connectionString !== undefined) {
+    return buildConnectionStringCommand(definition, definition.connectionString, fallbackNamespace);
+  }
+
   const namespace = getSecretNamespace(definition, fallbackNamespace);
   const quotedNamespace = quoteForShell(namespace);
   const quotedName = quoteForShell(definition.name);
@@ -244,10 +321,6 @@ function buildCreateCertificateCommand(
   const namespace = getSecretNamespace(definition, fallbackNamespace);
   const quotedNamespace = quoteForShell(namespace);
   const quotedName = quoteForShell(definition.name);
-  const labels = {
-    "app.kubernetes.io/managed-by": "community-cloud",
-    ...(definition.labels !== undefined ? definition.labels : {}),
-  };
   const fail = (what: string) =>
     `|| { echo "Couldn't make the certificate ${definition.name}: ${what}" >&2; exit 1; }`;
 
@@ -274,13 +347,142 @@ function buildCreateCertificateCommand(
       `openssl pkcs12 -export -out "$work/certificate.p12" -inkey "$work/key.pem" -in "$work/cert.pem" -passout "file:$work/password" ${fail("openssl wouldn't bundle it")}`,
       // Deliberately "create", as for every other credential
       `kubectl -n ${quotedNamespace} create secret generic ${quotedName} --from-file=certificate="$work/certificate.p12" --from-file=password="$work/password" ${fail("kubectl wouldn't create the Secret")}`,
-      `kubectl -n ${quotedNamespace} label secret ${quotedName} ${Object.entries(labels)
-        .map(([key, value]) => quoteForShell(`${key}=${value}`))
-        .join(" ")} ${fail("kubectl wouldn't label the Secret")}`,
+      buildLabelCommand(definition, namespace, fail("kubectl wouldn't label the Secret")),
       `echo "Made the certificate ${definition.name} in ${namespace}, valid for ${certificate.days} days"`,
     ],
     output: OutputType.Raw,
   };
+}
+
+/**
+ * Make a private key, unless the cluster already has it.
+ *
+ * Made on the control plane for the reason a certificate is: the key
+ * is never in this process, never on a command line, and only ever in
+ * a directory the installing user alone can read.
+ *
+ * @param definition
+ * @param privateKey
+ * @param fallbackNamespace
+ * @returns
+ */
+function buildCreatePrivateKeyCommand(
+  definition: SecretDefinition,
+  privateKey: PrivateKey,
+  fallbackNamespace: string,
+): CommandSpec {
+  const namespace = getSecretNamespace(definition, fallbackNamespace);
+  const quotedNamespace = quoteForShell(namespace);
+  const quotedName = quoteForShell(definition.name);
+  const fail = (what: string) =>
+    `|| { echo "Couldn't make the key ${definition.name}: ${what}" >&2; exit 1; }`;
+
+  return {
+    name: `create-secret-${namespace}-${definition.name}`,
+    description: `Create the ${definition.name} key: ${definition.description}`,
+    purpose: CommandPurpose.Apply,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      `if kubectl -n ${quotedNamespace} get secret ${quotedName} > /dev/null 2>&1`,
+      "then",
+      `  echo "${definition.name} is already in ${namespace}, keeping the key it has"`,
+      "  exit 0",
+      "fi",
+      `command -v openssl > /dev/null 2>&1 || { echo "Making the key ${definition.name} needs openssl on the control plane, and it isn't there. Install it and run this again." >&2; exit 1; }`,
+      `work=$(mktemp -d) ${fail("no temporary directory")}`,
+      `trap 'rm -rf "$work"' EXIT`,
+      'chmod 0700 "$work"',
+      `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:${privateKey.bits} -out "$work/key.pem" 2> /dev/null ${fail("openssl wouldn't make it")}`,
+      // Deliberately "create", as for every other credential
+      `kubectl -n ${quotedNamespace} create secret generic ${quotedName} --from-file=privateKey="$work/key.pem" ${fail("kubectl wouldn't create the Secret")}`,
+      buildLabelCommand(definition, namespace, fail("kubectl wouldn't label the Secret")),
+      `echo "Made the key ${definition.name} in ${namespace}"`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Build a connection string from a role's credentials.
+ *
+ * On the control plane, from files, as for a certificate: the password
+ * is read out of one Secret into a directory only the installing user
+ * can read, and into the other by kubectl reading the file. It's never
+ * in a command line, and never in a variable expanded into one.
+ *
+ * Applied rather than created, since it's derived rather than made up.
+ * The role's Secret has to be there already, which the ordering sees
+ * to: it comes with CloudNativePG, and the package requires that.
+ *
+ * @param definition
+ * @param connection
+ * @param fallbackNamespace
+ * @returns
+ */
+function buildConnectionStringCommand(
+  definition: SecretDefinition,
+  connection: ConnectionString,
+  fallbackNamespace: string,
+): CommandSpec {
+  const namespace = getSecretNamespace(definition, fallbackNamespace);
+  const quotedNamespace = quoteForShell(namespace);
+  const quotedName = quoteForShell(definition.name);
+  const quotedRole = quoteForShell(connection.role);
+  const fail = (what: string) =>
+    `|| { echo "Couldn't build the connection string ${definition.name}: ${what}" >&2; exit 1; }`;
+  const read = (field: string, file: string) =>
+    `kubectl -n ${quotedNamespace} get secret ${quotedRole} -o jsonpath='{.data.${field}}' | base64 -d > "$work/${file}"`;
+
+  return {
+    name: `create-secret-${namespace}-${definition.name}`,
+    description: `Build the ${definition.name} connection string: ${definition.description}`,
+    purpose: CommandPurpose.Apply,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: [
+      `work=$(mktemp -d) ${fail("no temporary directory")}`,
+      `trap 'rm -rf "$work"' EXIT`,
+      'chmod 0700 "$work"',
+      read("username", "username"),
+      read("password", "password"),
+      `[ -s "$work/username" ] && [ -s "$work/password" ] ${fail(`the role's Secret ${connection.role} isn't in ${namespace}, or is missing its username or password`)}`,
+      // The generated passwords are words and hyphens, so they go into
+      // a URL as they are
+      `{ printf 'postgres://'; cat "$work/username"; printf ':'; cat "$work/password"; printf '@%s/%s?%s' ${quoteForShell(POSTGRES_ADDRESS)} ${quoteForShell(connection.database)} ${quoteForShell(POSTGRES_OPTIONS)}; } > "$work/url" ${fail("couldn't write it")}`,
+      `kubectl -n ${quotedNamespace} create secret generic ${quotedName} --from-file=${connection.key}="$work/url" --dry-run=client -o yaml | kubectl apply -f - > /dev/null ${fail("kubectl wouldn't apply the Secret")}`,
+      // Over again each time, since the Secret it labels is too
+      buildLabelCommand(definition, namespace, fail("kubectl wouldn't label the Secret"), true),
+      `echo "Built the connection string ${definition.name} in ${namespace}, from ${connection.role}"`,
+    ],
+    output: OutputType.Raw,
+  };
+}
+
+/**
+ * Label a Secret made from files, which "kubectl create secret" can't
+ * do in the same breath.
+ *
+ * @param definition
+ * @param namespace
+ * @param fail what to do when it can't
+ * @param overwrite whether labels it already has may be replaced
+ * @returns
+ */
+function buildLabelCommand(
+  definition: SecretDefinition,
+  namespace: string,
+  fail: string,
+  overwrite = false,
+): string {
+  const labels = {
+    "app.kubernetes.io/managed-by": "community-cloud",
+    ...(definition.labels !== undefined ? definition.labels : {}),
+  };
+
+  return `kubectl -n ${quoteForShell(namespace)} label${overwrite ? " --overwrite" : ""} secret ${quoteForShell(definition.name)} ${Object.entries(labels)
+    .map(([key, value]) => quoteForShell(`${key}=${value}`))
+    .join(" ")} ${fail}`;
 }
 
 /**
@@ -307,25 +509,31 @@ export function buildVerifySecretsCommand(
     const namespace = getSecretNamespace(definition, fallbackNamespace);
     const quotedNamespace = quoteForShell(namespace);
     const quotedName = quoteForShell(definition.name);
-    const isCertificate = definition.certificate !== undefined;
-    const expected = isCertificate
+    const isMadeFromFiles =
+      definition.certificate !== undefined ||
+      definition.privateKey !== undefined ||
+      definition.connectionString !== undefined;
+    const expected = isMadeFromFiles
       ? OPAQUE
       : definition.type !== undefined
         ? definition.type
         : BASIC_AUTH;
 
-    // A certificate's first half is the bundle rather than a username
-    const first = isCertificate ? "certificate" : "username";
+    // A certificate's first half is the bundle rather than a username,
+    // and a key has only the one
+    const fields = getSecretFields(definition);
+    const read = fields.map((field) => `:{.data.${field}}`).join("");
+    const filled = fields.map(() => ":?*").join("");
 
     return [
-      // One read rather than three. The fields are joined by colons,
+      // One read rather than several. The fields are joined by colons,
       // which neither a Secret type nor base64 contains, so the
       // patterns below can tell "missing" from "half filled in".
-      `found=$(kubectl -n ${quotedNamespace} get secret ${quotedName} -o jsonpath='{.type}:{.data.${first}}:{.data.password}' 2>/dev/null)`,
+      `found=$(kubectl -n ${quotedNamespace} get secret ${quotedName} -o jsonpath='{.type}${read}' 2>/dev/null)`,
       `case "$found" in`,
       // "?*" is at least one character, so a key that exists but is
       // empty fails here rather than passing as present
-      `  ${expected}:?*:?*) echo "  ${definition.name}: in ${namespace}" ;;`,
+      `  ${expected}${filled}) echo "  ${definition.name}: in ${namespace}" ;;`,
       `  "") echo "  ${definition.name}: missing from ${namespace}" >&2; failed=yes ;;`,
       `  *) echo "  ${definition.name}: in ${namespace} but not a complete ${expected} secret" >&2; failed=yes ;;`,
       "esac",

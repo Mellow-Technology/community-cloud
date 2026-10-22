@@ -12,14 +12,14 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parse } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 
 import { ALLOCATIONS, buildAllocationValues, getAllocations } from "../util/allocations.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { loadFixtureConfig } from "./helpers.ts";
 
 const DATABASE = "embed://apps/office/Office.database.yaml";
-const OBJECT_STORAGE = "embed://storage/SeaweedFS/SeaweedFS.values.yaml";
+const OBJECT_STORAGE = "embed://storage/SeaweedFS/SeaweedFS.yaml";
 
 describe("with nothing configured", () => {
   it("gives every service its default", () => {
@@ -81,8 +81,10 @@ describe("the manifests", () => {
       storage: { allocations: { objectStorageGb: 200 } },
     });
 
-    const values = parse(renderInstallerFile(config, OBJECT_STORAGE));
-    assert.equal(values.allInOne.data.size, "200Gi");
+    const [seaweed] = parseAllDocuments(renderInstallerFile(config, OBJECT_STORAGE)).map((document) =>
+      document.toJS(),
+    );
+    assert.equal(seaweed.spec.volume.requests.storage, "200Gi");
   });
 
   it("leave an explicit template value alone", async () => {
@@ -90,7 +92,9 @@ describe("the manifests", () => {
       values: { ...(await loadFixtureConfig()).getConfig().values, objectStorageVolumeSize: "1Ti" },
     });
 
-    const values = parse(renderInstallerFile(config, OBJECT_STORAGE));
-    assert.equal(values.allInOne.data.size, "1Ti");
+    const [seaweed] = parseAllDocuments(renderInstallerFile(config, OBJECT_STORAGE)).map((document) =>
+      document.toJS(),
+    );
+    assert.equal(seaweed.spec.volume.requests.storage, "1Ti");
   });
 });
