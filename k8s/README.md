@@ -48,7 +48,7 @@ k8s/
 │   ├── gateway/
 │   └── tailscale/
 └── storage/           # Local and object storage
-    ├── Garage/
+    ├── SeaweedFS/
     ├── StorageClass/
     └── TopoLVM/
 ```
@@ -87,7 +87,7 @@ API controller once at startup from whatever it finds then.
 | `TopoLVM/TopoLVM.values.yaml` | TopoLVM's Helm values, and the source of truth for the device classes. |
 | `StorageClass/cc-local-ssd-fast.yaml` | The cluster default: XFS on the `ssd` device class, `Retain`, expandable. |
 | `StorageClass/cc-local-ssd-sata.yaml` | The same on `ssd-sata`. |
-| `Garage/GarageValues.yaml` | Garage, S3-compatible object storage. |
+| `SeaweedFS/SeaweedFS.values.yaml` | SeaweedFS, S3-compatible object storage, as a single pod. |
 
 See [storage/README.md](./storage/README.md).
 
