@@ -320,14 +320,26 @@ Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
-A package for something with no sign in of its own — a cluster
-interface like Headlamp — can declare a `gate` instead, and gets an
-oauth2-proxy in front of it signing in through Authentik, with the
-proxy, its credentials and its Authentik client all made by the
-installer. See `installer/src/cli/commands/OAuth2Proxy.ts`. The
-`headlamp` package is the one that does: it's on
-`values.domain.headlamp`, only Authentik's users get through, and
-Headlamp then asks them for a token to talk to the cluster with.
+Headlamp, on `values.domain.headlamp`, signs in through Authentik
+too, and then talks to the Kubernetes API as whoever signed in. That
+needs the API server to trust Authentik, so enabling the `headlamp`
+package also starts K3s's API server with Authentik as an OpenID
+Connect issuer, for the client `headlamp` — re-run the `k3s` bundle on
+the servers of an existing cluster after enabling it. People are
+`oidc:<email>` to the cluster, in `oidc:<group>` for each Authentik
+group; members of `clusterAdminGroup` (`authentik Admins` by default)
+are cluster admins, and anyone else sees nothing until a role is bound
+to them. Headlamp's own account has no permissions. It carries
+Community Cloud's plugins from `headlamp/plugins/`, built into the
+installer with `bun run build:plugins` then `bun run build:embedded`;
+see `installer/src/cli/commands/ClusterSignIn.ts`.
+
+A package for something with no sign in of its own can declare a
+`gate` instead, and gets an oauth2-proxy in front of it signing in
+through Authentik, with the proxy, its credentials and its Authentik
+client all made by the installer. See
+`installer/src/cli/commands/OAuth2Proxy.ts`. The `picoclaw` package is
+the one that does.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
@@ -399,7 +411,10 @@ used a `config` section like that, and preflight warns about one.
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
 `domain.billing`, `domain.billingApi`, `domain.signing`,
-`domain.headlamp`, `domain.storage` and `authentik.secretKey`. Unlike
+`domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
+`authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
+members are cluster admins through Headlamp, `authentik Admins` unless
+it's set. Unlike
 the rest of the configuration, `values` is open: plugins and your own
 manifests can read anything put here, and preflight won't call it
 unknown.

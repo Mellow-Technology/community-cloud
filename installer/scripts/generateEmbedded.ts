@@ -12,12 +12,21 @@
  * k8s/ai/vLLM/vllm-amd.yaml is stored, and referred to, as
  * ai/vLLM/vllm-amd.yaml.
  *
- * Run after adding or removing anything under k8s/:
+ * The Headlamp plugins in headlamp/plugins/ go in too, built: each
+ * one's main.js and package.json, stored under headlamp-plugins/<name>/.
+ * They're what the headlamp package mounts into Headlamp, and a
+ * cluster has no npm to build them with. A plugin that hasn't been
+ * built is left out with a warning; build them first with
+ *
+ *   bun run build:plugins
+ *
+ * Run after adding or removing anything under k8s/, or changing a
+ * plugin:
  *
  *   bun run build:embedded
  */
 import { Database } from "bun:sqlite";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { access, readFile, readdir, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +37,16 @@ const SOURCE_DIRECTORY = "k8s";
 // The manifests and values files. The READMEs under k8s/ are for
 // people reading the repository, and nothing at runtime opens them.
 const EMBED_EXTENSIONS = [".yaml", ".yml"];
+
+// Where the Headlamp plugins are, and where they're stored. The two
+// files are the whole of a built plugin as far as Headlamp is
+// concerned: it skips a folder without both.
+const PLUGIN_DIRECTORY = "headlamp/plugins";
+const PLUGIN_PREFIX = "headlamp-plugins";
+const PLUGIN_FILES: [string, string][] = [
+  ["dist/main.js", "main.js"],
+  ["package.json", "package.json"],
+];
 
 /**
  * The root of the repository, from this file's own location.
@@ -71,6 +90,59 @@ async function findFiles(root: string, directory: string): Promise<string[]> {
 }
 
 /**
+ * The built Headlamp plugins, as [where it is, where it's stored].
+ *
+ * @param root
+ * @returns
+ */
+async function findPlugins(root: string): Promise<[string, string][]> {
+  const entries = await readdir(join(root, PLUGIN_DIRECTORY), { withFileTypes: true });
+  const found: [string, string][] = [];
+
+  for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const directory = join(PLUGIN_DIRECTORY, entry.name);
+    const files = PLUGIN_FILES.map(([from, to]): [string, string] => [
+      join(directory, from),
+      `${PLUGIN_PREFIX}/${entry.name}/${to}`,
+    ]);
+
+    // A folder without a package.json isn't a plugin, and one with no
+    // build is a plugin nobody has built here yet
+    const present = await Promise.all(files.map(([from]) => exists(join(root, from))));
+    if (!present[1]) {
+      continue;
+    }
+    if (!present[0]) {
+      console.warn(`Left out the Headlamp plugin ${entry.name}, which hasn't been built. Run "bun run build:plugins" first.`);
+      continue;
+    }
+
+    found.push(...files);
+  }
+
+  return found;
+}
+
+/**
+ * Whether a file is there.
+ *
+ * @param path
+ * @returns
+ */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Write the database.
  */
 async function generate() {
@@ -99,10 +171,17 @@ async function generate() {
     insert.run({ $path: path, $contents: contents });
   }
 
+  const plugins = await findPlugins(root);
+  for (const [from, path] of plugins) {
+    const contents = await readFile(join(root, from), { encoding: "utf8" });
+    bytes += contents.length;
+    insert.run({ $path: path, $contents: contents });
+  }
+
   database.close();
 
   console.log(
-    `Embedded ${files.length} files (${(bytes / 1024).toFixed(0)} KB) from ${SOURCE_DIRECTORY}/ into ${DATABASE_FILE}`,
+    `Embedded ${files.length} files from ${SOURCE_DIRECTORY}/ and ${plugins.length / PLUGIN_FILES.length} Headlamp plugins (${(bytes / 1024).toFixed(0)} KB) into ${DATABASE_FILE}`,
   );
 }
 

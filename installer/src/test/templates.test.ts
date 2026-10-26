@@ -83,7 +83,9 @@ function check(config: CloudConfig, file: string, values: any) {
 describe("the manifests the binary carries", async () => {
   const config = await loadFixtureConfig();
   const { Values } = buildTemplateValues(config, RENDERED_FOR) as any;
-  const files = listEmbeddedFiles();
+  // The manifests and values files. The Headlamp plugins are carried
+  // too, as the JavaScript they were built into, and aren't templates.
+  const files = listEmbeddedFiles().filter((file) => /\.ya?ml$/.test(file));
 
   const results = files.map((file) => ({ file, ...check(config, file, Values) }));
 

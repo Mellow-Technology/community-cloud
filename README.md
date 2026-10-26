@@ -153,7 +153,7 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 | Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
 | Documenso | `cc-office` | `documenso` package — document signing, through Authentik |
 | Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
-| Headlamp | `cc-office` | `headlamp` package — cluster UI, behind an Authentik gate |
+| Headlamp | `cc-office` | `headlamp` package — cluster UI, signed into through Authentik, with our plugins |
 | Picoclaw | `cc-office` | `picoclaw` package — AI agent, behind an Authentik gate |
 
 None of these has run on real hardware in its current form yet.

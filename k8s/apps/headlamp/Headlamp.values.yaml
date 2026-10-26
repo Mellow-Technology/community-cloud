@@ -1,11 +1,81 @@
 # Headlamp's Helm values.
 #
-# Headlamp is a web interface for the cluster. It's behind a gate: the
-# "headlamp" package puts oauth2-proxy in front of it, so only people
-# Authentik lets through reach it at all, and Headlamp then asks them
-# for a token to talk to the cluster with. See Headlamp.network.yaml.
+# Headlamp is a web interface for the cluster. People sign in to it
+# through Authentik, and it talks to the Kubernetes API as them, with
+# the token Authentik gave them: what they can see and do is what RBAC
+# gives "oidc:<email>" and their "oidc:<group>"s. See
+# Headlamp.blueprint.yaml, Headlamp.rbac.yaml and
+# installer/src/cli/commands/ClusterSignIn.ts.
 config:
+  oidc:
+    # The client's ID and secret are in the Secret the installer made
+    # for it, headlamp-oidc, under its own key names, so they're mapped
+    # below rather than the chart making a Secret of its own
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+      hasScopes: true
+
+  # Community Cloud's own plugins, from headlamp/plugins/ in the
+  # repository, mounted below. Headlamp is restarted when they change,
+  # by the annotation further down.
+  pluginsDir: /headlamp/plugins
   watchPlugins: true
+
+env:
+  - name: OIDC_CLIENT_ID
+    valueFrom:
+      secretKeyRef:
+        name: headlamp-oidc
+        key: username
+  - name: OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: headlamp-oidc
+        key: password
+  - name: OIDC_ISSUER_URL
+    value: {{ printf "https://%s/application/o/headlamp/" .Values.domain.auth | quote }}
+  - name: OIDC_CALLBACK_URL
+    value: {{ printf "https://%s/oidc-callback" .Values.domain.headlamp | quote }}
+  # "openid" is always asked for. "profile" carries the groups.
+  - name: OIDC_SCOPES
+    value: "profile,email"
+  - name: OIDC_USE_PKCE
+    value: "true"
+
+# Headlamp acts as whoever signed in, so its own account needs nothing.
+# The chart would otherwise make it a cluster admin, and anyone who
+# reached Headlamp without signing in would be one too.
+clusterRoleBinding:
+  create: false
+
+podAnnotations:
+  community-cloud/headlamp-plugins: {{ .Values.headlampPluginsRevision | quote }}
+
+{{ if .Values.headlampPlugins }}
+# Each plugin's ConfigMap, from Headlamp.plugins.yaml, as a folder of
+# its own: Headlamp skips a folder without both files
+volumes:
+  - name: plugins
+    projected:
+      sources:
+{{ range .Values.headlampPlugins }}
+        - configMap:
+            name: headlamp-plugin-{{ .name }}
+            items:
+              - key: main.js
+                path: {{ .name }}/main.js
+              - key: package.json
+                path: {{ .name }}/package.json
+{{ end }}
+
+volumeMounts:
+  - name: plugins
+    mountPath: /headlamp/plugins
+    readOnly: true
+{{ end }}
 
 # As per all things in Community Cloud, on the worker nodes
 nodeSelector:

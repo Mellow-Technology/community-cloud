@@ -453,6 +453,10 @@
         "networkDevices": {
           "type": "string",
           "description": "Derived from the shared interface list; set it only to override."
+        },
+        "clusterAdminGroup": {
+          "type": "string",
+          "description": "The Authentik group whose members are cluster admins when signed in through Headlamp. Defaults to \"authentik Admins\"."
         }
       },
       "additionalProperties": true
