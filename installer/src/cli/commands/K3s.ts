@@ -27,6 +27,8 @@
  * - sudo, which the K3s install script uses itself for the privileged
  *   parts, so these commands don't set the sudo flag
  */
+import { dirname } from "node:path";
+
 import {
   CommandContext,
   CommandPurpose,
@@ -39,8 +41,14 @@ import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SInstallationType } from "../../util/types.ts";
 import { NEBULA_INTERFACE_PREFIX } from "../../util/interfaces.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
-import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
-import { buildApiServerOidcArgs } from "./ClusterSignIn.ts";
+import { getWaitSeconds, quoteForShell, waitUntil, writeFileCommand } from "../../util/shell.ts";
+import {
+  AUTHENTICATION_CONFIG_PATH,
+  SignInClient,
+  buildApiServerAuthArgs,
+  buildAuthenticationConfig,
+  signsInThroughAuthentik,
+} from "./ClusterSignIn.ts";
 import { usesNebula } from "./NebulaNetwork.ts";
 
 // Where the install script comes from
@@ -101,6 +109,7 @@ interface K3sConfig {
   disable?: string[];
   extraServerArgs?: string[];
   extraAgentArgs?: string[];
+  signInClients?: SignInClient[];
 }
 
 /**
@@ -360,9 +369,9 @@ function buildInstallExec(config: CloudConfig, context: any): string {
     args.push(`--disable=${component}`);
   }
 
-  // Trusting Authentik to say who someone is, for Headlamp, which
-  // talks to the API as whoever signed in. See ClusterSignIn.ts.
-  args.push(...buildApiServerOidcArgs(config));
+  // Trusting Authentik to say who someone is, for Headlamp and kubectl,
+  // which talk to the API as whoever signed in. See ClusterSignIn.ts.
+  args.push(...buildApiServerAuthArgs(config));
 
   return [...args, ...(extraServerArgs !== undefined ? extraServerArgs : [])].join(" ");
 }
@@ -497,6 +506,27 @@ export const K3sCommands: CommandSpec[] = [
     saveToContext: (output: any) => ({
       nodeIp: output.parsed.trim(),
     }),
+  },
+
+  /**
+   * The API server's sign in settings, ahead of the server that's told
+   * to read them. Rewritten on every run, and reread by the API server
+   * when they change, so a client added to the configuration needs
+   * only this.
+   */
+  {
+    name: "write-authentication-config",
+    description: "Write the API server's settings for signing in through Authentik",
+    scope: CommandScope.EachServer,
+    skipWhen: (config: CloudConfig, context: any) =>
+      getInstallationType(context) !== K3SInstallationType.Server || !signsInThroughAuthentik(config),
+    command: [
+      `sudo mkdir -p ${dirname(AUTHENTICATION_CONFIG_PATH)} || { echo "Couldn't create ${dirname(AUTHENTICATION_CONFIG_PATH)}" >&2; exit 1; }`,
+      ...writeFileCommand(AUTHENTICATION_CONFIG_PATH, { asRoot: true }),
+      `echo "wrote ${AUTHENTICATION_CONFIG_PATH}"`,
+    ],
+    stdin: (config: CloudConfig) => buildAuthenticationConfig(config) ?? "",
+    output: OutputType.Raw,
   },
 
   /**

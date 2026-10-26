@@ -149,7 +149,7 @@ drifted from the file it was built from.
 k8s/
 ├── ai/vLLM/                     # vLLM deployment and its model PVC (AMD MI300)
 ├── apps/                        # Application deployments
-│   ├── authentik/               # Authentik, installed by its plugin
+│   ├── authentik/               # Authentik, installed by the authentik package
 │   ├── documenso/               # Documenso document signing
 │   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
@@ -220,8 +220,9 @@ shared Redis and a SeaweedFS bucket:
 
 #### Authentik (`apps/authentik/`)
 
-Authentication provider, installed by the Authentik plugin (chart
-2026.8.5), with Postgres in cc-postgres and files in SeaweedFS:
+Authentication provider, installed by the `authentik` package (chart
+2026.5.3, pinned), with Postgres in cc-postgres and files in SeaweedFS.
+The cluster's API server trusts it too, for Headlamp and kubectl:
 
 | File | Purpose |
 |---|---|
@@ -405,7 +406,7 @@ Build one with `community-cloud` and no arguments, and check it with
    `gateway` bundle)
 3. **Charts** — the `helm-charts` bundle, dependencies first:
    cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
-   CloudNativePG and cc-postgres → Redis → Authentik (plugin) → the
+   CloudNativePG and cc-postgres → Redis → Authentik → the
    applications, each with its own ListenerSet on the cluster Gateway
 
 ---

@@ -22,9 +22,9 @@
  *
  * How the blueprint gets in is the part with a choice in it.
  * Authentik reads blueprints from files under /blueprints, and its
- * chart can mount ConfigMaps there — but Authentik is installed by a
- * plugin, or by hand, with values this installer doesn't own, and a
- * mount listed in those values would have to know about every
+ * chart can mount ConfigMaps there — but Authentik may have been
+ * installed by hand, with values this installer doesn't own, and a
+ * mount listed in any values would have to know about every
  * application in advance. "ak apply_blueprint" doesn't help either:
  * it only reads paths inside /blueprints, which the worker can't
  * write to. What's left is the importer itself, run in the worker
@@ -53,8 +53,8 @@ import { buildKubeEnv } from "../../util/kube.ts";
 import { quoteForShell } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 
-// Where Authentik runs. The plugin installs it here, into the same
-// namespace as the office applications it signs people into.
+// Where Authentik runs. The authentik package installs it here, into
+// the same namespace as the office applications it signs people into.
 export const AUTHENTIK_NAMESPACE = "cc-office";
 
 // The chart names its worker after the release, and the release is
@@ -151,7 +151,7 @@ export function buildRequireAuthentikCommand(owner: string): CommandSpec {
     env: buildKubeEnv,
     command: [
       `ready=$(kubectl -n ${AUTHENTIK_NAMESPACE} get deployment ${AUTHENTIK_WORKER} -o jsonpath='{.status.readyReplicas}' 2>/dev/null)`,
-      `[ -n "$ready" ] && [ "$ready" -gt 0 ] || { echo "${owner} signs in through Authentik, and there's no ready ${AUTHENTIK_WORKER} in ${AUTHENTIK_NAMESPACE}. Install Authentik first — the authentik plugin, or its chart as the release \\"authentik\\"." >&2; exit 1; }`,
+      `[ -n "$ready" ] && [ "$ready" -gt 0 ] || { echo "${owner} signs in through Authentik, and there's no ready ${AUTHENTIK_WORKER} in ${AUTHENTIK_NAMESPACE}. Install Authentik first — the authentik package, or its chart as the release \\"authentik\\"." >&2; exit 1; }`,
       `echo "Authentik is running in ${AUTHENTIK_NAMESPACE}"`,
     ],
     output: OutputType.Raw,

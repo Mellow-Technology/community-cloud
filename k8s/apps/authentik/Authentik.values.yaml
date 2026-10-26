@@ -1,7 +1,8 @@
 # Authentik's Helm values.
 #
-# Authentik is the identity provider the office applications sign in
-# through. Installed by the Authentik plugin, from the chart at
+# Authentik is the identity provider the office applications, and
+# people using the cluster itself, sign in through. Installed by the
+# authentik package, from the chart at
 # https://charts.goauthentik.io, with these values rendered against
 # the configuration. Its database is in cc-postgres and its files in a
 # bucket in SeaweedFS, from Authentik.database.yaml and

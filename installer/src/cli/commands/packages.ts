@@ -272,6 +272,42 @@ const builtInPackages: PackageDefinition[] = [
     ],
   },
   {
+    name: "authentik",
+    description: "Single sign on, for the applications and for the cluster itself",
+    chart: { repo: "https://charts.goauthentik.io", name: "authentik" },
+    // Pinned. Authentik migrates its database on start and has no way
+    // back, so an upgrade should be one somebody chose.
+    version: "2026.5.3",
+    namespace: "cc-office",
+    valuesFile: "embed://apps/authentik/Authentik.values.yaml",
+
+    // Its database is in cc-postgres, with the role CloudNativePG's
+    // package makes, and its files in a bucket in SeaweedFS
+    requires: ["cloudnative-pg", "seaweedfs"],
+
+    manifests: {
+      // What the chart's pods read as they start: the namespace, for
+      // the label the cluster Gateway looks for, the database, and the
+      // bucket, whose keys the SeaweedFS operator writes into the
+      // Secret "authentik-s3"
+      before: [
+        "embed://apps/office/Office.namespace.yaml",
+        "embed://apps/authentik/Authentik.database.yaml",
+        "embed://apps/authentik/Authentik.storage.yaml",
+      ],
+
+      after: ["embed://apps/authentik/Authentik.network.yaml"],
+    },
+
+    ready: ["buckets.seaweed.seaweedfs.com/authentik", "s3credentials.seaweed.seaweedfs.com/authentik"],
+    mail: true,
+
+    // The secret key signs its sessions, and replacing it signs
+    // everybody out, so it's the configuration's to keep rather than
+    // made afresh
+    values: ["domain.auth", "domain.storage", "authentik.secretKey"],
+  },
+  {
     name: "documenso",
     description: "Document signing, signed into through Authentik",
     namespace: "cc-office",

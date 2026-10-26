@@ -8,39 +8,21 @@
 # accepts tokens issued to it (see ClusterSignIn.ts).
 #
 # Headlamp passes the token it gets here straight on to the API server,
-# which takes the person's email address as their name and their
-# Authentik groups as their groups. So the signing key has to be one
-# the API server can check from Authentik's published keys — the
-# self-signed certificate, rather than the client secret — and the
-# token has to carry both.
+# which takes the person's Authentik username as their name and their
+# Authentik groups as their groups, both from the "profile" scope. So
+# the signing key has to be one the API server can check from
+# Authentik's published keys — the self-signed certificate, rather than
+# the client secret.
 #
-# Who may sign in is left to Authentik; what they may do once in is
-# RBAC, in Headlamp.rbac.yaml. Someone in no bound group gets in and
-# can see nothing.
+# Who may sign in is left to Authentik and to the API server, which
+# only lets in members of a "k8s-" group; what they may do once in is
+# RBAC, in Headlamp.rbac.yaml.
 version: 1
 metadata:
   name: Community Cloud - Headlamp
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 entries:
-  # The API server only takes an email address as a name from a token
-  # that says it's verified. Saying so is safe while an administrator
-  # makes every account, and has to change if self service enrolment
-  # is ever switched on — see Documenso.blueprint.yaml, which declares
-  # the same mapping, identically.
-  - model: authentik_providers_oauth2.scopemapping
-    id: email-verified
-    identifiers:
-      name: "Community Cloud: email, as verified"
-    attrs:
-      scope_name: email
-      description: "Email address"
-      expression: |
-        return {
-            "email": request.user.email,
-            "email_verified": True,
-        }
-
   - model: authentik_providers_oauth2.oauth2provider
     id: provider
     identifiers:
@@ -61,11 +43,11 @@ entries:
       redirect_uris:
         - matching_mode: strict
           url: {{ printf "https://%s/oidc-callback" .Values.domain.headlamp | quote }}
-      # "profile" is Authentik's own, and carries the groups
+      # "profile" is Authentik's own, and carries the username and the
+      # groups
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
-        - !KeyOf email-verified
 
   - model: authentik_core.application
     identifiers:

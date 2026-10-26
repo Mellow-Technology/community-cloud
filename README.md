@@ -148,7 +148,7 @@ The `Webapp` CRD controller (`installer/src/controller/WebappController.ts`) aut
 
 | App | Namespace | Status |
 |---|---|---|
-| Authentik | `cc-office` | Plugin — single sign on, on cc-postgres and a SeaweedFS bucket |
+| Authentik | `cc-office` | `authentik` package — single sign on, for the applications and the cluster, on cc-postgres and a SeaweedFS bucket |
 | Twenty CRM | `cc-office` | `twenty` package — server and worker, on cc-postgres, Redis and a SeaweedFS bucket |
 | Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
 | Plane | `cc-office` | `plane` package — projects, on cc-postgres, Redis, RabbitMQ and a SeaweedFS bucket |

@@ -57,6 +57,27 @@
           },
           "description": "Anything else to pass to K3s agents."
         },
+        "signInClients": {
+          "type": "array",
+          "description": "Clients in Authentik, besides Headlamp's, whose tokens the API server accepts, such as one made for kubectl. Only members of a k8s-* Authentik group get in.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["application", "clientId"],
+            "properties": {
+              "application": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "description": "The application's slug in Authentik, which its issuer's address is made from."
+              },
+              "clientId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Its provider's client ID, which is the audience its tokens are for."
+              }
+            }
+          }
+        },
         "kubeconfig": {
           "type": "string",
           "description": "Where kubectl should look, for a cluster this didn't build. Defaults to /etc/rancher/k3s/k3s.yaml."
@@ -460,7 +481,7 @@
         },
         "clusterAdminGroup": {
           "type": "string",
-          "description": "The Authentik group whose members are cluster admins when signed in through Headlamp. Defaults to \"authentik Admins\"."
+          "description": "The Authentik group whose members are cluster admins when signed in through Headlamp or kubectl. Has to start with k8s-, since only members of a k8s-* group may sign in. Defaults to \"k8s-admins\"."
         }
       },
       "additionalProperties": true

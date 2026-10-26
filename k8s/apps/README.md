@@ -51,9 +51,9 @@ Operator carries out; it writes the user's credentials into
 ## Authentik (`authentik/`)
 
 [Authentik](https://goauthentik.io) is the identity provider, and what
-everything else authenticates against. It's installed by the
-Authentik plugin, from these files; it's reached at
-`values.domain.auth`.
+everything else authenticates against, the cluster's own API server
+included. It's installed by the `authentik` package, from these files;
+it's reached at `values.domain.auth`.
 
 | File | What it is |
 |---|---|

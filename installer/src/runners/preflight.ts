@@ -24,6 +24,12 @@ import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
 import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
+import {
+  CLUSTER_GROUP_PREFIX,
+  DEFAULT_CLUSTER_ADMIN_GROUP,
+  getSignInClients,
+  signsInThroughAuthentik,
+} from "../cli/commands/ClusterSignIn.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
 import { checkSchema } from "../util/configSchema.ts";
@@ -293,6 +299,25 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
       if (!definition.mailSecurity.includes(security)) {
         say(`${name} can't send mail with "security" ${security}, which ${definition.namespace}'s mail server is set to. It can use: ${definition.mailSecurity.join(", ")}.`);
       }
+    }
+  }
+
+  // Signing in to the cluster through Authentik. A client the API
+  // server can't make sense of stops it starting, which is a long way
+  // from here to find out.
+  if (signsInThroughAuthentik(config)) {
+    for (const client of getSignInClients(config)) {
+      if (typeof client?.application !== "string" || !/^[a-z0-9_-]+$/.test(client.application) || typeof client?.clientId !== "string" || client.clientId === "") {
+        say(`"k3s.signInClients" has ${JSON.stringify(client)}, which needs an "application" slug and a "clientId".`);
+      }
+    }
+
+    // Only members of a k8s-* group get in, so an administrators' group
+    // named otherwise is one whose members are bound to cluster-admin
+    // and can never sign in to use it
+    const adminGroup = raw.values?.clusterAdminGroup ?? DEFAULT_CLUSTER_ADMIN_GROUP;
+    if (typeof adminGroup !== "string" || !adminGroup.startsWith(CLUSTER_GROUP_PREFIX)) {
+      say(`"values.clusterAdminGroup" is ${JSON.stringify(adminGroup)}, and only members of a group starting "${CLUSTER_GROUP_PREFIX}" may sign in to the cluster, so its members never could.`);
     }
   }
 

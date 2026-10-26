@@ -137,6 +137,7 @@ gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
 | `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
 | `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik`, `servicelb` and `local-storage` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API, Cilium's own IP management hands out load balancer addresses, and TopoLVM provisions local volumes. K3s's local-path provisioner also claims to be the default storage class, and Kubernetes allows only one. |
 | `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
+| `signInClients` | — | Clients in Authentik, besides Headlamp's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
 | `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
 
 ### `network`
@@ -366,7 +367,7 @@ Authentik, and sends no mail yet.
 
 Documenso is on `values.domain.signing`, and signs people in through
 Authentik over OpenID Connect. It needs Authentik running — from the
-Authentik plugin, or installed by hand as the release `authentik` —
+`authentik` package, or installed by hand as the release `authentik` —
 which the install checks for before it starts on it. When the
 Authentik package is being installed in the same run, it goes first.
 Passwords are switched off, so Authentik is the only way in, and an
@@ -382,19 +383,37 @@ Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
-Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in through Authentik
-too, and then talks to the Kubernetes API as whoever signed in. That
-needs the API server to trust Authentik, so enabling the `headlamp`
-package also starts K3s's API server with Authentik as an OpenID
-Connect issuer, for the client `headlamp` — re-run the `k3s` bundle on
-the servers of an existing cluster after enabling it. People are
-`oidc:<email>` to the cluster, in `oidc:<group>` for each Authentik
-group; members of `clusterAdminGroup` (`authentik Admins` by default)
-are cluster admins, and anyone else sees nothing until a role is bound
-to them. Headlamp's own account has no permissions. It carries
-Community Cloud's plugins from `headlamp/plugins/`, built into the
-installer with `bun run build:plugins` then `bun run build:embedded`;
-see `installer/src/cli/commands/ClusterSignIn.ts`.
+Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
+through Authentik too, and then talks to the Kubernetes API as
+whoever signed in; see [signing in to the cluster](#signing-in-to-the-cluster).
+Headlamp's own account has no permissions. It carries Community
+Cloud's plugins from `headlamp/plugins/`, built into the installer with
+`bun run build:plugins` then `bun run build:embedded`.
+
+#### Signing in to the cluster
+
+The API server trusts Authentik through an `AuthenticationConfiguration`
+the `k3s` bundle writes to `/etc/rancher/k3s/authentication.yaml` on
+each server, whenever there's a `values.domain.auth` and a client to
+trust it for: Headlamp's, `headlamp`, when the `headlamp` package is
+enabled, and any listed in `k3s.signInClients`, such as one made in
+Authentik for kubectl. Each Authentik application is its own issuer.
+The API server rereads the file when it changes, so adding a client
+needs only the `k3s` bundle again; the first one also restarts K3s
+with the setting that points at the file.
+
+- People are `authentik:<username>` to the cluster, in
+  `authentik:<group>` for each of their Authentik groups. The prefix
+  keeps an Authentik group from being taken for one of the cluster's
+  own.
+- Only members of a group whose name starts `k8s-` get in at all, so
+  being in Authentik for some other application isn't enough.
+- Members of `values.clusterAdminGroup`, `k8s-admins` by default, are
+  cluster admins. Make the group in Authentik; nothing makes it for
+  you. Anyone else gets in and sees nothing until a role is bound to
+  `authentik:k8s-<their group>`.
+
+See `installer/src/cli/commands/ClusterSignIn.ts`.
 
 A package for something with no sign in of its own can declare a
 `gate` instead, and gets an oauth2-proxy in front of it signing in
@@ -407,8 +426,8 @@ A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
 the working directory) and `requires`.
 
-Applications live in plugins rather than in the catalogue. Authentik is
-the worked example — see [`plugins`](#plugins) below.
+Applications can also come from plugins rather than the catalogue —
+see [`plugins`](#plugins) below.
 
 Some packages bring credentials with them — the database passwords the
 applications connect with, for instance. Those aren't configured here;
@@ -423,7 +442,7 @@ names it, and only when its fingerprint matches.
 
 ```jsonc
 "plugins": {
-  "authentik": {
+  "mastodon": {
     "enabled": true,
     "sha256": "481ec17bce6555d9ea01cb23ec1bdf6290bb0b7644be562a0fdc298b8bfbd4c2"
   }
@@ -438,7 +457,8 @@ paste. It won't ask again until the plugin changes.
 A plugin's packages and bundles are prefixed with its name, so a
 plugin called `mastodon` adding a `media` bundle contributes
 `mastodon:media`. A thing named after its own plugin isn't doubled:
-Authentik's package is `authentik`, not `authentik:authentik`.
+its package is `mastodon`, not `mastodon:mastodon`. A plugin can't
+add a package the installer ships, such as `authentik`.
 
 Plugins are covered properly in [docs/plugins.md](../docs/plugins.md).
 
@@ -475,8 +495,10 @@ The manifests currently reference `adminEmail`, `domain.main`,
 `domain.billing`, `domain.billingApi`, `domain.signing`,
 `domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
 `authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
-members are cluster admins through Headlamp, `authentik Admins` unless
-it's set. Unlike
+members are cluster admins through Headlamp or kubectl, `k8s-admins`
+unless it's set; it has to start with `k8s-`, which preflight checks.
+`authentik.secretKey` signs Authentik's sessions: keep it, since a new
+one signs everybody out. Unlike
 the rest of the configuration, `values` is open: plugins and your own
 manifests can read anything put here, and preflight won't call it
 unknown.
