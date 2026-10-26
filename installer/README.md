@@ -1080,6 +1080,7 @@ cd installer
 bun install
 bun run build            # every platform
 bun run build linux      # or a filter: linux, macos, windows, arm64, musl
+bun run build linux-x64  # or one target by its exact name
 ```
 
 Executables land in `installer/build/`:
@@ -1097,6 +1098,27 @@ Executables land in `installer/build/`:
 
 Every target cross-compiles from whatever machine you build on, so a
 release can be cut from a laptop.
+
+### Releases
+
+`.github/workflows/installer.yml` builds every target on each pull
+request and push to `main`, after the tests. It then runs each
+executable on its own operating system: `--version`, the embedded
+manifests and Headlamp plugins, and a template rendered with
+`--dry-run`. The executables are kept as workflow artifacts for a week.
+
+Pushing a tag `installer-v<version>` does the same and then publishes a
+GitHub release with every executable and a `SHA256SUMS` file:
+
+```bash
+git tag installer-v0.2.0
+git push origin installer-v0.2.0
+```
+
+The tag's version is what the executables report with `--version`.
+Builds that aren't releases report `package.json`'s version with the
+commit on it, e.g. `0.1.0-dev.dcf704b`. A version with a hyphen in it,
+like `0.2.0-rc.1`, is published as a pre-release.
 
 ### Embedded manifests
 
