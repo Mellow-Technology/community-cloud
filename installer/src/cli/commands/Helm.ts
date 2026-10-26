@@ -367,6 +367,29 @@ function buildManifestCommand(
 }
 
 /**
+ * Make a package's namespace, if it isn't there already.
+ *
+ * For a chart whose credentials go in its own namespace: they're made
+ * before the chart, which is otherwise what would make it.
+ *
+ * @param definition
+ * @returns
+ */
+function buildEnsureNamespaceCommand(definition: PackageDefinition): CommandSpec {
+  const namespace = quoteForShell(definition.namespace);
+
+  return {
+    name: `namespace-${definition.name}`,
+    description: `Make the ${definition.namespace} namespace for ${definition.name}`,
+    purpose: CommandPurpose.Apply,
+    runOn: CommandTarget.ControlPlane,
+    env: buildKubeEnv,
+    command: `kubectl get namespace ${namespace} > /dev/null 2>&1 || kubectl create namespace ${namespace} || { echo "Couldn't make the ${definition.namespace} namespace" >&2; exit 1; }`,
+    output: OutputType.Raw,
+  };
+}
+
+/**
  * Install or upgrade the chart.
  *
  * "upgrade --install" rather than "install", so running this against a
@@ -689,26 +712,22 @@ export function buildPackageCommands(
     commands.push(buildManifestCommand(definition, manifest, "before"));
   }
 
-  const { chart } = definition;
-  if (chart !== undefined) {
-    const charted = { ...definition, chart };
-    commands.push(buildAddRepoCommand(charted));
-
-    if (hasValues(definition)) {
-      commands.push(buildWriteValuesCommand(definition));
-    }
-
-    commands.push(buildInstallCommand(charted));
-  }
-
-  // The credentials the manifests below refer to. Ahead of them,
-  // because a role whose Secret isn't there yet is a role that
-  // doesn't get made, and behind the chart, because the namespaces
-  // these go in belong to the package rather than to this step.
+  // The credentials the chart and the manifests below refer to. Ahead
+  // of both, because a role whose Secret isn't there yet is a role
+  // that doesn't get made, and a pod whose Secret isn't there yet
+  // never starts — which a chart installed with --wait then waits on
+  // until it gives up. Headlamp reads its client's credentials as it
+  // starts, for one.
   const secrets = [
     ...(definition.secrets ?? []),
     ...(gate !== undefined ? getGateSecrets(gate) : []),
   ];
+  // A chart's namespace would otherwise only be made by the chart,
+  // which now comes after its credentials
+  if (definition.chart !== undefined && secrets.some((secret) => secret.namespace === undefined)) {
+    commands.push(buildEnsureNamespaceCommand(definition));
+  }
+
   for (const secret of secrets) {
     const where = `${secret.namespace ?? definition.namespace}/${secret.name}`;
 
@@ -755,6 +774,19 @@ export function buildPackageCommands(
   if (sendsMail) {
     madeSecrets.add(mailKey);
     commands.push(buildApplyMailSecretCommand(definition.namespace));
+  }
+
+  // The chart, once everything it reads is there
+  const { chart } = definition;
+  if (chart !== undefined) {
+    const charted = { ...definition, chart };
+    commands.push(buildAddRepoCommand(charted));
+
+    if (hasValues(definition)) {
+      commands.push(buildWriteValuesCommand(definition));
+    }
+
+    commands.push(buildInstallCommand(charted));
   }
 
   // And what belongs with it but isn't in it

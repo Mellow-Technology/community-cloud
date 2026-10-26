@@ -1,0 +1,34 @@
+# Community Cloud's Headlamp plugins, one ConfigMap each.
+#
+# Built from headlamp/plugins/ in the repository and carried inside the
+# installer (bun run build:plugins, then bun run build:embedded), so
+# nothing has to be built on the cluster. The files are base64, as
+# binaryData, so a plugin's JavaScript reaches Headlamp exactly as it
+# was built; see installer/src/util/headlampPlugins.ts.
+#
+# The first one is always there, and says which plugins this is, so
+# this applies even when there are none.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-plugins
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  revision: {{ .Values.headlampPluginsRevision | quote }}
+  plugins: "{{ range .Values.headlampPlugins }}{{ .name }} {{ end }}"
+{{ range .Values.headlampPlugins }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-plugin-{{ .name }}
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+    app.kubernetes.io/part-of: headlamp
+binaryData:
+  main.js: {{ .main }}
+  package.json: {{ .packageJson }}
+{{ end }}

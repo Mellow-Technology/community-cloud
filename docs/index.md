@@ -151,7 +151,7 @@ k8s/
 ├── apps/                        # Application deployments
 │   ├── authentik/               # Authentik, installed by its plugin
 │   ├── documenso/               # Documenso document signing
-│   ├── headlamp/                # Headlamp cluster UI, behind an Authentik gate
+│   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
 │   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis and RabbitMQ
@@ -292,17 +292,22 @@ Chat, installed by the `mattermost` package through the Mattermost operator, on 
 
 #### Headlamp (`apps/headlamp/`)
 
-Cluster web UI, installed by the `headlamp` package (chart 0.46.0)
-behind an Authentik gate:
+Cluster web UI, installed by the `headlamp` package (chart 0.46.0).
+People sign in through Authentik over OpenID Connect, and Headlamp
+uses their token with the API server, which the package has trust
+Authentik:
 
 | File | Purpose |
 |---|---|
-| `Headlamp.values.yaml` | Helm values with `watchPlugins: true` |
-| `Headlamp.network.yaml` | ListenerSet on the cluster Gateway, and a route to its gate |
+| `Headlamp.values.yaml` | Helm values: OpenID Connect, the plugins mounted, no permissions of its own |
+| `Headlamp.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+| `Headlamp.plugins.yaml` | Community Cloud's plugins, a ConfigMap each |
+| `Headlamp.rbac.yaml` | cluster-admin for `oidc:<clusterAdminGroup>` |
+| `Headlamp.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
 
 `headlamp/plugins/` at the top of the repository holds Community
 Cloud's own Headlamp plugins, `cc-cumulus-theme` and
-`cc-storage-explorer`. They aren't deployed into the cluster yet.
+`cc-storage-explorer`, built and carried inside the installer.
 
 #### Picoclaw (`apps/picoclaw/`)
 

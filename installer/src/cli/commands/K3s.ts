@@ -32,6 +32,7 @@ import {
 import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SInstallationType } from "../../util/types.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
+import { buildApiServerOidcArgs } from "./ClusterSignIn.ts";
 
 // Where the install script comes from
 const K3S_INSTALL_URL = "https://get.k3s.io";
@@ -267,6 +268,10 @@ function buildInstallExec(config: CloudConfig, context: any): string {
   for (const component of excluded) {
     args.push(`--disable=${component}`);
   }
+
+  // Trusting Authentik to say who someone is, for Headlamp, which
+  // talks to the API as whoever signed in. See ClusterSignIn.ts.
+  args.push(...buildApiServerOidcArgs(config));
 
   return [...args, ...(extraServerArgs !== undefined ? extraServerArgs : [])].join(" ");
 }

@@ -3,9 +3,9 @@
  * A sign in in front of something that has none of its own.
  *
  * Some of what a cluster runs can sign people in through Authentik by
- * itself — Documenso speaks OpenID Connect. A
- * good deal can't: the web interfaces that come with infrastructure,
- * Headlamp among them, assume whoever reaches them is allowed to, and
+ * itself — Documenso and Headlamp speak OpenID Connect. A good deal
+ * can't: Picoclaw's console, and plenty of web interfaces that come
+ * with infrastructure, assume whoever reaches them is allowed to, and
  * put nothing in the way. For those the answer is a gate: oauth2-proxy
  * takes every request, sends anyone without a session to Authentik,
  * and passes the rest through to the real thing.
