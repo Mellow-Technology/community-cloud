@@ -59,6 +59,12 @@ the `ephemeral-storage` capacity advertised on the Node object, and an
 explanatory banner is shown. Stats are refreshed every 30 seconds
 (`REFRESH_INTERVAL_MS` in `src/lib/nodeStorage.ts`).
 
+In a Community Cloud cluster, Headlamp talks to the API server as whoever
+signed in, so this is decided per person. The `headlamp` package binds
+`cluster-admin`, which includes `nodes/proxy`, to the members of
+`clusterAdminGroup` (`authentik Admins` by default); anyone else sees the
+fallback view unless a role granting `nodes/proxy` is bound to them.
+
 TopoLVM logical volumes are read from the cluster-scoped `LogicalVolume` custom
 resource (`topolvm.io/v1`), which is the only place the node placement
 (`spec.nodeName`) and the on-disk size (`status.currentSize`) appear. A logical
@@ -109,6 +115,22 @@ The UI is built from Headlamp's own components (`SectionBox`, `Table`,
 rest of the interface and follows the active theme.
 
 ## Installing
+
+### In a Community Cloud cluster
+
+The installer carries this plugin and the `headlamp` package mounts it, so
+there is nothing to copy. After changing it, rebuild the installer's copy from
+`installer/`:
+
+```bash
+bun run build:plugins     # npm ci where needed, then npm run build, in each plugin
+bun run build:embedded
+```
+
+and re-run the `helm-charts` bundle with the new installer. Headlamp restarts
+when its plugins change.
+
+### Into desktop Headlamp
 
 Headlamp loads a plugin from a folder containing **both** `main.js` and
 `package.json` inside its plugins directory. Build and copy them with:

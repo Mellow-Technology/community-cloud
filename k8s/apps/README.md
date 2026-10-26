@@ -3,11 +3,12 @@
 The applications a Community Cloud instance runs. Most live in the
 `cc-office` namespace, created by `office/Office.namespace.yaml`.
 
-Each one is a package in the installer — `community-cloud run-bundle
-<name> <node> cc.config.json` installs it and what it needs on its
-own, and the `helm-charts` bundle installs every package the
-configuration enables. Authentik is the exception, and comes from a
-plugin.
+Each one is a package in the installer, and the `helm-charts` bundle
+installs every package the configuration enables. Most also have a
+bundle of their own — `community-cloud run-bundle <name> <node>
+cc.config.json` installs it and what it needs on its own. Headlamp
+has no bundle and is installed through `helm-charts`; Authentik comes
+from a plugin.
 
 Each application is split by what each piece is, so it can be read
 one at a time: `.database.yaml` for its database, `.storage.yaml` or
@@ -18,8 +19,11 @@ rendered against `cc.config.json`; to see one as the installer would
 apply it:
 
 ```bash
-community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json
+community-cloud run-template embed://apps/twenty/Twenty.yaml cc.config.json --dry-run --namespace cc-office
 ```
+
+Without `--dry-run`, `run-template` applies it. `--namespace` says
+whose mail settings to render `.Values.mail` with.
 
 ## The shared namespace (`office/`)
 
@@ -191,9 +195,15 @@ in `Mattermost.yaml`.
 [Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
 Install it with the `headlamp` package; it's reached at
 `values.domain.headlamp`. People sign in through Authentik, and
-Headlamp talks to the cluster as them: the package also has K3s's API
-server trust Authentik, so what someone can see is what RBAC gives
-`oidc:<their email>` and their `oidc:<group>`s.
+Headlamp talks to the cluster as them. When the package is enabled and
+`values.domain.auth` is set, the installer starts K3s's API server
+trusting Authentik as an OpenID Connect issuer for the client
+`headlamp` — a K3s flag, so on an existing cluster re-run the `k3s`
+bundle on the servers. What someone can see is then what RBAC gives
+`oidc:<their email>` and their `oidc:<group>`s; members of
+`values.clusterAdminGroup` (`authentik Admins` unless it's set) are
+cluster admins. Unlike the other applications' clients, Headlamp's
+client ID is fixed as `headlamp`, since the API server is told it.
 
 | File | What it is |
 |---|---|
@@ -205,8 +215,8 @@ server trust Authentik, so what someone can see is what RBAC gives
 
 The plugins are built from `headlamp/plugins/` at the top of the
 repository and carried inside the installer: `bun run build:plugins`,
-then `bun run build:embedded`. Headlamp is restarted when they
-change.
+then `bun run build:embedded`. Their ConfigMaps are applied before
+the chart, and Headlamp is restarted when they change.
 
 ## Picoclaw (`picoclaw/`)
 

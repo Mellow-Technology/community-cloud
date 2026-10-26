@@ -1,16 +1,23 @@
-# example-values.yaml — Community Cloud Kubernetes Manifests
+# values.example.yaml — the values the templates under k8s/ read
 #
-# Copy this file to values.yaml and replace the placeholder values
-# with your own configuration before deploying.
+# The real values come from cc.config.json: its "values" section, with
+# the rest of the configuration underneath and some values derived by
+# the installer. This file only shows their shape; nothing reads it.
+# See installer/README.md, under "values".
 #
-#   cp example-values.yaml values.yaml
-#   # edit values.yaml
-#   helm template community-cloud . -f values.yaml
+# To see a template rendered against a configuration, without applying
+# it:
+#
+#   community-cloud run-template embed://<path> cc.config.json --dry-run
 
 # -------------------------------------------------------------------
 # Administration
 # -------------------------------------------------------------------
 adminEmail: "admin@example.com"
+
+# The Authentik group whose members are cluster admins through Headlamp.
+# Defaults to "authentik Admins".
+clusterAdminGroup: "authentik Admins"
 
 # -------------------------------------------------------------------
 # Domains
@@ -36,7 +43,7 @@ domain:
   signing: "sign.example.com"
   # Plane hostname (derived: plane.<main>)
   plane: "plane.example.com"
-  # Headlamp, behind Authentik (derived: headlamp.<main>)
+  # Headlamp, signed into through Authentik (derived: headlamp.<main>)
   headlamp: "headlamp.example.com"
   # SeaweedFS's S3, for links to files in buckets (derived: s3.<main>)
   storage: "s3.example.com"

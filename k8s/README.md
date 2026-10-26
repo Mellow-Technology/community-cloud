@@ -8,14 +8,21 @@ Community Cloud configuration before being applied. `k8s/values.example.yaml`
 shows the shape those values take; the real ones come from
 `cc.config.json`. See the [installer README](../installer/README.md#configuration).
 
-Nothing here needs to be applied by hand: the installer applies each
-file as part of the bundle or package it belongs to. To see one as it
-would be applied, or what the installer carries:
+Almost nothing here needs to be applied by hand: the installer applies
+each file as part of the bundle or package it belongs to. The
+exceptions, which nothing applies yet, are `crd/`,
+`database/Postgres/PostGISCluster.yaml`, `ai/vLLM/` and
+`networking/tailscale/Tailscale.proxy.yaml`.
+
+To see one as it would be applied, or what the installer carries:
 
 ```bash
-community-cloud run-template embed://networking/cilium/gateway/Gateway.yaml cc.config.json
+community-cloud run-template embed://networking/cilium/gateway/Gateway.yaml cc.config.json --dry-run
 community-cloud list-embedded            # everything the installer carries
 ```
+
+Leave out `--dry-run` and `run-template` applies the file, with
+whatever kubeconfig this machine has.
 
 The whole directory is compiled into the installer binary, so a
 released executable can apply any of it on a machine that has never
@@ -47,14 +54,16 @@ k8s/
 ├── certs/             # cert-manager and the cluster's issuer
 ├── crd/               # Community Cloud's own custom resources
 ├── database/Postgres/ # CloudNativePG clusters
-├── mq/                # Message queues: the RabbitMQ operators
+├── k3s-config/        # Placeholder: the installer generates K3s's configuration
+├── mq/                # Message queues: the RabbitMQ operators, and a placeholder for NATS
 ├── networking/        # CNI, the Gateway API, the mesh
 │   ├── cilium/        # Cilium, and gateway/ with the cluster Gateway
 │   └── tailscale/
-└── storage/           # Local and object storage
-    ├── SeaweedFS/
-    ├── StorageClass/
-    └── TopoLVM/
+├── storage/           # Local and object storage
+│   ├── SeaweedFS/
+│   ├── StorageClass/
+│   └── TopoLVM/
+└── values.example.yaml # The shape of the values templates read
 ```
 
 ## Networking (`networking/`)
@@ -63,7 +72,7 @@ k8s/
 |---|---|
 | `cilium/Cilium.values.yaml` | Cilium's Helm values. The CNI, the kube-proxy replacement, the Gateway API implementation and the load balancer IP management all come from here. |
 | `cilium/gateway/Gateway.yaml` | The cluster's Gateway, `cc-letsencrypt-web-gateway`, served by Cilium's Envoy, and its namespace. Made by the `gateway` bundle. Uses `allowedListeners` so only namespaces labelled `whereWereGoing=weDontNeedRoads` may attach listeners. |
-| `tailscale/Tailscale.proxy.yaml` | A Tailscale proxy, for reaching a cluster across networks. |
+| `tailscale/Tailscale.proxy.yaml` | A Tailscale ingress ProxyGroup, for reaching cluster services over a tailnet. Needs the `tailscale-operator` package, and is applied by hand. |
 
 Cilium replaces a good deal of what K3s ships with. The installer
 starts K3s with `--disable=traefik --disable=servicelb`, installs the
@@ -71,11 +80,9 @@ Gateway API resources itself at a pinned version, and then installs
 Cilium — in that order, because Cilium's operator builds its Gateway
 API controller once at startup from whatever it finds then.
 
-## Gateway (`gateway/`)
-
-| File | What it is |
-|---|---|
-| `Gateway.yaml` | The default Gateway for applications, with the Let's Encrypt listeners. |
+The Gateway itself has only a placeholder listener, since a Gateway has
+to have one. Each application brings its own HTTPS listeners, and their
+Let's Encrypt certificates, in a ListenerSet attached to it.
 
 ## Certificates (`certs/`)
 
@@ -105,14 +112,16 @@ See [apps/README.md](./apps/README.md).
 
 | File | What it is |
 |---|---|
-| `sites.crd.yaml` | A `Site`: a physical location and what runs there. |
+| `sites.crd.yaml` | Meant to become a `Site`, a physical location and what runs there. Currently a copy of the WebApp CRD. |
 | `webapps.crd.yaml` | A `WebApp`: an application with a domain, an image and storage. |
+
+Nothing applies these yet, and nothing reconciles them.
 
 ## Databases (`database/`)
 
 | File | What it is |
 |---|---|
-| `Postgres/PostGISCluster.yaml` | A CloudNativePG cluster with PostGIS. |
+| `Postgres/PostGISCluster.yaml` | A CloudNativePG cluster with PostGIS, in `default`. Applied by hand; the applications' `cc-postgres` is in `apps/office/`. |
 
 CloudNativePG is used for every Postgres in the cluster, including the
 ones charts would otherwise bundle themselves. One way of running
@@ -125,9 +134,9 @@ Postgres is easier to back up, upgrade and reason about than four.
 | `vLLM/vllm-amd.yaml` | vLLM on AMD GPUs, via ROCm. |
 | `vLLM/vllm-amd-pvc.yaml` | Its model storage. |
 
-Scheduled onto nodes labelled `node-role.kubernetes.io/worker-gpu`,
-which the installer applies automatically to any node it finds a
-compute-capable GPU on.
+Applied by hand, into `default`. It doesn't select a node yet; the
+installer labels any node it finds a compute-capable GPU on
+`node-role.kubernetes.io/worker-gpu`, which is what it should select.
 
 ## Applying in order
 
@@ -140,6 +149,8 @@ Some of this depends on the rest of it. Broadly:
 5. **CloudNativePG**, before anything expects a database
 6. **Applications**
 
-The installer works most of this out: `community-cloud run-bundle
-helm-charts <node> cc.config.json` installs the configured charts in
-dependency order.
+`community-cloud install` does all of it in this order: the `cilium`
+bundle installs the Gateway API resources and then Cilium, the
+`gateway` bundle makes the Gateway, and `helm-charts` installs every
+configured package — cert-manager, TopoLVM, CloudNativePG, the
+applications — in dependency order.

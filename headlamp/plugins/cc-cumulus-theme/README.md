@@ -96,6 +96,11 @@ requests, and the theme would quietly fall back.
 
 ## Building and installing
 
+In a Community Cloud cluster the installer carries this plugin and the
+`headlamp` package mounts it; see
+[`../cc-storage-explorer/README.md`](../cc-storage-explorer/README.md#in-a-community-cloud-cluster)
+for rebuilding the installer's copy. For desktop Headlamp:
+
 ```bash
 npm install && npm run build && npm run deploy:local
 ```
@@ -132,12 +137,12 @@ and three passes over every pixel of a full-window background.
 The two knobs are `SIDE` and `STROKE` in that file. Below about 0.03 alpha the
 lattice stops registering; above about 0.06 it starts competing with the content.
 
-Tables and tiles sit over it behind a `backdrop-filter: blur(12px)`, with a one
+Tables and tiles sit over it behind a `backdrop-filter: blur(8px)`, with a one
 pixel inset highlight along their top edge.
 
 That blur comes with a catch worth understanding before touching any of these
 values. A blur spreads a line over its own diameter, so a one pixel lattice line
-under a twelve pixel blur keeps roughly a twentieth of its contrast — which of
+under an eight pixel blur keeps roughly a sixteenth of its contrast — which of
 4.5% white is nothing. The lattice showing through is the only thing that made a
 panel read as translucent, so blurring it leaves a panel that looks painted on.
 Measured: 3px of blur is already enough to erase it.

@@ -146,8 +146,8 @@ resources in its own namespace:
   write it into a Secret beside it, under `accessKey` and
   `secretKey`.
 
-`k8s/apps/lago/Lago.bucket.yaml` is the example, and Twenty's and
-Authentik's `*.storage.yaml` are the same shape. The package lists
+`k8s/apps/lago/Lago.bucket.yaml` is the example, and Twenty's,
+Mattermost's and Authentik's `*.storage.yaml` are the same shape. The package lists
 the bucket and the credentials under `ready`, so the install waits for
 the operator to finish before it waits for the application.
 
@@ -206,7 +206,10 @@ The manifests read these back as `.Values.databaseVolumeSize` and
 `.Values.objectStorageVolumeSize`. The classes allow expansion, so a
 size can be raised and the claim grows to match on the next install.
 A size can't be lowered. The sum has to fit on the storage nodes,
-along with the 6 GiB SeaweedFS's master and filer claim. A
+along with the fixed claims on `cc-local-ssd-fast`: the 6 GiB
+SeaweedFS's master and filer claim, Redis's 5 GiB, RabbitMQ's 5 GiB
+with the `rabbitmq-operator` package, and Picoclaw's 10 GiB with
+`picoclaw`. A
 claim bigger than the volume group behind it doesn't fail. It waits,
 with its pod stuck in Pending.
 

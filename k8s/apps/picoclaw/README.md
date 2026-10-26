@@ -1,6 +1,6 @@
 # Picoclaw
 
-Community Cloud comes with Picoclaw to enable an AI chatbot interface. This is designed to integrate automatically with available MCP servers.
+Community Cloud comes with Picoclaw to enable an AI chatbot interface. It can use MCP servers: Twenty's is configured, switched off, and is turned on from the console. Discovering servers by itself is off too.
 
 We're currently working towards full cluster control via Chatbot. In particular, understanding issues at the cluster level and being able to correlate various types of data.
 

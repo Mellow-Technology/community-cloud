@@ -414,7 +414,7 @@
             },
             "headlamp": {
               "type": "string",
-              "description": "Headlamp, behind its Authentik gate."
+              "description": "Headlamp, signed into through Authentik."
             },
             "plane": {
               "type": "string",
