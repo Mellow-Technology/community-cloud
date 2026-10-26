@@ -1,0 +1,46 @@
+# The RabbitMQ the applications in cc-office share, run by the RabbitMQ
+# Cluster Operator from the rabbitmq-operator package.
+#
+# One node to start with. Each application gets a vhost of its own and
+# a user that can only use that vhost, as Vhost, User and Permission
+# resources in its own manifests, which the Messaging Topology
+# Operator carries out; the operator generates the user's credentials
+# into "<user>-user-credentials" beside them. See
+# k8s/apps/plane/Plane.queue.yaml. This cluster's own default user is
+# the operator's, in "rabbitmq-default-user", and nothing else uses it.
+#
+# Reached as "rabbitmq" on 5672.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbitmq
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+
+  # Its queues are on local SSD, through TopoLVM, as the databases are;
+  # the claim pins it to the node it was first made on
+  persistence:
+    storageClassName: cc-local-ssd-fast
+    storage: 5Gi
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node-role.kubernetes.io/storage-local
+                operator: In
+                values: ["storage-local"]
+
+  # Well below the operator's default of a whole core and 2 GiB, which
+  # is a lot to set aside for the queues of a few office applications.
+  # RabbitMQ sizes its memory high-water mark from the limit.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

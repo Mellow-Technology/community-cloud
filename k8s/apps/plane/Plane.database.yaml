@@ -1,0 +1,35 @@
+# Plane's role and database, in the shared cc-postgres cluster.
+#
+# The role is here rather than in office/Office.roles.yaml, so that
+# installing Plane on its own brings everything it connects with, as
+# Lago and Documenso do. Its password is the plane-db Secret the
+# installer makes for the plane package.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  name: plane
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Plane
+  passwordSecret:
+    name: plane-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: plane
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  name: plane
+  owner: plane
+  cluster:
+    name: cc-postgres

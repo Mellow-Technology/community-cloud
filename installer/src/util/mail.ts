@@ -109,7 +109,9 @@ export interface MailConfig {
  * Every field is always there, mail or no mail, so a template can
  * test "enabled" and otherwise refer to anything without rendering a
  * hole. The flags are strings because they go into environment
- * variables, which are strings, and every application reads "true".
+ * variables, which are strings. Most applications read "true"; the
+ * ones that want "1" have the "Bit" forms, since a template can't
+ * compare one string with another to turn one into the other.
  *
  * - enabled: whether the namespace was given mail at all
  * - host, port: where it goes
@@ -118,6 +120,8 @@ export interface MailConfig {
  * - startTls: "true" when the connection is upgraded — Authentik's
  *   "use_tls", and Rails' "enable_starttls_auto"
  * - ignoreTls: "true" when TLS isn't to be attempted at all
+ * - implicitTlsBit, startTlsBit: the same two as "1" or "0", which is
+ *   how Django's EMAIL_USE_SSL and EMAIL_USE_TLS are given to Plane
  * - scheme: "smtps" or "smtp", which is how Symfony's mailer, and so
  *   Laravel's, says the same thing
  * - fromDomain: where mail comes from
@@ -135,6 +139,8 @@ export interface MailValues {
   implicitTls: string;
   startTls: string;
   ignoreTls: string;
+  implicitTlsBit: string;
+  startTlsBit: string;
   scheme: string;
   fromDomain: string;
   revision: string;
@@ -243,6 +249,8 @@ export function buildMailValues(raw: Record<string, any>, namespace?: string): M
       implicitTls: "false",
       startTls: "false",
       ignoreTls: "false",
+      implicitTlsBit: "0",
+      startTlsBit: "0",
       scheme: "smtp",
       fromDomain: mainDomain,
       revision: "none",
@@ -260,6 +268,8 @@ export function buildMailValues(raw: Record<string, any>, namespace?: string): M
     implicitTls: String(security === MailSecurity.Tls),
     startTls: String(security === MailSecurity.StartTls),
     ignoreTls: String(security === MailSecurity.None),
+    implicitTlsBit: security === MailSecurity.Tls ? "1" : "0",
+    startTlsBit: security === MailSecurity.StartTls ? "1" : "0",
     scheme: security === MailSecurity.Tls ? "smtps" : "smtp",
     fromDomain,
     revision: createHash("sha256")

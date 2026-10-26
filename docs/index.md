@@ -98,7 +98,7 @@ cluster in service.
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
-| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw` | One application on its own, into a cluster that has the rest |
+| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -154,8 +154,9 @@ k8s/
 │   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
-│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis
+│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis and RabbitMQ
 │   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
+│   ├── plane/                   # Plane projects, on cc-postgres, Redis, RabbitMQ and SeaweedFS
 │   ├── twenty/                  # Twenty CRM
 │   └── README.md
 ├── certs/
@@ -167,7 +168,9 @@ k8s/
 ├── database/Postgres/
 │   └── PostGISCluster.yaml      # PostGIS cluster (30Gi)
 ├── k3s-config/README.md         # K3s node config notes
-├── mq/nats/README.md            # NATS (prepared)
+├── mq/
+│   ├── RabbitMQ/                # The RabbitMQ operators, vendored at pinned versions
+│   └── nats/README.md           # NATS (prepared)
 ├── networking/
 │   ├── cilium/
 │   │   ├── Cilium.values.yaml   # Cilium Helm values
@@ -226,6 +229,23 @@ Authentication provider, installed by the Authentik plugin (chart
 | `Authentik.database.yaml` | CloudNative-PG `Database` CRD |
 | `Authentik.storage.yaml` | Its SeaweedFS bucket (20 Gi quota), user and keys |
 | `Authentik.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
+
+#### Plane (`apps/plane/`)
+
+Projects, issues and docs. The `plane` package or bundle installs it,
+and `cloudnative-pg`, `redis-operator`, `rabbitmq-operator` and
+`seaweedfs` with it. Its free edition has no OpenID Connect, so it
+keeps its own accounts, with sign up off and its first administrator
+made by the install:
+
+| File | Purpose |
+|---|---|
+| `Plane.yaml` | API (migrations and the first administrator in init containers), worker, scheduler (`Recreate`), live server, and the web, space and admin apps |
+| `Plane.database.yaml` | Its role and database in cc-postgres |
+| `Plane.queue.yaml` | Its vhost, user and permission in the shared RabbitMQ |
+| `Plane.bucket.yaml` | Its SeaweedFS bucket, `uploads`, user and keys |
+| `Plane.config.yaml` | Its settings, the live server's, and the script that makes its first administrator |
+| `Plane.network.yaml` | ListenerSet on the cluster Gateway, routes by path, `/uploads` to SeaweedFS and the ReferenceGrant allowing it |
 
 #### Lago (`apps/lago/`)
 

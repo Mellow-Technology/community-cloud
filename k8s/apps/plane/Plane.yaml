@@ -1,0 +1,827 @@
+# Plane
+#
+# Its API, the worker that runs its jobs and the scheduler that queues
+# the recurring ones, all from its backend image; the live server that
+# keeps documents in step between people editing them; and its three
+# web apps — the main one, the public "spaces" pages, and the instance
+# admin at /god-mode/ — each a server of its own. All on one hostname,
+# divided by path; see Plane.network.yaml.
+#
+# The API runs the migrations, in an init container, and then claims
+# the instance for its administrator. The worker and the scheduler
+# wait for the migrations themselves. The scheduler is replaced rather
+# than rolled, since two would queue every recurring job twice.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-api
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-live
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: live
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-web
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-space
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: space
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-admin
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: admin
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-api
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: api
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: api
+        app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      initContainers:
+        # Its migrations, so nothing starts against a database it
+        # doesn't match. The worker and the scheduler wait for these
+        # themselves, as their own entrypoints do.
+        - name: migrate
+          image: artifacts.plane.so/makeplane/plane-backend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          command: ["./bin/docker-entrypoint-migrator.sh"]
+          envFrom:
+            - configMapRef:
+                name: plane
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: password
+            # The generated passwords are words and hyphens, and the
+            # queue's are URL safe base64, so they go into URLs as they are
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/plane"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            # A database of the shared Redis of its own
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+            - name: MQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: username
+            - name: MQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: password
+            - name: AMQP_URL
+              value: "amqp://$(MQ_USER):$(MQ_PASS)@rabbitmq:5672/plane"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-secret-key
+                  key: password
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: accessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_HOST_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+        # Its instance, then its first administrator; see
+        # Plane.config.yaml for why the install makes one
+        - name: claim
+          image: artifacts.plane.so/makeplane/plane-backend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              python manage.py register_instance "$(hostname | sha256sum | cut -d ' ' -f 1)"
+              python manage.py shell < /claim/claim.py
+          envFrom:
+            - configMapRef:
+                name: plane
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: password
+            # The generated passwords are words and hyphens, and the
+            # queue's are URL safe base64, so they go into URLs as they are
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/plane"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            # A database of the shared Redis of its own
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+            - name: MQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: username
+            - name: MQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: password
+            - name: AMQP_URL
+              value: "amqp://$(MQ_USER):$(MQ_PASS)@rabbitmq:5672/plane"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-secret-key
+                  key: password
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: accessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_HOST_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+            - name: PLANE_ADMIN_EMAIL
+              value: {{ .Values.adminEmail | quote }}
+            # Only read when the administrator is made. After that it's
+            # in the database, and this is where to find what it was
+            # set to.
+            - name: PLANE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: plane-admin
+                  key: password
+            - name: PLANE_INSTANCE_NAME
+              value: "Community Cloud"
+          volumeMounts:
+            - name: claim
+              mountPath: /claim
+              readOnly: true
+      containers:
+        - name: api
+          image: artifacts.plane.so/makeplane/plane-backend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          command: ["./bin/docker-entrypoint-api.sh"]
+          envFrom:
+            - configMapRef:
+                name: plane
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: password
+            # The generated passwords are words and hyphens, and the
+            # queue's are URL safe base64, so they go into URLs as they are
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/plane"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            # A database of the shared Redis of its own
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+            - name: MQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: username
+            - name: MQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: password
+            - name: AMQP_URL
+              value: "amqp://$(MQ_USER):$(MQ_PASS)@rabbitmq:5672/plane"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-secret-key
+                  key: password
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: accessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_HOST_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8000
+          # Its entrypoint registers and configures the instance before
+          # it listens
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: 250m
+      volumes:
+        - name: claim
+          configMap:
+            name: plane-claim
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-worker
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: worker
+        app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: worker
+          image: artifacts.plane.so/makeplane/plane-backend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          command: ["./bin/docker-entrypoint-worker.sh"]
+          envFrom:
+            - configMapRef:
+                name: plane
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: password
+            # The generated passwords are words and hyphens, and the
+            # queue's are URL safe base64, so they go into URLs as they are
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/plane"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            # A database of the shared Redis of its own
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+            - name: MQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: username
+            - name: MQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: password
+            - name: AMQP_URL
+              value: "amqp://$(MQ_USER):$(MQ_PASS)@rabbitmq:5672/plane"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-secret-key
+                  key: password
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: accessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_HOST_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: 100m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-beat
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: plane
+      role: beat
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: beat
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: beat
+          image: artifacts.plane.so/makeplane/plane-backend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          command: ["./bin/docker-entrypoint-beat.sh"]
+          envFrom:
+            - configMapRef:
+                name: plane
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-db
+                  key: password
+            # The generated passwords are words and hyphens, and the
+            # queue's are URL safe base64, so they go into URLs as they are
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/plane"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            # A database of the shared Redis of its own
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+            - name: MQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: username
+            - name: MQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: plane-user-credentials
+                  key: password
+            - name: AMQP_URL
+              value: "amqp://$(MQ_USER):$(MQ_PASS)@rabbitmq:5672/plane"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-secret-key
+                  key: password
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: accessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-s3
+                  key: secretKey
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: EMAIL_HOST_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: EMAIL_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: 50m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-live
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: live
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: live
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: live
+          image: artifacts.plane.so/makeplane/plane-live:v1.4.2
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: plane-live
+          env:
+            - name: LIVE_SERVER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plane-live-secret-key
+                  key: password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/3"
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /live/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /live/health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: 50m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-web
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: web
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: web
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: web
+          image: artifacts.plane.so/makeplane/plane-frontend:v1.4.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: 50m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-space
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: space
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: space
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: space
+          image: artifacts.plane.so/makeplane/plane-space:v1.4.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /spaces/
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /spaces/
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: 50m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-admin
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: admin
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: admin
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: admin
+          image: artifacts.plane.so/makeplane/plane-admin:v1.4.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /god-mode/
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /god-mode/
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: 50m
