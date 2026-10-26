@@ -162,6 +162,43 @@ export class Fleet {
 }
 
 /**
+ * What to call each node when talking to a person.
+ *
+ * A node's "name" is how it's referred to everywhere — on the command
+ * line, in the pipeline, as the key its findings are kept under — so it
+ * tends to be something short and easy to type. "displayName" is what
+ * it's printed as, when one is set: "Mamoru (Bangkok)" rather than
+ * "mamoru-bkk". Only what's printed changes. Anything a node is
+ * looked up by stays its name.
+ *
+ * @param config
+ * @returns node name to what to print, for every node that has one
+ */
+export function getDisplayNames(config: CloudConfig): Map<string, string> {
+  const nodes = config.getConfig().nodes;
+  const names = new Map<string, string>();
+
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    if (typeof node?.displayName === "string" && node.displayName.trim() !== "") {
+      names.set(node.name, node.displayName.trim());
+    }
+  }
+
+  return names;
+}
+
+/**
+ * What to print for one node.
+ *
+ * @param names from getDisplayNames
+ * @param name
+ * @returns its display name, or its name when it has none
+ */
+export function displayNode(names: Map<string, string>, name: string): string {
+  return names.get(name) ?? name;
+}
+
+/**
  * Whether a node's configuration says it runs a server.
  *
  * @param node
@@ -338,6 +375,7 @@ export function describeFleetFailures(
   failures: FleetFailure[],
   names: string[],
   what: string,
+  displayNames: Map<string, string> = new Map(),
 ): string {
   const unreachable = failures.filter((failure) => failure.kind === "unreachable");
 
@@ -349,7 +387,7 @@ export function describeFleetFailures(
         : "This configuration doesn't describe the cluster it says it does";
 
   return `${headline}, so nothing was ${what}:\n${failures
-    .map((failure) => `  ${failure.name}: ${failure.why}`)
+    .map((failure) => `  ${displayNode(displayNames, failure.name)}: ${failure.why}`)
     .join("\n")}`;
 }
 

@@ -17,13 +17,19 @@
  * whether or not anyone remembered to ask for it.
  */
 import CloudConfig from "../../util/CloudConfig.ts";
+import { MailSecurity } from "../../util/mail.ts";
 import { SecretDefinition } from "./Secrets.ts";
+import type { AuthentikClient } from "./Authentik.ts";
+import type { GateDefinition } from "./OAuth2Proxy.ts";
 
 /**
  * Something that can be installed.
  *
  * - chart: where the chart comes from. "repo" is the Helm repository
- *   URL and "name" the chart within it.
+ *   URL and "name" the chart within it. Left out for an application
+ *   that has no chart worth using, which is then nothing but its
+ *   manifests — "before" and "after" still run in that order, with
+ *   the credentials between them.
  * - version: the chart version. Left unset, Helm takes the newest one,
  *   which makes an install depend on the day it was run — worth
  *   pinning once a cluster is real.
@@ -32,6 +38,11 @@ import { SecretDefinition } from "./Secrets.ts";
  *   with the installer or a plain path for one on this machine.
  *   Rendered as a template first, so it can refer to the
  *   configuration through ".Values".
+ * - valuesSource: values built in code rather than read from a file,
+ *   for a package made from the configuration rather than written
+ *   down — one ExternalDNS per provider and namespace, say, where the
+ *   values are the only thing that differs. Takes the place of
+ *   "valuesFile".
  * - requires: packages that have to be installed before this one.
  *   Pulled in automatically when this package is enabled.
  * - manifests: manifests belonging to this package that aren't part of
@@ -44,18 +55,63 @@ import { SecretDefinition } from "./Secrets.ts";
  *   chart and the "after" manifests, so a manifest naming one finds it
  *   already there. Created once and then left alone, so re-running an
  *   install doesn't change the password half the cluster is using.
+ * - after: packages that, when they're being installed too, have to
+ *   go first — without being pulled in when they aren't. For a
+ *   dependency on something that may have been installed some other
+ *   way: Authentik comes from a plugin, or by hand, and an
+ *   application that signs in through it can't require a package the
+ *   catalogue may never have heard of.
+ * - rollout: the workloads that have to come up before the package
+ *   counts as installed, as "deployment/name" or "statefulset/name".
+ *   A chart is checked through Helm; this is how a package without
+ *   one is.
+ * - ready: what the package asks an operator for that isn't a
+ *   workload — a SeaweedFS cluster, a bucket, the keys to it — as
+ *   "resource/name", with the group spelled out so the name can't
+ *   be mistaken for another project's. Waited for until the operator
+ *   marks it Ready, ahead of the rollout, since the workloads are
+ *   what use it.
+ * - values: the configuration values its templates can't do without,
+ *   as paths under "values". A template renders a missing value as
+ *   nothing at all, which for a hostname is a route that matches no
+ *   request and a certificate for no name — so preflight looks for
+ *   these before anything is installed.
+ * - authentik: the single sign on client the package signs in with.
+ *   "blueprint" is an Authentik blueprint describing the provider and
+ *   the application, and "secret" the credentials it's given — see
+ *   Authentik.ts.
+ * - mail: whether it sends email. If the configuration has a mail
+ *   server, its credentials are put in the package's namespace, as
+ *   the Secret "cc-smtp", before its manifests are applied — see
+ *   Mail.ts. Its templates read the rest from ".Values.mail".
+ * - mailSecurity: the kinds of connection it can make to a mail
+ *   server, when it can't make them all. Preflight says so when its
+ *   namespace's server wants one it can't.
+ * - gate: an oauth2-proxy in front of the package, for something with
+ *   no sign in of its own — see OAuth2Proxy.ts. Its Deployment, its
+ *   credentials and its client in Authentik are all made from this;
+ *   the package's own route has to point at it.
  */
 export interface PackageDefinition {
   name: string;
   description: string;
-  chart: { repo: string; name: string };
+  chart?: { repo: string; name: string };
   version?: string;
   namespace: string;
   releaseName?: string;
   valuesFile?: string;
+  valuesSource?: (config: CloudConfig, context: any) => string;
   requires?: string[];
+  after?: string[];
   manifests?: { before?: string[]; after?: string[] };
   secrets?: SecretDefinition[];
+  rollout?: string[];
+  ready?: string[];
+  values?: string[];
+  authentik?: AuthentikClient;
+  mail?: boolean;
+  mailSecurity?: MailSecurity[];
+  gate?: GateDefinition;
 
   // Which plugin contributed this, when one did
   plugin?: string;
@@ -109,6 +165,15 @@ const builtInPackages: PackageDefinition[] = [
     version: "v1.21.2",
     namespace: "cert-manager",
     valuesFile: "embed://certs/CertManager.values.yaml",
+
+    // The issuer every application's certificate comes from. Its
+    // resource type arrives with the chart.
+    manifests: {
+      after: ["embed://certs/ClusterIssuer.yaml"],
+    },
+
+    // Let's Encrypt's account is in the admin's name
+    values: ["adminEmail"],
   },
   {
     name: "cloudnative-pg",
@@ -181,6 +246,357 @@ const builtInPackages: PackageDefinition[] = [
     ],
   },
   {
+    name: "documenso",
+    description: "Document signing, signed into through Authentik",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, and so are the documents:
+    // Documenso keeps uploads in the database by default, which needs
+    // no volume and no bucket, and means cc-postgres's backups are
+    // its backups
+    requires: ["cloudnative-pg"],
+    after: ["authentik"],
+
+    // No chart from the project; the image is one process
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for. A cluster whose CloudNativePG went in before that label
+      // was added has a cc-office without it, and a ListenerSet there
+      // is refused. Applying it is otherwise a no-op.
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/documenso/Documenso.database.yaml",
+        "embed://apps/documenso/Documenso.config.yaml",
+        "embed://apps/documenso/Documenso.yaml",
+        "embed://apps/documenso/Documenso.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres. Declared here rather than with the
+      // roles in Office.roles.yaml, unlike the applications that came
+      // before it, because this can be installed on its own into a
+      // cluster whose CloudNativePG went in long ago — and that
+      // install has to bring its own role, or Documenso has nothing to
+      // connect as. The username and label are as Office.roles.yaml
+      // explains.
+      {
+        name: "documenso-db",
+        description: "the Documenso database role",
+        username: "documenso",
+        labels: { "cnpg.io/reload": "true" },
+      },
+
+      // Documenso wants each of these to be at least 32 characters.
+      // The two encryption keys protect what it stores — losing them
+      // loses that — which is the other reason they're made once.
+      {
+        name: "documenso-session",
+        description: "the key Documenso signs sessions with",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-encryption",
+        description: "the key Documenso encrypts what it stores with",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-encryption-secondary",
+        description: "Documenso's second encryption key, for rotating the first",
+        keyBytes: 32,
+      },
+      {
+        name: "documenso-oidc",
+        description: "the client Documenso signs in to Authentik as",
+      },
+
+      // What it signs completed documents with. Self-signed, so a PDF
+      // reader shows the signature as valid but not from anyone it
+      // already trusts; a certificate from a trusted authority can be
+      // put in this Secret in its place, keeping the same two keys.
+      {
+        name: "documenso-signing",
+        description: "the certificate Documenso signs completed documents with",
+        certificate: { commonName: "Community Cloud Documenso", days: 3650 },
+      },
+    ],
+
+    rollout: ["deployment/documenso"],
+    mail: true,
+    values: ["domain.signing", "domain.auth", "domain.main"],
+
+    authentik: {
+      blueprint: "embed://apps/documenso/Documenso.blueprint.yaml",
+      secret: "documenso-oidc",
+      slug: "documenso",
+    },
+  },
+  {
+    name: "redis-operator",
+    description: "The Redis operator, and the one Redis the applications in cc-office share",
+    chart: { repo: "https://ot-container-kit.github.io/helm-charts/", name: "redis-operator" },
+    namespace: "redis-operator",
+
+    // The Redis asks for "cc-local-ssd-fast", as the databases do
+    requires: ["topolvm"],
+
+    manifests: {
+      // The operator has a namespace of its own; the Redis is in
+      // cc-office, with the applications using it, and its password
+      // has to have somewhere to go before it does
+      before: ["embed://apps/office/Office.namespace.yaml"],
+      after: ["embed://apps/office/RedisStandalone.yaml"],
+    },
+
+    // Every application in cc-office reaches the one Redis, and so
+    // does anything else that gets into the namespace. A password
+    // keeps that to the ones handed it.
+    secrets: [
+      {
+        name: "cc-redis",
+        description: "the password for the Redis in cc-office",
+        namespace: "cc-office",
+      },
+    ],
+  },
+  {
+    name: "lago",
+    description: "Billing: plans, subscriptions, usage and invoices",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, its queues in the shared Redis,
+    // and its files in a bucket in SeaweedFS
+    requires: ["cloudnative-pg", "redis-operator", "seaweedfs"],
+
+    // No chart: the manifests that put it on the cluster's Postgres,
+    // Redis and SeaweedFS are ours
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/lago/Lago.database.yaml",
+        "embed://apps/lago/Lago.bucket.yaml",
+        "embed://apps/lago/Lago.config.yaml",
+        "embed://apps/lago/Lago.pdf.yaml",
+        "embed://apps/lago/Lago.yaml",
+        "embed://apps/lago/Lago.front.yaml",
+        "embed://apps/lago/Lago.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres, brought with it as Documenso's is
+      {
+        name: "lago-db",
+        description: "the Lago database role",
+        username: "lago",
+        labels: { "cnpg.io/reload": "true" },
+      },
+
+      // Rails signs cookies with the first, and Active Record encrypts
+      // stored credentials — payment providers' keys among them — with
+      // the other three. Losing those loses what they encrypted, which
+      // is the other reason they're made once.
+      {
+        name: "lago-secret-key-base",
+        description: "the key Lago signs cookies with",
+        keyBytes: 64,
+      },
+      {
+        name: "lago-encryption-primary",
+        description: "the key Lago encrypts what it stores with",
+        keyBytes: 32,
+      },
+      {
+        name: "lago-encryption-deterministic",
+        description: "the key Lago encrypts what it searches by with",
+        keyBytes: 32,
+      },
+      {
+        name: "lago-encryption-salt",
+        description: "the salt Lago derives its encryption keys with",
+        keyBytes: 32,
+      },
+
+      // What it signs sessions with. Replacing it signs everybody out.
+      {
+        name: "lago-rsa",
+        description: "the key Lago signs sessions with",
+        privateKey: { bits: 2048 },
+      },
+
+      // The first account, made on first start, with the cluster's
+      // admin address
+      {
+        name: "lago-admin",
+        description: "the first Lago account's password",
+      },
+    ],
+
+    // The Redis first: the operator makes it, so nothing about
+    // installing the operator waited for it
+    rollout: [
+      "statefulset/redis",
+      "deployment/lago-pdf",
+      "deployment/lago",
+      "deployment/lago-worker",
+      "deployment/lago-clock",
+      "deployment/lago-front",
+    ],
+
+    // Its bucket, and the keys to it the API and worker are given.
+    // With the group spelled out, since "bucket" alone is a name more
+    // than one project's resources answer to.
+    ready: ["buckets.seaweed.seaweedfs.com/lago", "s3credentials.seaweed.seaweedfs.com/lago"],
+    mail: true,
+
+    // Rails is only given STARTTLS, and has no way to be told to
+    // start with TLS. With a server that expects it, mail would hang.
+    mailSecurity: [MailSecurity.StartTls, MailSecurity.None],
+
+    values: ["domain.billing", "domain.billingApi", "domain.main", "adminEmail"],
+  },
+  {
+    name: "twenty",
+    description: "A CRM",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, with the role CloudNativePG's
+    // package makes, its queues in the shared Redis, and its files in
+    // a bucket in SeaweedFS
+    requires: ["cloudnative-pg", "redis-operator", "seaweedfs"],
+
+    // No chart: the project's runs its own database and Redis
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/twenty/Twenty.database.yaml",
+        "embed://apps/twenty/Twenty.storage.yaml",
+        "embed://apps/twenty/Twenty.config.yaml",
+        "embed://apps/twenty/Twenty.yaml",
+        "embed://apps/twenty/Twenty.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // What it signs tokens with, and, with no separate key set, what
+      // it encrypts stored credentials with. Losing it loses those.
+      {
+        name: "twenty-crm-app-secret",
+        description: "the key Twenty signs and encrypts with",
+        keyBytes: 32,
+      },
+    ],
+
+    // The Redis first, as for Lago, then its bucket, then its own
+    ready: ["buckets.seaweed.seaweedfs.com/twenty-crm", "s3credentials.seaweed.seaweedfs.com/twenty-crm"],
+    rollout: ["statefulset/redis", "deployment/twenty-crm", "deployment/twenty-crm-worker"],
+
+    // Twenty starts with TLS only on port 465, and upgrades with
+    // STARTTLS anywhere else, so every kind of server works on its
+    // usual port
+    mail: true,
+
+    values: ["domain.crm"],
+  },
+  {
+    name: "mattermost",
+    description: "Team chat",
+    chart: { repo: "https://helm.mattermost.com", name: "mattermost-operator" },
+    // Pinned, so the operator and the version of Mattermost.yaml it
+    // understands move together
+    version: "1.0.5",
+    namespace: "cc-office",
+    releaseName: "mattermost-operator",
+    valuesFile: "embed://apps/mattermost/Mattermost.values.yaml",
+
+    // Its database is in cc-postgres, with the role CloudNativePG's
+    // package makes, and its files in a bucket in SeaweedFS
+    requires: ["cloudnative-pg", "seaweedfs"],
+
+    // The chart is the operator. The installation it runs, and what
+    // that needs, are ours.
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/mattermost/Mattermost.database.yaml",
+        "embed://apps/mattermost/Mattermost.storage.yaml",
+        "embed://apps/mattermost/Mattermost.yaml",
+        "embed://apps/mattermost/Mattermost.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // The operator takes a database as one whole connection string,
+      // so it's built from the role's credentials rather than made up
+      {
+        name: "mattermost-db",
+        description: "how Mattermost connects to its database",
+        connectionString: { role: "mattermost", database: "mattermost", key: "DB_CONNECTION_STRING" },
+      },
+    ],
+
+    // Its bucket and the keys to it, then the server the operator
+    // makes from Mattermost.yaml
+    ready: ["buckets.seaweed.seaweedfs.com/mattermost", "s3credentials.seaweed.seaweedfs.com/mattermost"],
+    rollout: ["deployment/mattermost"],
+
+    values: ["domain.mattermost"],
+  },
+  {
+    name: "picoclaw",
+    description: "An AI agent with a web console, behind Authentik",
+    namespace: "cc-office",
+
+    // Its gate signs in through Authentik, which goes first when it's
+    // being installed too
+    after: ["authentik"],
+
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/picoclaw/Picoclaw.storage.yaml",
+        "embed://apps/picoclaw/Picoclaw.config.yaml",
+        "embed://apps/picoclaw/Picoclaw.yaml",
+        "embed://apps/picoclaw/Picoclaw.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // The console asks for this once someone is through the gate.
+      // Without it Picoclaw makes up a new one on every start.
+      {
+        name: "picoclaw-launcher",
+        description: "the token Picoclaw's console asks for",
+        keyBytes: 24,
+      },
+    ],
+
+    // Its agents run commands, so the console is only for people
+    // Authentik lets through, with nothing public in it
+    gate: {
+      name: "picoclaw",
+      title: "Picoclaw",
+      hostname: "domain.agent",
+      upstream: "http://picoclaw:18800",
+    },
+
+    rollout: ["deployment/picoclaw"],
+    values: ["domain.agent"],
+  },
+  {
     name: "topolvm",
     description: "Node local storage, backed by LVM",
     chart: { repo: "https://topolvm.github.io/topolvm", name: "topolvm" },
@@ -200,21 +616,75 @@ const builtInPackages: PackageDefinition[] = [
   },
   {
     name: "seaweedfs",
-    description: "S3-compatible object storage, as a single pod",
-    chart: { repo: "https://seaweedfs.github.io/seaweedfs/helm", name: "seaweedfs" },
+    description: "S3-compatible object storage, and the buckets applications keep files in",
+    chart: { repo: "https://seaweedfs.github.io/seaweedfs-operator/", name: "seaweedfs-operator" },
+    // Pinned, unlike most. The operator is young and its resources
+    // still change between releases, and the ones this relies on —
+    // buckets, and the keys to them — are among the newest.
+    version: "0.1.43",
     namespace: "seaweedfs",
-    valuesFile: "embed://storage/SeaweedFS/SeaweedFS.values.yaml",
 
-    // Its volume is a claim on "cc-local-ssd-fast", which waits
+    // Not "seaweedfs", which is what the SeaweedFS chart this replaced
+    // was installed as. Upgrading that release to this chart would have
+    // Helm delete the old cluster, its volume claim included.
+    releaseName: "seaweedfs-operator",
+
+    // Its volumes are claims on "cc-local-ssd-fast", which wait
     // forever for a class nothing has made
     requires: ["topolvm"],
+
+    // The chart is the operator. The cluster it runs, which
+    // namespaces may keep buckets in it, and the way in from outside
+    // are ours.
+    manifests: {
+      // Ahead of the chart, which would otherwise make the namespace
+      // without the label the cluster Gateway looks for
+      before: ["embed://storage/SeaweedFS/SeaweedFS.namespace.yaml"],
+
+      after: [
+        "embed://storage/SeaweedFS/SeaweedFS.yaml",
+        "embed://storage/SeaweedFS/SeaweedFS.network.yaml",
+      ],
+    },
+
+    ready: ["seaweeds.seaweed.seaweedfs.com/seaweed"],
+
+    // The hostname browsers reach S3 on, for the links applications
+    // sign for their buckets
+    values: ["domain.storage"],
   },
   {
     name: "headlamp",
-    description: "A web interface for the cluster",
+    description: "A web interface for the cluster, behind Authentik",
     chart: { repo: "https://kubernetes-sigs.github.io/headlamp/", name: "headlamp" },
+    version: "0.46.0",
     namespace: "cc-office",
     valuesFile: "embed://apps/headlamp/Headlamp.values.yaml",
+
+    // Its gate signs in through Authentik, which goes first when it's
+    // being installed too
+    after: ["authentik"],
+
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      // The way in, which goes to the gate rather than to Headlamp
+      after: ["embed://apps/headlamp/Headlamp.network.yaml"],
+    },
+
+    // Headlamp assumes whoever reaches it may, and only then asks for
+    // a token to talk to the cluster with. The gate is what decides
+    // who reaches it, and there's nothing in it meant to be public.
+    gate: {
+      name: "headlamp",
+      title: "Headlamp",
+      hostname: "domain.headlamp",
+      upstream: "http://headlamp",
+    },
+
+    values: ["domain.headlamp"],
   },
   {
     name: "tailscale-operator",
@@ -228,6 +698,12 @@ const builtInPackages: PackageDefinition[] = [
  * Everything that can be installed: what shipped, plus what plugins
  * added.
  */
+// Said wherever a package isn't found, since the likeliest reason for
+// one that's spelled right is a plugin that isn't loaded: its packages
+// only exist once it is, and having the file isn't enough
+export const PLUGIN_HINT =
+  'If it comes from a plugin, enable the plugin under "plugins" — a plugin\'s packages only exist once it\'s loaded, and being in ~/.community-cloud/plugins isn\'t enough.';
+
 export const packageCatalogue: PackageDefinition[] = [...builtInPackages];
 
 /**
@@ -314,7 +790,7 @@ export function resolvePackage(
     // Not in the catalogue, so the configuration has to say everything
     if (selection.repo === undefined || selection.chart === undefined) {
       throw new Error(
-        `"${name}" isn't a package Community Cloud knows about. Either use one of: ${packageCatalogue.map((entry) => entry.name).join(", ")}, or give it a "repo" and a "chart" in the configuration.`,
+        `"${name}" isn't a package Community Cloud knows about. Either use one of: ${packageCatalogue.map((entry) => entry.name).join(", ")}, or give it a "repo" and a "chart" in the configuration. ${PLUGIN_HINT}`,
       );
     }
 
@@ -358,7 +834,8 @@ export function valuesFileIsFromConfig(selection: PackageSelection = {}): boolea
  * Work out what to install, and in what order.
  *
  * Everything enabled, plus anything those packages require, sorted so
- * nothing is installed before the things it depends on. A package
+ * nothing is installed before the things it depends on — or before
+ * anything it asked to come "after" that is also enabled. A package
  * pulled in as a dependency is reported as such, since being installed
  * without having been asked for is worth saying out loud.
  *
@@ -396,6 +873,14 @@ export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
       }
 
       visit(required, [...path, name]);
+    }
+
+    // Only when it's being installed anyway. Anything else is either
+    // there already or not this installer's to put there.
+    for (const preceding of definition.after !== undefined ? definition.after : []) {
+      if (enabled.includes(preceding)) {
+        visit(preceding, [...path, name]);
+      }
     }
 
     visiting.delete(name);

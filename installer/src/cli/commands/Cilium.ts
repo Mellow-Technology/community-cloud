@@ -25,7 +25,7 @@
 
 import { CommandPurpose, CommandSpec, CommandTarget, OutputType } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
-import { quoteForShell, writeFileCommand } from "../../util/shell.ts";
+import { getWaitSeconds, quoteForShell, writeFileCommand } from "../../util/shell.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 import { buildKubeEnv } from "../../util/kube.ts";
 
@@ -110,6 +110,9 @@ const REMOTE_VALUES_PATH = "/tmp/cc-cilium-values.yaml";
 
 // How long to wait for Cilium to report itself healthy
 const READY_TIMEOUT = "10m";
+
+// How long to wait for every node to go Ready after an install
+const NODES_READY_SECONDS = 300;
 
 /**
  * The cilium section of a Community Cloud configuration.
@@ -387,11 +390,21 @@ export const CiliumCommands: CommandSpec[] = [
     description: "Verify the CNI is up and the nodes are ready",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    command: (config: CloudConfig) => {
+    command: (config: CloudConfig, context: any) => {
+      const seconds = getWaitSeconds(context, NODES_READY_SECONDS);
 
       const checks = [
-        "kubectl wait --for=condition=Ready nodes --all --timeout=300s",
+        // Straight after an install, nodes go Ready once Cilium is up
+        // on them, so it's worth waiting for. Anything only asking —
+        // the doctor — wants to know whether they're Ready now, and a
+        // node that isn't would otherwise hold it for the whole wait.
+        seconds > 0
+          ? `kubectl wait --for=condition=Ready nodes --all --timeout=${seconds}s > /dev/null`
+          : "true",
         "kubectl get nodes -o wide",
+        // Ready,SchedulingDisabled is a cordoned node, and still Ready
+        `unready=$(kubectl get nodes --no-headers | awk '$2 !~ /^Ready/ { printf "%s (%s) ", $1, $2 }')`,
+        '[ -z "$unready" ] || { echo "Not every node is Ready: $unready" >&2; exit 1; }',
       ];
 
       if (getCiliumConfig(config).kubeProxyReplacement !== false) {

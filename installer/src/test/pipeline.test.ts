@@ -23,7 +23,9 @@ import {
   CommandTarget,
   getCommandScope,
 } from "../cli/commands/Command.ts";
-import { PROMPT_PURPOSES } from "../cli/commands/Command.ts";
+import { CommandPurpose, PROMPT_PURPOSES, READ_ONLY_PURPOSES } from "../cli/commands/Command.ts";
+import { buildPackageCommands } from "../cli/commands/Helm.ts";
+import { resolvePackage } from "../cli/commands/packages.ts";
 import {
   Fleet,
   FleetMember,
@@ -32,7 +34,8 @@ import {
   resolveTarget,
 } from "../pipeline/fleet.ts";
 import { Plan, Step, buildPlan, nodesForScope } from "../pipeline/plan.ts";
-import { SilentReporter } from "../pipeline/reporter.ts";
+import { ConsoleReporter, SilentReporter } from "../pipeline/reporter.ts";
+import { displayNode, getDisplayNames } from "../pipeline/fleet.ts";
 import { runPlan } from "../pipeline/run.ts";
 import { configFrom } from "./helpers.ts";
 
@@ -553,5 +556,260 @@ describe("what a run remembers about itself", () => {
 
     assert.equal(seen["one"], true);
     assert.equal(seen["two"], true, "the doctor tells every node not to wait");
+  });
+});
+
+/**
+ * A plan whose first commands are the gate bundle's and the rest
+ * another's.
+ */
+function makeGatedPlan(gate: CommandSpec[], rest: CommandSpec[], fleet: Fleet): Plan {
+  const plan = makePlan([...gate, ...rest], fleet);
+
+  plan.steps.forEach((step, index) => {
+    step.bundle = index < gate.length ? "gate" : "rest";
+  });
+
+  return { ...plan, bundles: ["gate", "rest"] };
+}
+
+/**
+ * A reporter that keeps what nodes said.
+ */
+class ListeningReporter extends SilentReporter {
+  said: { node: string; message: string }[] = [];
+
+  override nodeSaid(node: string, message: string) {
+    this.said.push({ node, message });
+  }
+}
+
+describe("a gate", () => {
+  it("asks nothing more of a node that didn't get through it", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server", two: "agent" }, trace, {
+      command: "echo access",
+      node: "two",
+    });
+
+    const summary = await runPlan(
+      CONFIG,
+      makeGatedPlan([echoCommand("access")], [echoCommand("check")], fleet),
+      fleet,
+      { reporter: new SilentReporter(), keepGoing: true, gate: "gate" },
+    );
+
+    const checked = trace.calls.filter((call) => call.command.includes("check")).map((call) => call.node);
+    assert.deepEqual(checked, ["one"], "only the node that passed should have been checked");
+
+    const blocked = summary.outcomes.filter((outcome) => outcome.outcome === "blocked");
+    assert.deepEqual(blocked.map((outcome) => outcome.node), ["two"]);
+
+    // The gate's failure is the one failure; what wasn't asked isn't
+    // counted again
+    assert.equal(summary.failures.length, 1);
+  });
+
+  it("asks nothing from the control plane when the control plane didn't get through", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server", two: "agent" }, trace, {
+      command: "echo access",
+      node: "one",
+    });
+
+    // On behalf of every node, run from the control plane, the way a
+    // node label is
+    const label = echoCommand("label", {
+      runOn: CommandTarget.ControlPlane,
+      scope: CommandScope.EachNode,
+    });
+
+    const summary = await runPlan(
+      CONFIG,
+      makeGatedPlan([echoCommand("access")], [label], fleet),
+      fleet,
+      { reporter: new SilentReporter(), keepGoing: true, gate: "gate" },
+    );
+
+    assert.ok(!trace.calls.some((call) => call.command.includes("label")));
+    assert.equal(summary.outcomes.filter((outcome) => outcome.outcome === "blocked").length, 2);
+  });
+
+  it("changes nothing when every node gets through", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server", two: "agent" }, trace);
+
+    await runPlan(
+      CONFIG,
+      makeGatedPlan([echoCommand("access")], [echoCommand("check")], fleet),
+      fleet,
+      { reporter: new SilentReporter(), gate: "gate" },
+    );
+
+    assert.equal(trace.calls.filter((call) => call.command.includes("check")).length, 2);
+  });
+});
+
+describe("what commands say on the console", () => {
+  it("reaches the reporter, labelled with the node it was said for", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server", two: "agent" }, trace);
+    const reporter = new ListeningReporter();
+
+    const chatty = echoCommand("chatty", {
+      saveToContext: (_output: any, context: any) => {
+        console.log(`hello from ${context.nodeName}`);
+        return {};
+      },
+    });
+
+    await runPlan(CONFIG, makePlan([chatty], fleet), fleet, { reporter });
+
+    assert.deepEqual(
+      reporter.said.map((entry) => `${entry.node}: ${entry.message}`).sort(),
+      ["one: hello from one", "two: hello from two"],
+    );
+  });
+
+  it("is printed under the step it came from, a node at a time", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server", two: "agent" }, trace);
+    const written: string[] = [];
+    const stream = { write: (text: string) => written.push(text), columns: 80 } as any;
+
+    const chatty = echoCommand("chatty", {
+      saveToContext: (_output: any, context: any) => {
+        console.log(`first from ${context.nodeName}`);
+        console.log(`second from ${context.nodeName}`);
+        return {};
+      },
+    });
+
+    await runPlan(CONFIG, makePlan([chatty], fleet), fleet, {
+      reporter: new ConsoleReporter(stream, false, false),
+    });
+
+    // eslint-disable-next-line no-control-regex
+    const text = written.join("").replace(/\u001b\[[0-9;]*m/g, "");
+    const lines = text.slice(text.indexOf("a test bundle")).split("\n");
+    const of = (node: string) =>
+      lines.filter((line) => line.startsWith(node)).map((line) => line.slice(node.length).trim());
+
+    for (const node of ["one", "two"]) {
+      assert.deepEqual(of(node), ["✅ chatty", `｜ first from ${node}`, `｜ second from ${node}`]);
+
+      const start = lines.findIndex((line) => line.startsWith(`${node} `) && line.includes("✅"));
+      assert.deepEqual(
+        lines.slice(start, start + 3).map((line) => line.split(" ")[0]),
+        [node, node, node],
+        "a node's label and what it said should be together",
+      );
+    }
+  });
+
+  it("follows a step that failed by throwing", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server" }, trace);
+    const written: string[] = [];
+    const stream = { write: (text: string) => written.push(text), columns: 80 } as any;
+
+    const broken = echoCommand("broken", {
+      saveToContext: () => {
+        console.log("got this far");
+        throw new Error("and no further");
+      },
+    });
+
+    await runPlan(CONFIG, makePlan([broken], fleet), fleet, {
+      reporter: new ConsoleReporter(stream, false, false),
+      keepGoing: true,
+    });
+
+    // eslint-disable-next-line no-control-regex
+    const text = written.join("").replace(/\u001b\[[0-9;]*m/g, "");
+    assert.match(text, /one\s+🛑 broken\none\s+｜ got this far\none\s+｜ and no further/);
+  });
+
+  it("is put back once the run is over", async () => {
+    const before = console.log;
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server" }, trace);
+
+    await runPlan(CONFIG, makePlan([echoCommand("x")], fleet), fleet, {
+      reporter: new SilentReporter(),
+    });
+
+    assert.equal(console.log, before);
+  });
+});
+
+describe("what a node is printed as", () => {
+  const config = configFrom({
+    k3s: { token: "t" },
+    nodes: [
+      { name: "mamoru-bkk", displayName: "Mamoru (Bangkok)", address: "a", type: "server" },
+      { name: "plain", address: "b", type: "agent" },
+    ],
+  });
+
+  it("is its display name when it has one, and its name when it doesn't", () => {
+    const names = getDisplayNames(config);
+
+    assert.equal(displayNode(names, "mamoru-bkk"), "Mamoru (Bangkok)");
+    assert.equal(displayNode(names, "plain"), "plain");
+  });
+
+  it("is what the reporter labels its lines with", () => {
+    const written: string[] = [];
+    const stream = { write: (text: string) => written.push(text), columns: 80 } as any;
+    const reporter = new ConsoleReporter(stream, false, false, getDisplayNames(config));
+
+    reporter.planned(["mamoru-bkk", "plain"], 1, ["test"]);
+    reporter.nodeFinished("check", "mamoru-bkk", "ok");
+
+    // eslint-disable-next-line no-control-regex
+    const text = written.join("").replace(/\u001b\[[0-9;]*m/g, "");
+    assert.match(text, /Mamoru \(Bangkok\) ✅ check/);
+    assert.ok(!text.includes("mamoru-bkk"), "the name shouldn't be printed where a display name is set");
+  });
+});
+
+describe("a package that isn't installed", () => {
+  const documensoChecks = () =>
+    buildPackageCommands(resolvePackage("documenso", {})).filter((command) =>
+      READ_ONLY_PURPOSES.includes(command.purpose ?? CommandPurpose.Apply),
+    );
+
+  it("is asked about before anything else about it is", () => {
+    const names = documensoChecks().map((command) => command.name);
+    const presence = names.indexOf("verify-installed-documenso");
+
+    assert.ok(presence >= 0, "there should be a check that it's installed");
+    assert.ok(presence < names.indexOf("verify-secrets-documenso"));
+    assert.ok(presence < names.indexOf("verify-rollout-documenso"));
+  });
+
+  it("is said once, and its other checks are skipped", async () => {
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ one: "server" }, trace, {
+      command: "get 'deployment/documenso' > /dev/null",
+      node: "one",
+    });
+
+    const summary = await runPlan(CONFIG, makePlan(documensoChecks(), fleet), fleet, {
+      reporter: new SilentReporter(),
+      keepGoing: true,
+    });
+
+    const outcome = (step: string) => summary.outcomes.find((each) => each.step === step)?.outcome;
+
+    assert.equal(outcome("verify-installed-documenso"), "failed");
+    assert.deepEqual(summary.failures.map((failure) => failure.step), ["verify-installed-documenso"]);
+    assert.equal(outcome("verify-secrets-documenso"), "skipped");
+    assert.equal(outcome("verify-rollout-documenso"), "skipped");
+    assert.equal(outcome("verify-authentik-documenso"), "skipped");
+
+    // The namespace's mail is the namespace's, and asked either way
+    assert.equal(outcome("verify-smtp-cc-office"), "ok");
   });
 });

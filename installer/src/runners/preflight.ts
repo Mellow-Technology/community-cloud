@@ -17,25 +17,35 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, SUCCESS } from "../util/chalk.ts";
 import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
+import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
+import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
+import { checkDnsConfig } from "../util/dns.ts";
+import { checkSchema } from "../util/configSchema.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
-import { K3SInstallationType, NodeRole } from "../util/types.ts";
+import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
 import { connectToNode, NodeConnection } from "./nodeConnection.ts";
+import { displayNode, getDisplayNames } from "../pipeline/fleet.ts";
 
 /**
  * Options for a preflight.
  *
  * - node: check this node only
  * - verbose: print each command's output as well as the report
+ * - configOnly: check the configuration and stop, without connecting
+ *   to any node. For a file being written somewhere the nodes can't be
+ *   reached from, or before they exist.
  */
 export interface PreflightOptions {
   node?: string;
   verbose?: boolean;
   timeout?: string;
+  configOnly?: boolean;
 }
 
 // How long to give a node to answer before calling it unreachable. A
@@ -92,6 +102,12 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
 
   const say = (what: string) => problems.push({ where: "configuration", what });
 
+  // Values of the wrong type or outside what's allowed, before anything
+  // below reads them and draws conclusions
+  for (const problem of checkSchema(config.getConfig()).problems) {
+    say(problem);
+  }
+
   if (nodes.length === 0) {
     say('No nodes. Add them under "nodes", or run "community-cloud configure".');
     return problems;
@@ -147,6 +163,28 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     }
   }
 
+  // Display names are only printed, but two nodes printed the same are
+  // two nodes nobody can tell apart in a report
+  const shown = new Map<string, string>();
+  for (const node of nodes) {
+    // One that isn't text at all, the schema has already said
+    if (typeof node.displayName !== "string") {
+      continue;
+    }
+
+    if (node.displayName.trim() === "") {
+      say(`Node "${node.name}" has a "displayName" that isn't any text. Leave it out to print the node as "${node.name}".`);
+      continue;
+    }
+
+    const display = node.displayName.trim();
+    const already = shown.get(display);
+    if (already !== undefined) {
+      say(`"${node.name}" and "${already}" are both displayed as "${display}", so nothing the installer prints could tell them apart.`);
+    }
+    shown.set(display, node.name);
+  }
+
   // A gateway needs somewhere for the traffic to arrive
   const gateways = nodes.filter(
     (node: any) =>
@@ -167,7 +205,117 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     say('There are gateway addresses configured, but no node is marked as a gateway. Set "gateway": true on the nodes that can be reached from outside.');
   }
 
+  // A mail server that's half described fails later and quietly: mail
+  // that never arrives, from an application that says it sent it
+  for (const problem of checkMailConfig(config.getConfig())) {
+    say(problem);
+  }
+
+  // DNS that would let one namespace write another's records, or
+  // publish an address nobody outside can reach
+  const gatewayMode = config.getNetworkSection("gateway").mode ?? GatewayMode.Floating;
+  for (const problem of checkDnsConfig(config.getConfig(), gatewayMode)) {
+    say(problem);
+  }
+
+  // What each enabled package's templates need. Checked here because
+  // the alternative is finding out from a route with no hostname.
+  // Looked up the way a template sees them: "values" laid over the
+  // top of the rest of the configuration.
+  const raw = config.getConfig();
+  const values = { ...raw, ...(raw.values ?? {}) };
+  for (const [name, selection] of Object.entries(getPackageSelections(config))) {
+    const definition = getPackage(name);
+
+    if (selection.enabled === false) {
+      continue;
+    }
+
+    // One the configuration describes itself is a chart of its own
+    if (definition === undefined) {
+      if (selection.chart === undefined) {
+        say(`"${name}" is enabled under "packages" and isn't a package Community Cloud knows about. ${PLUGIN_HINT}`);
+      }
+      continue;
+    }
+
+    // A gate needs its hostname and Authentik's, whether or not the
+    // package's own templates do
+    const needed = [
+      ...(definition.values ?? []),
+      ...(definition.gate !== undefined ? [definition.gate.hostname, "domain.auth"] : []),
+    ];
+
+    for (const path of new Set(needed)) {
+      const value = path
+        .split(".")
+        .reduce((current: any, part) => (current === undefined || current === null ? undefined : current[part]), values);
+
+      if (value === undefined || value === null || value === "") {
+        say(`${name} needs "values.${path}", and it isn't set. Its manifests would render without it and apply as though nothing were wrong.`);
+      }
+    }
+
+    // A connection it can't make fails as a hang, from an application
+    // that says the mail is on its way
+    const mail = definition.mail === true ? getNamespaceMail(raw, definition.namespace) : undefined;
+    if (mail !== undefined && definition.mailSecurity !== undefined) {
+      const security = getMailSecurity(mail);
+
+      if (!definition.mailSecurity.includes(security)) {
+        say(`${name} can't send mail with "security" ${security}, which ${definition.namespace}'s mail server is set to. It can use: ${definition.mailSecurity.join(", ")}.`);
+      }
+    }
+  }
+
   return problems;
+}
+
+/**
+ * Things in a configuration worth knowing about that don't stop an
+ * install.
+ *
+ * Mostly settings that look meaningful and are ignored — a key that's
+ * almost the right name — where everything still works, just not
+ * because of the setting somebody thinks is doing it.
+ *
+ * @param config
+ * @returns
+ */
+export function findConfigurationWarnings(config: CloudConfig): string[] {
+  // Keys nothing reads, and older ones with somewhere better to be
+  const warnings: string[] = [...checkSchema(config.getConfig()).warnings];
+  const nebula = config.getNetworkSection("nebula");
+
+  // "id" reads like the network's ID, and the setting is "networkID".
+  // With a network name as well, the name finds it and nothing goes
+  // wrong; without one the network can't be found at all, which the
+  // Nebula bundles say for themselves.
+  if (nebula !== undefined && nebula !== null && nebula.id !== undefined) {
+    const fallback =
+      nebula.networkID !== undefined
+        ? `"networkID" is set as well, and is what's used`
+        : nebula.network !== undefined
+          ? `the network is found by its name, "${nebula.network}", instead`
+          : "with no \"network\" or \"networkID\" either, there's no way to find the network";
+
+    warnings.push(
+      `"network.nebula.id" isn't a setting, so it's ignored — the network's ID goes in "networkID". For now ${fallback}.`,
+    );
+  }
+
+  return warnings;
+}
+
+/**
+ * Print what findConfigurationWarnings says.
+ *
+ * @param config
+ */
+export function printConfigurationWarnings(config: CloudConfig) {
+  for (const warning of findConfigurationWarnings(config)) {
+    console.log(`  ${chalk.yellow("⚠️ ")} ${warning}`);
+  }
 }
 
 /**
@@ -205,12 +353,28 @@ export async function preflight(configPath: string, options: PreflightOptions = 
   problems.push(...configProblems);
 
   if (configProblems.length === 0) {
-    console.log(`  ${chalk.green("✓")} describes a cluster that could exist`);
+    console.log(`  ${SUCCESS} describes a cluster that could exist`);
   }
   else {
     for (const problem of configProblems) {
-      console.log(`  ${chalk.red("✗")} ${problem.what}`);
+      console.log(`  ${FAILURE} ${problem.what}`);
     }
+  }
+
+  printConfigurationWarnings(config);
+
+  if (options.configOnly === true) {
+    console.log(
+      configProblems.length === 0
+        ? `\n${chalk.green("The configuration is ready to install.")} ${chalk.dim("No nodes were checked.")}\n`
+        : `\n${chalk.red(`${configProblems.length} thing${configProblems.length === 1 ? "" : "s"} to fix`)} in the configuration.\n`,
+    );
+
+    if (configProblems.length > 0) {
+      process.exitCode = 1;
+    }
+
+    return;
   }
 
   const nodes =
@@ -224,8 +388,10 @@ export async function preflight(configPath: string, options: PreflightOptions = 
     );
   }
 
+  const displayNames = getDisplayNames(config);
+
   for (const node of nodes) {
-    console.log(`\n${chalk.bold(`── ${node.name} ──`)}`);
+    console.log(`\n${chalk.bold(`── ${displayNode(displayNames, node.name)} ──`)}`);
 
     let connection: NodeConnection;
     try {
@@ -233,7 +399,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
         timeout: getConnectTimeout(options),
       });
     } catch (error: any) {
-      console.log(`  ${chalk.red("✗")} can't be reached: ${error.message}`);
+      console.log(`  ${FAILURE} can't be reached: ${error.message}`);
       problems.push({ where: node.name, what: `unreachable: ${error.message}` });
       continue;
     }
@@ -265,14 +431,14 @@ export async function preflight(configPath: string, options: PreflightOptions = 
         checks += 1;
         if (result.error === true) {
           const why = (result.stderr !== "" ? result.stderr : "failed").split("\n")[0];
-          console.log(`  ${chalk.red("✗")} ${chalk.yellow(name)}: ${why}`);
+          console.log(`  ${FAILURE} ${chalk.yellow(name)}: ${why}`);
           problems.push({ where: node.name, what: `${name}: ${why}` });
         }
       }
 
       const failed = bundle.getFailedCommands().length;
       if (failed === 0) {
-        console.log(`  ${chalk.green("✓")} ready`);
+        console.log(`  ${SUCCESS} ready`);
       }
     } finally {
       await connection.disconnect();

@@ -15,11 +15,15 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, SUCCESS, padMark } from "../util/chalk.ts";
+import { layOut } from "../util/prose.ts";
+
 /**
  * What the runner tells whoever is watching.
  */
 export interface Reporter {
-  // The whole run, before anything happens
+  // The whole run, before anything happens. The bundles are the ones
+  // with something to run, in the order they'll run.
   planned(nodes: string[], steps: number, bundles: string[]): void;
 
   // A new bundle's steps are starting
@@ -42,7 +46,11 @@ export interface Reporter {
 /**
  * How one node got on with one step.
  */
-export type Outcome = "ok" | "skipped" | "failed";
+//
+// "blocked" is a step that wasn't run for a node because the node
+// didn't get through a gate before it — see RunOptions.gate. Not a
+// failure of its own: the failure is the gate's.
+export type Outcome = "ok" | "skipped" | "failed" | "blocked";
 
 /**
  * What happened overall.
@@ -75,10 +83,17 @@ export interface StepOutcome {
 // another and from the red a failure uses.
 const NODE_COLOURS = ["cyan", "magenta", "yellow", "blue", "green", "white"] as const;
 
+// What runs down the side of a step's output, in the column the step's
+// mark is in. The fullwidth bar, since it's as wide as the emoji marks
+// and drawn centred in them, where a box drawing one would hug the
+// left of the column.
+const GUTTER = "｜";
+
 const MARKS: Record<Outcome, string> = {
-  ok: "✓",
-  skipped: "·",
-  failed: "✗",
+  ok: SUCCESS,
+  skipped: padMark("·"),
+  failed: FAILURE,
+  blocked: padMark("–"),
 };
 
 /**
@@ -121,6 +136,17 @@ function truncate(text: string, width: number): string {
 }
 
 /**
+ * A bundle with its place in the run, counting from one.
+ *
+ * @param index where it comes, counting from zero
+ * @param bundle
+ * @returns
+ */
+export function numberBundle(index: number, bundle: string): string {
+  return `${index + 1}. ${bundle}`;
+}
+
+/**
  * A reporter that says nothing. For tests, and for anything rendering
  * its own output.
  */
@@ -129,7 +155,7 @@ export class SilentReporter implements Reporter {
   bundleStarted() {}
   nodeStarted() {}
   nodeFinished() {}
-  nodeSaid() {}
+  nodeSaid(_node: string, _message: string) {}
   stepFinished() {}
   finished() {}
 }
@@ -144,6 +170,13 @@ export class ConsoleReporter implements Reporter {
   private total = 0;
   private current = "";
   private bar = false;
+  private bundles: string[] = [];
+
+  // What each node has said during the step it's on, held until the
+  // step's own line is written so the output reads under its label
+  // rather than above it. Nodes run side by side, so this also keeps
+  // one node's lines together instead of shuffled in with another's.
+  private held = new Map<string, string[]>();
 
   /**
    * @param stream where to write, so this can be pointed somewhere else
@@ -154,16 +187,20 @@ export class ConsoleReporter implements Reporter {
    *   anything printing its own report afterwards: a run of checks
    *   that finds three problems has not "stopped after 40 of 61
    *   steps", it has finished and found three problems.
+   * @param displayNames what to print each node as, where it isn't its
+   *   name. See getDisplayNames.
    */
   constructor(
     private stream: NodeJS.WriteStream = process.stdout,
     private interactive: boolean = process.stdout.isTTY === true,
     private summary: boolean = true,
+    private displayNames: Map<string, string> = new Map(),
   ) {}
 
   planned(nodes: string[], steps: number, bundles: string[]) {
     this.total = steps;
-    this.width = Math.max(...nodes.map((name) => name.length), 4);
+    this.bundles = bundles;
+    this.width = Math.max(...nodes.map((name) => this.display(name).length), 4);
 
     for (const [index, name] of nodes.entries()) {
       const colour = NODE_COLOURS[index % NODE_COLOURS.length]!;
@@ -174,42 +211,64 @@ export class ConsoleReporter implements Reporter {
       `\n${chalk.bold(`${nodes.length} node${nodes.length === 1 ? "" : "s"}`)}  ${chalk.dim("·")}  ${chalk.bold(`${steps} step${steps === 1 ? "" : "s"}`)}\n`,
     );
     this.write(`${chalk.dim(nodes.map((name) => this.label(name)).join("  "))}\n`);
-    this.write(`${chalk.dim(bundles.join(" → "))}\n\n`);
+    this.write(
+      `${chalk.dim(bundles.map((bundle, index) => numberBundle(index, bundle)).join(" → "))}\n\n`,
+    );
   }
 
   bundleStarted(bundle: string, description: string) {
     this.clearBar();
-    this.write(`${chalk.bold.underline(bundle)} ${chalk.dim(description)}\n`);
+    // Numbered in the order they run, since a lot of what's here
+    // depends on what came before it, and the order is worth seeing
+    const index = this.bundles.indexOf(bundle);
+    const number = index >= 0 ? `${chalk.dim(`${index + 1}.`)} ` : "";
+
+    this.write(`${number}${chalk.bold.underline(bundle)} ${chalk.dim(description)}\n`);
     this.drawBar();
   }
 
   nodeStarted(step: string, node: string) {
-    this.current = `${node} · ${step}`;
+    // Anything left from a step that ended without saying how — it was
+    // filtered out, say — goes out now rather than under this one
+    this.release(node);
+    this.held.set(node, []);
+    this.current = `${this.display(node)} · ${step}`;
     this.drawBar();
   }
 
   nodeFinished(step: string, node: string, outcome: Outcome) {
-    const mark =
-      outcome === "failed"
-        ? chalk.red(MARKS[outcome])
-        : outcome === "skipped"
-          ? chalk.dim(MARKS[outcome])
-          : chalk.green(MARKS[outcome]);
+    // The emoji bring their own colour
+    const mark = outcome === "skipped" || outcome === "blocked" ? chalk.dim(MARKS[outcome]) : MARKS[outcome];
 
     const name = outcome === "skipped" ? chalk.dim(step) : step;
 
     this.line(`${this.label(node)} ${mark} ${name}`);
+    this.release(node);
   }
 
   nodeSaid(node: string, message: string) {
-    for (const line of message.split("\n")) {
-      if (line.trim() !== "") {
-        this.line(`${this.label(node)} ${chalk.dim("│")} ${line}`);
-      }
+    const lines = message
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => `${this.label(node)} ${chalk.dim(GUTTER)} ${line}`);
+    const held = this.held.get(node);
+
+    if (held !== undefined) {
+      held.push(...lines);
+      return;
+    }
+
+    // Not in the middle of a step, so there's no label to wait for
+    for (const line of lines) {
+      this.line(line);
     }
   }
 
   stepFinished(_step: string, index: number, total: number) {
+    for (const node of [...this.held.keys()]) {
+      this.release(node);
+    }
+
     this.done = index + 1;
     this.total = total;
     this.drawBar();
@@ -226,22 +285,26 @@ export class ConsoleReporter implements Reporter {
 
     if (summary.failures.length === 0) {
       this.write(
-        `\n${chalk.green.bold("✓")} ${chalk.bold(`${summary.completed} steps`)} in ${seconds}s\n\n`,
+        `\n${SUCCESS} ${chalk.bold(`${summary.completed} steps`)} in ${seconds}s\n\n`,
       );
       return;
     }
 
     this.write(
-      `\n${chalk.red.bold("✗")} stopped after ${chalk.bold(`${summary.completed} of ${summary.total} steps`)} in ${seconds}s\n\n`,
+      `\n${FAILURE} stopped after ${chalk.bold(`${summary.completed} of ${summary.total} steps`)} in ${seconds}s\n\n`,
     );
 
     for (const failure of summary.failures) {
       this.write(`  ${this.label(failure.node)} ${chalk.red(failure.step)}\n`);
 
-      for (const line of failure.why.split("\n").slice(0, 6)) {
-        if (line.trim() !== "") {
-          this.write(`  ${" ".repeat(this.width + 2)}${chalk.dim(line.trim())}\n`);
-        }
+      // A sentence a line under the label, kept inside the terminal;
+      // see layOut. Cut short, since a command that failed loudly can
+      // say a great deal and the first few lines are the useful ones.
+      const indent = `  ${" ".repeat(this.width + 2)}`;
+      const columns = Math.min(this.stream.columns ?? 100, 120);
+
+      for (const line of layOut(failure.why, indent, columns).slice(0, 10)) {
+        this.write(`${chalk.dim(line)}\n`);
       }
     }
 
@@ -249,13 +312,32 @@ export class ConsoleReporter implements Reporter {
   }
 
   /**
+   * Write out what a node said during its step, and stop holding it.
+   */
+  private release(node: string) {
+    const held = this.held.get(node);
+    this.held.delete(node);
+
+    for (const line of held ?? []) {
+      this.line(line);
+    }
+  }
+
+  /**
    * A node's name, padded and coloured so a column of them lines up.
    */
   private label(node: string): string {
     const colour = this.colours.get(node);
-    const padded = node.padEnd(this.width);
+    const padded = this.display(node).padEnd(this.width);
 
     return colour !== undefined ? colour(padded) : padded;
+  }
+
+  /**
+   * What a node is printed as.
+   */
+  private display(node: string): string {
+    return this.displayNames.get(node) ?? node;
   }
 
   /**

@@ -303,11 +303,11 @@ function buildInstallEnv(config: CloudConfig, context: any): Record<string, stri
     // Where to find the cluster to join
     env["K3S_URL"] = config.getControlPlaneUrl();
   }
-  else {
-    // Let the node's own user read the kubeconfig, so that everything
-    // afterwards doesn't have to go through sudo to talk to the cluster
-    env["K3S_KUBECONFIG_MODE"] = "644";
-  }
+
+  // Nothing sets K3S_KUBECONFIG_MODE. The kubeconfig holds
+  // cluster-admin and stays readable by root alone, as K3s writes it;
+  // what talks to the cluster goes through sudo instead. See
+  // buildClusterToolPrelude.
 
   return env;
 }
@@ -353,9 +353,9 @@ const INSTALL_SCRIPT = [
   `curl -fsSL ${K3S_INSTALL_URL} -o "$installer" || { echo "Couldn't download the K3s install script from ${K3S_INSTALL_URL}" >&2; rm -f "$installer"; exit 1; }`,
   `test -s "$installer" || { echo "The K3s install script came back empty" >&2; rm -f "$installer"; exit 1; }`,
   'sh "$installer"',
-  "status=$?",
+  "code=$?",
   'rm -f "$installer"',
-  "exit $status",
+  "exit $code",
 ];
 
 export const K3sCommands: CommandSpec[] = [
@@ -438,10 +438,10 @@ export const K3sCommands: CommandSpec[] = [
         const nodeName = getNodeName(context);
 
         return [
-          waitUntil("k3s kubectl get nodes >/dev/null 2>&1", getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
-          "k3s kubectl get nodes -o wide",
+          waitUntil("sudo k3s kubectl get nodes >/dev/null 2>&1", getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
+          "sudo k3s kubectl get nodes -o wide",
           nodeName !== undefined
-            ? `k3s kubectl get node ${quoteForShell(nodeName)} >/dev/null || { echo "${nodeName} hasn't registered with the cluster" >&2; exit 1; }`
+            ? `sudo k3s kubectl get node ${quoteForShell(nodeName)} >/dev/null || { echo "${nodeName} hasn't registered with the cluster" >&2; exit 1; }`
             : "true",
         ];
       }

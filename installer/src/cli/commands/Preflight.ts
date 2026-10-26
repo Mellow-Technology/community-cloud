@@ -68,41 +68,129 @@ function getRequiredPorts(context: any): number[] {
   return node.type === K3SInstallationType.Server ? SERVER_PORTS : AGENT_PORTS;
 }
 
+/**
+ * What sudo said when asked to run a shell as root without a password.
+ */
+export interface SudoAnswer {
+  // sudo's exit status, or "missing" when there's no sudo at all
+  status: string;
+
+  // What it printed, stdout and stderr together: the uid on success,
+  // the reason otherwise
+  said: string;
+}
+
+/**
+ * Why sudo didn't give us root, in words someone can act on, or
+ * undefined when it did.
+ *
+ * sudo's own messages differ between versions and distributions, so
+ * these match on the parts that have stayed put. Anything unrecognised
+ * is passed through as sudo said it, which is still better than a
+ * guess.
+ *
+ * @param user who we connected as
+ * @param answer
+ * @returns
+ */
+export function explainSudo(user: string, answer: SudoAnswer): string | undefined {
+  const said = answer.said.trim();
+
+  if (answer.status === "missing") {
+    return `sudo isn't installed on this node. Every bundle runs something as root through it, even when connected as root. Install sudo and give "${user}" passwordless use of it.`;
+  }
+
+  if (answer.status === "0") {
+    const uid = said.split(/\s+/).pop();
+    return uid === "0"
+      ? undefined
+      : `sudo ran without a password, but as uid ${uid ?? "unknown"} rather than root. Something in sudoers changes who sudo runs as by default; the bundles need it to be root.`;
+  }
+
+  const fix = `Give "${user}" passwordless sudo for everything, e.g. "${user} ALL=(ALL) NOPASSWD: ALL" in a file under /etc/sudoers.d, or connect as root.`;
+
+  if (/tty/i.test(said)) {
+    return `sudo on this node insists on a terminal ("requiretty" in sudoers), and the installer's commands don't run in one. Remove "Defaults requiretty", or add "Defaults:${user} !requiretty".`;
+  }
+
+  if (/password is required|interactive authentication|terminal is required|askpass/i.test(said)) {
+    return `Connected as "${user}", but sudo asks for a password. The installer can't answer a prompt, so every command needing root would fail partway through an install. ${fix}`;
+  }
+
+  if (/not in the sudoers|not allowed to run sudo/i.test(said)) {
+    return `"${user}" can't use sudo on this node at all. ${fix}`;
+  }
+
+  if (/not allowed to execute/i.test(said)) {
+    return `"${user}" may only use sudo for some commands, and the bundles need it for many: apt, systemctl, install, tee, rm and more besides. ${fix}`;
+  }
+
+  return `sudo wouldn't give "${user}" root without a password${said !== "" ? `: ${said}` : ""}. ${fix}`;
+}
+
 export const PreflightCommands: CommandSpec[] = [
   /**
-   * Can we do anything as root here?
+   * Can we do anything as root here, without being asked for a
+   * password?
    *
-   * Every bundle in here uses sudo somewhere, and a node whose sudo
-   * wants a password hangs rather than fails: the command sits waiting
-   * for a prompt nobody is going to answer.
+   * Every bundle in here uses sudo somewhere, and nothing can answer
+   * its prompt: the commands don't run in a terminal. A node whose
+   * sudo wants a password gets part of the way through an install and
+   * fails at the first command that needs root.
+   *
+   * "sudo -n true" is the usual test and it says yes too easily:
+   *
+   * - A password typed recently is remembered, and sudo then needs no
+   *   other. -k ignores that, so the answer is the one the next
+   *   install will get, not the one available for the next few
+   *   minutes.
+   * - Sudoers can allow some commands without a password and not
+   *   others. Running a shell is the widest thing to ask for, so it
+   *   answering means everything else will.
+   * - Sudoers can make sudo run as someone other than root. The shell
+   *   says who it is, and that has to be 0.
+   *
+   * Asked by the doctor as well as before an install, since sudoers is
+   * the sort of thing that's changed long after a cluster is built.
    */
   {
     name: "check-node-access",
-    description: "Check we can reach this node and act as root on it",
+    description: "Check we can reach this node and act as root on it without a password",
     purpose: CommandPurpose.Require,
     command: [
       `printf "user|%s\\n" "$(id -un)"`,
-      // -n so it fails rather than waits when a password is wanted
-      `printf "sudo|%s\\n" "$(sudo -n true 2>/dev/null && echo yes || echo no)"`,
       `printf "home|%s\\n" "$(cd ~ && pwd)"`,
+      "if command -v sudo > /dev/null 2>&1",
+      "then",
+      // -k ignores a remembered password, -n fails rather than asks
+      `  said=$(sudo -kn sh -c 'id -u' 2>&1 < /dev/null)`,
+      "  code=$?",
+      "else",
+      "  said=",
+      "  code=missing",
+      "fi",
+      // On one line, without the separator, whatever sudo printed
+      `printf "sudo|%s|%s\\n" "$code" "$(printf '%s' "$said" | tr '\\n|' '  ')"`,
     ],
     output: OutputType.Raw,
     postProcessHooks: [
-      (output: CommandOutput) => ({
-        user: field(readRecordOfKind(output, "user") ?? [], 0),
-        sudo: field(readRecordOfKind(output, "sudo") ?? [], 0) === "yes",
-      }),
+      (output: CommandOutput) => {
+        const sudo = readRecordOfKind(output, "sudo") ?? [];
+        return {
+          user: field(readRecordOfKind(output, "user") ?? [], 0),
+          sudo: { status: field(sudo, 0), said: field(sudo, 1) },
+        };
+      },
     ],
     saveToContext: (output: any) => {
       const { user, sudo } = output.processed;
+      const problem = explainSudo(user, sudo);
 
-      if (!sudo) {
-        throw new Error(
-          `Connected as "${user}", but sudo asks for a password. Every bundle needs root somewhere, and a command waiting on a prompt hangs rather than fails. Give this user passwordless sudo, or connect as root.`,
-        );
+      if (problem !== undefined) {
+        throw new Error(problem);
       }
 
-      console.log(`  Connected as ${user}, with sudo`);
+      console.log(`  Connected as ${user}, with passwordless sudo to root`);
       return { preflightUser: user };
     },
   },

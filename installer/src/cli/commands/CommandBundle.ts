@@ -251,8 +251,8 @@ export class CommandBundle {
       }
       catch (e: any) {
         if (!this.quiet) {
-          console.log(`🔴 Error deciding whether to run: "${command.name}"`);
-          console.log(`🔴 Error Message: ${e.message}`);
+          console.log(`🛑 Error deciding whether to run: "${command.name}"`);
+          console.log(`🛑 Error Message: ${e.message}`);
         }
 
         this.commandResults[command.name] = {
@@ -311,9 +311,9 @@ export class CommandBundle {
         // printed over the top of it
         if (!this.quiet) {
           console.log(e);
-          console.log(`🔴 Error running command: "${command.name}"`)
-          console.log(`🔴 Generated Command: ${e.cmd}`)
-          console.log(`🔴 Error Message: ${e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message}`);
+          console.log(`🛑 Error running command: "${command.name}"`)
+          console.log(`🛑 Generated Command: ${e.cmd}`)
+          console.log(`🛑 Error Message: ${e.stderr !== undefined && e.stderr !== "" ? e.stderr : e.message}`);
         }
 
         res = {

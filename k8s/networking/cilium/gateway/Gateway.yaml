@@ -1,3 +1,13 @@
+# Where the cluster Gateway lives. Nothing else is in it; applications
+# attach their own listeners from their own namespaces, with
+# ListenerSets.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+---
 # The default Gateway for applications
 # deployed to Community Cloud
 apiVersion: gateway.networking.k8s.io/v1
@@ -12,7 +22,8 @@ metadata:
 spec:
   # We use the default Cilium gateway
   gatewayClassName: cilium
-  # A default dummy listener
+  # A Gateway has to have a listener of its own. This one matches no
+  # real hostname; everything served is on a ListenerSet's.
   listeners:
     - name: example-http
       port: 80

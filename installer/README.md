@@ -55,15 +55,24 @@ Nebula API key — so it's gitignored here as `*.config.json`. What the
 installer records *in* the cluster has those stripped out; see
 [Secrets in commands](#secrets-in-commands).
 
+What the file can hold is described by a JSON Schema,
+[`cc.config.schema.json`](cc.config.schema.json). Point the file at it
+with `"$schema"`, as the example below does, and an editor will
+complete keys, explain them, and flag mistakes as you type. The path is
+relative to the configuration file. Preflight, `install`,
+`add-node` and the doctor check against the same schema, so nothing
+depends on the editor (see [Checking a configuration](#checking-a-configuration)).
+
 ### A small complete example
 
 ```jsonc
 {
-  "config": { "adminEmail": "you@example.com" },
+  "$schema": "./installer/cc.config.schema.json",
 
   "k3s": { "token": "a-long-shared-secret" },
 
   "values": {
+    "adminEmail": "you@example.com",
     "domain": { "main": "example.com" }
   },
 
@@ -99,9 +108,10 @@ The only required section. Each entry is one machine.
 | Key | Meaning |
 |---|---|
 | `name` | What to call it. Also how it registers in the cluster, when it can be a DNS label. |
+| `displayName` | What to print it as, when that isn't its `name`: `"Mamoru (Bangkok)"` for `mamoru-bkk`. Only what the installer prints changes. On the command line, and everywhere else, the node is still its `name`. |
 | `address` | How to reach it over SSH. Often an alias from `~/.ssh/config` rather than a name DNS knows. |
 | `type` | `server` or `agent`. Exactly one node should be a `server`. |
-| `username` | The SSH user. Needs passwordless sudo. |
+| `username` | The SSH user. Needs passwordless sudo to root for any command, not just some, and without `requiretty` — preflight and the doctor both check. |
 | `keyFile` | A private key path. Otherwise the usual `~/.ssh` keys and your agent are tried. |
 | `port` | SSH port, when it isn't 22. |
 | `apiAddress` | Where *other nodes* reach this one's Kubernetes API, when that differs from `address`. A bastion or port forward gets you to a node without being a name the cluster can use. |
@@ -230,9 +240,94 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`seaweedfs`, `headlamp`, `tailscale-operator`. Dependencies are worked out and
-installed first — TopoLVM needs cert-manager, so enabling it enables
-that too.
+`seaweedfs`, `redis-operator`, `headlamp`, `tailscale-operator`,
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`. Dependencies
+are worked out and installed first — TopoLVM needs cert-manager, so
+enabling it enables that too.
+
+`cert-manager` also applies `cc-lets-encrypt`, the ClusterIssuer every
+application's certificate comes from, with `values.adminEmail` as the
+Let's Encrypt account. The Gateway those certificates are for,
+`cc-letsencrypt-web-gateway`, is made by the `gateway` bundle, which
+runs before the charts.
+
+`seaweedfs` installs the SeaweedFS operator and, through it, the
+cluster's S3-compatible object storage. Applications get a bucket
+each, and keys to only that bucket, which the operator writes into a
+Secret in their namespace. They talk to it inside the cluster; it's
+also on `values.domain.storage`, for the links Authentik hands
+browsers to its icons and backgrounds. Every request there still
+needs keys or a link signed with them. See
+[Object storage](../k8s/storage/README.md#object-storage-seaweedfs).
+
+`redis-operator` installs the OpsTree Redis operator and, through it,
+the one Redis the applications in `cc-office` share, with its password
+in the `cc-redis` Secret there.
+
+`twenty`, `lago`, `documenso`, `mattermost` and `picoclaw` are
+applications in `cc-office`, each with a ListenerSet of its own on the
+cluster Gateway. Any of them can be installed on its own, into a
+cluster that already has the rest:
+
+```bash
+community-cloud run-bundle lago server-1 cc.config.json
+community-cloud run-bundle documenso server-1 cc.config.json
+```
+
+Twenty is a CRM, on `values.domain.crm`. Its database is in
+cc-postgres, with the `twenty_crm` role CloudNativePG's package makes,
+its queues in the shared Redis and its uploads in a SeaweedFS bucket.
+The server sets up and migrates the database as it starts. It signs
+and encrypts with a key in the `twenty-crm-app-secret` Secret, and
+sends mail through the namespace's server.
+
+Lago is billing: plans, subscriptions, usage and invoices. Its web app
+is on `values.domain.billing` and its API, which the web app calls
+from the browser and anything billing through Lago calls too, on
+`values.domain.billingApi`. It keeps its database in cc-postgres, its
+queues in the shared Redis and its files — invoices, exports, logos —
+in a bucket of its own in SeaweedFS, so it brings `cloudnative-pg`,
+`redis-operator` and `seaweedfs` with it. Lago has no OpenID Connect,
+so it isn't signed into through Authentik: sign up is off, the first
+account is made with `values.adminEmail` and a generated password, in
+the `lago-admin` Secret, and everyone else is invited from inside
+Lago.
+
+Mattermost is team chat, on `values.domain.mattermost`, installed by
+its operator. It keeps its database in cc-postgres, with the
+`mattermost` role CloudNativePG's package makes, and its files in a
+bucket in SeaweedFS. The operator wants the database as one connection
+string, which the installer builds from that role's credentials into
+the `mattermost-db` Secret on every install. It runs one replica:
+more needs an Enterprise licence. It isn't signed into through
+Authentik, and sends no mail yet.
+
+Documenso is on `values.domain.signing`, and signs people in through
+Authentik over OpenID Connect. It needs Authentik running — from the
+Authentik plugin, or installed by hand as the release `authentik` —
+which the install checks for before it starts on it. When the
+Authentik package is being installed in the same run, it goes first.
+Passwords are switched off, so Authentik is the only way in, and an
+account is made for whoever Authentik sends. The people documents are sent to for signing use
+their links, without an account. It signs completed documents with a
+self-signed certificate the installer makes, in the `documenso-signing`
+Secret. It sends email through the cluster's mail server — see
+[`smtp`](#smtp) — and without one, signing links are shared by hand.
+Making someone a Documenso administrator is done in its database —
+add `ADMIN` to their `roles` in the `User` table.
+
+Who may sign in to Documenso is decided in Authentik, by binding
+groups or policies to the application. With nothing bound, anyone
+with an Authentik account can.
+
+A package for something with no sign in of its own — a cluster
+interface like Headlamp — can declare a `gate` instead, and gets an
+oauth2-proxy in front of it signing in through Authentik, with the
+proxy, its credentials and its Authentik client all made by the
+installer. See `installer/src/cli/commands/OAuth2Proxy.ts`. The
+`headlamp` package is the one that does: it's on
+`values.domain.headlamp`, only Authentik's users get through, and
+Headlamp then asks them for a token to talk to the cluster with.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
@@ -292,19 +387,172 @@ forms: `auth` (base64 of `username:password`) or `identityToken`.
 `tls` takes `caFile`, `certFile`, `keyFile`, `insecureSkipVerify`.
 `endpoint` and `rewrite` are for mirroring.
 
-### `values` and `config`
+### `values`
 
 What the manifests under `k8s/` render against. Anything in `values`
-is available as `.Values.<path>`; the top level of the configuration
-is too, so `config.adminEmail` reaches a manifest as
-`.Values.adminEmail`.
+is available as `.Values.<path>`. The rest of the configuration is laid
+underneath, so `.Values.nodes` is the node list. That works key for key
+and doesn't flatten sections: `config.adminEmail` would be
+`.Values.config.adminEmail`, which nothing reads. Older configurations
+used a `config` section like that, and preflight warns about one.
 
 The manifests currently reference `adminEmail`, `domain.main`,
-`domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost` and
-`authentik.secretKey`. A few values are derived rather than written:
-`k8sApiServer` and `k8sApiPort` come from the control-plane node,
-`l2Announcements` from the gateway mode, and `networkDevices` from the
-shared interface list.
+`domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
+`domain.billing`, `domain.billingApi`, `domain.signing`,
+`domain.headlamp`, `domain.storage` and `authentik.secretKey`. Unlike
+the rest of the configuration, `values` is open: plugins and your own
+manifests can read anything put here, and preflight won't call it
+unknown.
+
+Some values are derived rather than written. Setting one replaces what
+would have been worked out:
+
+| Key | Derived from |
+|---|---|
+| `k8sApiServer`, `k8sApiPort` | The control-plane node's `apiAddress` or `address`, and `6443`. |
+| `l2Announcements` | The gateway mode: on for `port-forward`. |
+| `networkDevices` | The shared interface list. |
+| `storageControllerReplicas` | How many TopoLVM controllers run: one per `storage-local` node, at least 1 and at most 2. They insist on separate nodes, so a replica with no node of its own never schedules and the install waits for it forever. Set it to run more on a larger cluster. |
+| `mail` | [`smtp`](#smtp), for the namespace being rendered. |
+
+### `smtp`
+
+The mail servers applications send through — invoices, signing
+requests, password resets — and which namespaces may send at all.
+The servers are assumed to be somewhere else: a provider, or a relay on
+your network. Running one well is mostly a matter of reputation, which
+a cluster in an office isn't placed to build.
+
+Mail is configured per namespace, each with credentials of its own:
+
+```jsonc
+"smtp": {
+  // What namespaces share. Never credentials.
+  "defaults": {
+    "host": "smtp.example.com",
+    "port": 587,                 // defaults to the usual port for "security"
+    "security": "starttls",      // starttls (587), tls (465) or none (25)
+    "fromDomain": "example.com"  // defaults to values.domain.main
+  },
+  "namespaces": {
+    "cc-office": { "username": "office@example.com", "password": "…" },
+    "client-acme": {
+      "host": "smtp.acme.example", "security": "tls",
+      "username": "…", "password": "…"
+    }
+  }
+}
+```
+
+The reason is containment. Something that gets into a namespace — a
+compromised application, say — finds that namespace's mail credentials
+and can start sending. With credentials per namespace, the provider's
+rate limits and logs are per namespace, one namespace can be cut off
+without touching the rest, and a namespace that isn't listed has
+nothing to send with. Taking a namespace out of `namespaces` and running
+the install removes the credentials it had; the doctor reports a
+namespace still holding credentials it's no longer given. Preflight
+reports two namespaces sharing one login, and credentials put in
+`defaults`.
+
+It's a little protection rather than a wall: a namespace's credentials
+are readable by anything running in it, and nothing here stops a pod
+connecting to a mail server of its own.
+
+A namespace naming its own `host` is using a different server, so it
+takes nothing from `defaults` but `fromDomain`. Leave out `username`
+and `password` for a relay that takes mail without them. Applications
+send as an address at `fromDomain` — `billing@`, `documents@`,
+`auth@` — so most providers will want that domain verified first.
+Lago can only upgrade a connection with STARTTLS, so its namespace's
+server can't be one that wants TLS from the start; preflight says so.
+
+Each application is told about its own namespace's server in its own
+terms: manifests read it as `.Values.mail`, rendered for the namespace
+of the package being installed (`run-template --namespace` says which
+for a manifest applied by hand). The username and password go into a
+`cc-smtp` Secret in that namespace rather than into any manifest, and
+are applied on every install, so a changed password lands by changing
+the file and running the install again. Applications restart for a new
+server on their own; for a new password alone, restart them with
+`kubectl rollout restart`.
+
+A namespace without mail keeps it to itself — Lago and Documenso send
+nothing. `community-cloud configure --section mail`
+asks for all of this, and the doctor checks each namespace's server
+can be reached from the cluster.
+
+### `dns`
+
+Publishes the hostnames applications are routed on, through
+[ExternalDNS](https://kubernetes-sigs.github.io/external-dns/latest/),
+so a name resolves as soon as its route exists — and the Let's Encrypt
+challenge after it finds the name already there.
+
+Different domains can live with different providers, and each is
+tied to the namespaces allowed to use it: the office applications in
+`cc-office` publish the office's domain, and a client or team given a
+namespace of their own publishes theirs, with their own provider
+account.
+
+```jsonc
+"dns": {
+  // What records point at. Needed behind a router forwarding ports,
+  // where the Gateway's own address is a private one.
+  "target": "203.0.113.10",
+
+  "providers": [
+    {
+      "name": "office",
+      "provider": "cloudflare",
+      "domains": ["example.com"],
+      "excludeDomains": ["clients.example.com"],
+      "namespaces": ["cc-office"],
+      "credentials": { "CF_API_TOKEN": "…" }
+    },
+    {
+      "name": "acme",
+      "provider": "aws",
+      "domains": ["acme.clients.example.com"],
+      "namespaces": ["client-acme"],
+      "credentials": { "AWS_ACCESS_KEY_ID": "…", "AWS_SECRET_ACCESS_KEY": "…" },
+      "args": ["--aws-zone-type=public"]
+    }
+  ]
+}
+```
+
+Each provider runs one ExternalDNS for each namespace it lists, in
+the `external-dns` namespace. Each instance reads only its own
+namespace's routes and writes only its own `domains`, so a route in
+`client-acme` naming `example.com` is ignored rather than published.
+`credentials` are environment variables, named as the provider's
+ExternalDNS documentation names them; they go into a Secret beside
+the instances, out of reach of anyone with access to the namespaces
+being published. `args` passes provider settings through. `target`
+can be set per provider too, and `policy` is `sync` (records go when
+their route does) or `upsert-only` (nothing is ever removed).
+
+Records are marked with an owner ID per instance, so instances sharing
+a zone — or records made by hand, or another cluster's — are left
+alone.
+
+Preflight checks that no two sets of namespaces can write the same
+names: a domain inside another provider's has to be in that provider's
+`excludeDomains`, as `clients.example.com` is above. It also insists on
+`target` when the cluster is reached through port forwarding.
+
+The `dns` bundle installs it as part of `install`, after the charts,
+and can be run again on its own after changing this section:
+
+```bash
+community-cloud run-bundle dns server-1 cc.config.json
+```
+
+A namespace publishing through ExternalDNS still needs its routes
+attached to the cluster Gateway, which means the
+`whereWereGoing: weDontNeedRoads` label on the namespace — see
+`k8s/apps/office/Office.namespace.yaml`.
 
 ### `pipelines`
 
@@ -324,11 +572,21 @@ Named sequences of bundles, for `run-pipeline`:
 
 `preflight` reads it and says what would stop an install — no server,
 two servers, a missing token, a node that can't be reached, a gateway
-with no addresses — before anything is changed:
+with no addresses — before anything is changed. That includes what the
+[schema](cc.config.schema.json) rules out, such as a value of the wrong
+type, or a node type, role or region that isn't one of those allowed:
 
 ```bash
 community-cloud preflight cc.config.json
+community-cloud preflight cc.config.json --config-only   # the file alone, no SSH
 ```
+
+Without `--config-only` it goes on to connect to every node. That's
+where sudo, the kernel and the network are checked, and it happens
+even when the file has problems, so you see everything at once.
+
+A key nothing reads doesn't stop anything. It gets a warning instead,
+naming the key it was probably meant to be when one is close.
 
 Once a cluster exists, its configuration is recorded in the cluster
 itself as a ConfigMap in `kube-system`, with the secrets stripped.
@@ -358,6 +616,32 @@ that can't be reached doesn't stop the others being asked — a cluster
 with a machine down is exactly the case you'd run this for — and one
 failure doesn't stop the run, because one thing being broken is the
 most likely reason to want to know what else is.
+
+`preflight` goes first, even with `-b`, and a node has to pass it
+before anything else is asked of it. A node that can't sudo, or can't
+reach the outside world, would otherwise fail most of what follows for
+that one reason, with the reason one line among fifty. Its other
+bundles are reported as not asked, rather than failed. When the node
+that fails is the control plane, nothing run from it is asked either,
+which includes every check of what's inside the cluster.
+
+Bundles are asked in the order an install runs them and numbered that
+way, live and in the report, so the first failure is usually the lowest
+broken layer and what follows it is likely its consequence.
+
+When several checks fail with the same message — a refused Defined
+Networking key fails every call to its API — the report says it once,
+near the top, listing each check it took down, and counts it as one
+problem. Those checks point back to it from their own places in the
+report.
+
+Each enabled package is first asked whether it's installed at all. One
+that isn't fails that one check, which says so, and its other checks
+are skipped instead of each failing in turn. The other way round,
+`helm-charts` reports packages that are on the cluster without being
+enabled, and `dns` reports ExternalDNS instances still running for
+providers taken out of the configuration. Both are reported as
+warnings, since either can be intended.
 
 ## Installing a cluster
 
@@ -426,6 +710,15 @@ it needs kubectl. The agent has no kubeconfig, so the run borrows a
 server from the configuration to talk to the cluster with. The borrowed
 node is reachable and is not one of the nodes being worked on — no step
 runs on its behalf.
+
+The kubeconfig stays as K3s writes it, readable by root alone, since
+anyone who can read it has cluster-admin. Commands that talk to the
+cluster run `kubectl`, `helm` and `cilium` through `sudo -n` instead,
+which is one reason the SSH user needs passwordless sudo. A cluster
+installed by an earlier version of this installer has its kubeconfig
+readable by every user (`644`); to tighten it, remove
+`K3S_KUBECONFIG_MODE` from `/etc/systemd/system/k3s.service.env` on the
+server and restart K3s.
 
 ## Adding a node
 
@@ -542,7 +835,7 @@ evicted at all.
 ### Servers
 
 ```bash
-community-cloud uninstall cleverswing cc.config.json --server
+community-cloud uninstall node-1 cc.config.json --server
 ```
 
 A server is refused without `--server`, because uninstalling one

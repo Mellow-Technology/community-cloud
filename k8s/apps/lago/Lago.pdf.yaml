@@ -1,0 +1,74 @@
+# Gotenberg, which Lago renders invoices with.
+#
+# Lago's own build of it, with the arguments the project's chart runs
+# it with: Chromium restarted every hundred documents, JavaScript off
+# in what it renders, and LibreOffice, which Lago never asks for,
+# switched off. It holds nothing, and only the worker talks to it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lago-pdf
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: lago
+    role: pdf
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lago-pdf
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lago
+      role: pdf
+  template:
+    metadata:
+      labels:
+        app: lago
+        role: pdf
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: gotenberg
+          image: ghcr.io/getlago/gotenberg:8.32
+          imagePullPolicy: IfNotPresent
+          args:
+            - gotenberg
+            - --libreoffice-disable-routes=true
+            - --chromium-ignore-certificate-errors=true
+            - --chromium-disable-javascript=true
+            - --api-timeout=30s
+            - --chromium-max-queue-size=20
+            - --chromium-restart-after=100
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: 100m

@@ -33,9 +33,13 @@ texts are here, under the names the FSF asks for:
 
 ## What this covers, and what it doesn't
 
-This applies to `installer/` only. The rest of the repository — the
-Kubernetes manifests under `k8s/`, the documentation, everything else
-— stays under the MIT License in [`../LICENSE.md`](../LICENSE.md).
+This applies to `installer/` only. The Headlamp plugins under
+`headlamp/` are separately LGPL-3.0-or-later on the same terms, and carry
+their own copies of these texts: see
+[`../headlamp/LICENSE.md`](../headlamp/LICENSE.md). The rest of the
+repository — the Kubernetes manifests under `k8s/`, the documentation,
+everything else — stays under the MIT License in
+[`../LICENSE.md`](../LICENSE.md).
 
 ## Why not Affero
 

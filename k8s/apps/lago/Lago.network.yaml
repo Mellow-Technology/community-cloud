@@ -1,0 +1,144 @@
+# How Lago is reached.
+#
+# A ListenerSet on the cluster Gateway, as for the other applications,
+# with two hostnames: the web app, and the API. The web app runs in the
+# browser and calls the API from there, so both have to be reachable
+# from outside, and the API is also what other software bills through,
+# with its own API keys. Neither is behind Authentik, which Lago can't
+# sign in through; Lago's own accounts are the way in.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for each HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: lago
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.billing }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.billing }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: lago-tls
+    - name: api-http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.billingApi }}
+    - name: api-https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.billingApi }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: lago-api-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: lago
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: lago
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.billing }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: lago-front
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: lago-api
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: lago
+      sectionName: api-https
+  hostnames:
+    - {{ .Values.domain.billingApi }}
+  rules:
+    # Lago's metrics are mounted on the API with nothing in front of
+    # them, and are nobody's business outside the cluster
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /metrics
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /
+            statusCode: 302
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: lago
+          port: 3000
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listeners is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: lago-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: lago
+      sectionName: http
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: lago
+      sectionName: api-http
+  hostnames:
+    - {{ .Values.domain.billing }}
+    - {{ .Values.domain.billingApi }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

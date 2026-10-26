@@ -74,6 +74,22 @@ export interface PlanProblem {
 }
 
 /**
+ * The bundles a plan will actually run something from, in the order
+ * it runs them.
+ *
+ * Not every bundle in a plan has steps: one asked for read-only
+ * commands may have none. These are the ones the run is numbered by,
+ * live and in any report afterwards, so a number always means the same
+ * bundle and there are no gaps where an empty one was.
+ *
+ * @param plan
+ * @returns
+ */
+export function getRunningBundles(plan: Plan): string[] {
+  return plan.bundles.filter((bundle) => plan.steps.some((step) => step.bundle === bundle));
+}
+
+/**
  * How a plan should be built.
  *
  * - purposes: only include commands for these. What makes the same

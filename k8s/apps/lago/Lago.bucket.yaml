@@ -1,0 +1,59 @@
+# Lago's bucket in the cluster's SeaweedFS, and keys to it and nothing
+# else.
+#
+# All three are requests the SeaweedFS operator carries out: it makes
+# the bucket, an S3 user called "lago", and a key pair for that user,
+# which it writes into the Secret "lago-s3" here for the API and the
+# worker to read. They're allowed to point at a cluster in another
+# namespace because cc-office carries the label SeaweedFS.yaml's grant
+# looks for.
+#
+# The bucket stays if this is ever removed — "Retain" is the operator's
+# default, and it holds every invoice Lago has sent. The user and its
+# keys go, which is what removing them should do.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Identity
+metadata:
+  name: lago
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Credentials
+metadata:
+  name: lago
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+  identityRef:
+    name: lago
+  # Made and owned by the operator, with the keys under "accessKey"
+  # and "secretKey"
+  secretRef:
+    name: lago-s3
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Bucket
+metadata:
+  name: lago
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  clusterRef:
+    name: seaweed
+    namespace: seaweedfs
+  # Everything Lago does with its files, and nothing that would let it
+  # change who else may
+  access:
+    - user: lago
+      actions: [Read, Write, List, Tagging]

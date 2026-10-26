@@ -1,0 +1,848 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Community Cloud configuration",
+  "description": "Everything the installer does comes from this file. See installer/README.md#configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Where this schema is, for an editor to check the file against."
+    },
+    "nodes": {
+      "type": "array",
+      "description": "The machines in the cluster. The only required section.",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "k3s": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The cluster token. The server and every agent need the same one. Required."
+        },
+        "version": {
+          "type": "string",
+          "description": "Pin the K3s release. Otherwise the current stable one."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Pin the K3s release channel. Otherwise stable."
+        },
+        "clusterCidr": {
+          "type": "string",
+          "description": "The pod network. Defaults to 10.42.0.0/16, and wants to agree with the Cilium values."
+        },
+        "disable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Packaged components to leave out, e.g. metrics-server. traefik, servicelb and local-storage are always left out."
+        },
+        "extraServerArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Anything else to pass to the K3s server."
+        },
+        "extraAgentArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Anything else to pass to K3s agents."
+        },
+        "kubeconfig": {
+          "type": "string",
+          "description": "Where kubectl should look, for a cluster this didn't build. Defaults to /etc/rancher/k3s/k3s.yaml."
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "congestionControl": {
+          "type": "string",
+          "description": "TCP congestion control. Defaults to bbr."
+        },
+        "qdisc": {
+          "type": "string",
+          "description": "The default queueing discipline. Defaults to fq, which BBR wants underneath it."
+        },
+        "congestionModule": {
+          "type": "string",
+          "description": "The kernel module providing the algorithm, when it isn't tcp_<algorithm>."
+        },
+        "cilium": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "type": "string",
+              "description": "The Cilium release."
+            },
+            "cliVersion": {
+              "type": "string",
+              "description": "The Cilium CLI release. \"stable\" takes whatever is current instead."
+            },
+            "gatewayApiVersion": {
+              "type": "string",
+              "description": "The Gateway API release. Pinned deliberately: a mismatched pair fails quietly."
+            },
+            "kubeProxyReplacement": {
+              "type": "boolean",
+              "description": "Whether Cilium takes over from kube-proxy. Defaults to true. K3s reads this too."
+            },
+            "valuesFile": {
+              "type": "string",
+              "description": "Override the Cilium values."
+            }
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "description": "How the outside world reaches the cluster.",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "floating",
+                "port-forward"
+              ],
+              "description": "floating: the address is already on a gateway node's interface. port-forward: a router maps ports to a LAN address nothing holds, and Cilium answers ARP for it."
+            },
+            "addresses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "What a LoadBalancer Service may be given: \"203.0.113.10\", \"10.0.0.0/29\", or \"192.168.1.240-192.168.1.250\"."
+            },
+            "interfaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "port-forward only. Which interfaces to answer ARP on, as regular expressions. Defaults to every local interface."
+            },
+            "name": {
+              "type": "string",
+              "description": "What to call the pool and policy. Defaults to community-cloud-gateway."
+            }
+          }
+        },
+        "externalIPs": {
+          "type": "object",
+          "description": "Addresses a particular node holds, as node name to address. The node must be a gateway.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "nebula": {
+          "type": "object",
+          "description": "A Defined Networking mesh, for nodes that can't reach each other directly.",
+          "additionalProperties": false,
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "description": "A Defined Networking API key. Falls back to the DEFINED_API_KEY environment variable."
+            },
+            "network": {
+              "type": "string",
+              "description": "Which network, by name."
+            },
+            "networkID": {
+              "type": "string",
+              "description": "Which network, by ID."
+            },
+            "id": {
+              "type": "string",
+              "deprecated": true,
+              "description": "Not a setting: the network's ID goes in networkID. Preflight says what's used instead."
+            },
+            "defaultRole": {
+              "type": "string",
+              "description": "The role nodes enrol under."
+            },
+            "roles": {
+              "type": "array",
+              "description": "Roles to create on the network.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "firewallRules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "protocol": {
+                          "enum": [
+                            "ANY",
+                            "TCP",
+                            "UDP",
+                            "ICMP"
+                          ]
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "allowedRole": {
+                          "type": "string",
+                          "description": "The role allowed in, by name."
+                        },
+                        "allowedTags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "portRange": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "from": {
+                              "$ref": "#/$defs/port"
+                            },
+                            "to": {
+                              "$ref": "#/$defs/port"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "$ref": "#/$defs/clusterStorage"
+    },
+    "packages": {
+      "type": "object",
+      "description": "Which Helm charts to install. true is shorthand for enabled.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "deprecated": true,
+          "deprecationMessage": "isn't a package, and is ignored. It can be taken out."
+        }
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "releaseName": {
+                "type": "string"
+              },
+              "valuesFile": {
+                "type": "string",
+                "description": "Relative to the working directory."
+              },
+              "repo": {
+                "type": "string",
+                "description": "For a package that isn't in the catalogue."
+              },
+              "chart": {
+                "type": "string",
+                "description": "For a package that isn't in the catalogue."
+              },
+              "description": {
+                "type": "string"
+              },
+              "requires": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Which plugins to load from ~/.community-cloud/plugins/.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The fingerprint approved for it. Leave it out to be shown what the plugin adds and given the line to paste."
+          }
+        }
+      }
+    },
+    "registries": {
+      "type": "object",
+      "description": "Credentials for private registries, keyed by hostname.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "type": "object",
+            "description": "username and password, or one of the encoded forms.",
+            "additionalProperties": false,
+            "properties": {
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              },
+              "auth": {
+                "type": "string",
+                "description": "base64 of username:password."
+              },
+              "identityToken": {
+                "type": "string"
+              }
+            }
+          },
+          "tls": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "caFile": {
+                "type": "string"
+              },
+              "certFile": {
+                "type": "string"
+              },
+              "keyFile": {
+                "type": "string"
+              },
+              "insecureSkipVerify": {
+                "type": "boolean"
+              }
+            }
+          },
+          "endpoint": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where to actually fetch from, for mirroring."
+          },
+          "rewrite": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Regular expression rewrites applied to the image path."
+          }
+        }
+      }
+    },
+    "values": {
+      "type": "object",
+      "description": "What the manifests under k8s/ render against, as .Values.<path>. Open: plugins and your own manifests can read anything put here.",
+      "properties": {
+        "adminEmail": {
+          "type": "string",
+          "description": "The administrator's address."
+        },
+        "domain": {
+          "type": "object",
+          "description": "The hostname each application is served on.",
+          "properties": {
+            "main": {
+              "type": "string"
+            },
+            "auth": {
+              "type": "string",
+              "description": "Authentik."
+            },
+            "agent": {
+              "type": "string"
+            },
+            "crm": {
+              "type": "string"
+            },
+            "mattermost": {
+              "type": "string"
+            },
+            "billing": {
+              "type": "string",
+              "description": "Lago's web app."
+            },
+            "billingApi": {
+              "type": "string",
+              "description": "Lago's API, which its web app and anything billing through it call."
+            },
+            "signing": {
+              "type": "string",
+              "description": "Documenso."
+            },
+            "headlamp": {
+              "type": "string",
+              "description": "Headlamp, behind its Authentik gate."
+            },
+            "storage": {
+              "type": "string",
+              "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."
+            }
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "authentik": {
+          "type": "object",
+          "properties": {
+            "secretKey": {
+              "type": "string"
+            }
+          }
+        },
+        "storageControllerReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many TopoLVM controllers to run. Defaults to the number of storage nodes, since a replica with no node to go to never schedules."
+        },
+        "k8sApiServer": {
+          "type": "string",
+          "description": "Derived from the control-plane node; set it only to override."
+        },
+        "k8sApiPort": {
+          "type": "string",
+          "description": "Derived; defaults to 6443."
+        },
+        "l2Announcements": {
+          "type": "boolean",
+          "description": "Derived from the gateway mode; set it only to override."
+        },
+        "networkDevices": {
+          "type": "string",
+          "description": "Derived from the shared interface list; set it only to override."
+        }
+      },
+      "additionalProperties": true
+    },
+    "config": {
+      "type": "object",
+      "deprecated": true,
+      "deprecationMessage": "isn't read by the installer, and manifests only see it as .Values.config. Move what's in it under \"values\" — values.adminEmail, for instance."
+    },
+    "domains": {
+      "type": "object",
+      "deprecated": true,
+      "deprecationMessage": "is the older place for hostnames, and manifests don't read it. Move them under \"values.domain\"."
+    },
+    "smtp": {
+      "type": "object",
+      "description": "The mail servers applications send through, and which namespaces may send at all.",
+      "additionalProperties": false,
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/mail",
+          "description": "What namespaces share. Never credentials."
+        },
+        "namespaces": {
+          "type": "object",
+          "description": "The namespaces that may send mail, by name, each with credentials of its own.",
+          "additionalProperties": {
+            "$ref": "#/$defs/mail"
+          }
+        }
+      }
+    },
+    "dns": {
+      "type": "object",
+      "description": "Publishes the hostnames applications are routed on, through ExternalDNS.",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "What records point at. Needed behind a router forwarding ports."
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Names the instances and their credentials. Lower case letters, digits and hyphens."
+              },
+              "provider": {
+                "type": "string",
+                "description": "An ExternalDNS provider: cloudflare, aws, google, digitalocean, rfc2136 and so on."
+              },
+              "domains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The domains its instances may write. A record outside them is never touched."
+              },
+              "excludeDomains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Parts of those domains that belong to someone else."
+              },
+              "namespaces": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Whose routes it reads. One instance runs for each."
+              },
+              "credentials": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Environment variables, named as the provider's ExternalDNS documentation names them."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Further ExternalDNS flags."
+              },
+              "target": {
+                "type": "string",
+                "description": "In place of dns.target, for this provider."
+              },
+              "policy": {
+                "enum": [
+                  "sync",
+                  "upsert-only"
+                ],
+                "description": "sync (the default) removes a record when its route goes; upsert-only never removes anything."
+              }
+            }
+          }
+        }
+      }
+    },
+    "pipelines": {
+      "type": "object",
+      "description": "Named sequences of bundles, for run-pipeline.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "helm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Pin the Helm release, e.g. v3.16.3."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "What to call it. Also how it registers in the cluster, when it can be a DNS label."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "What to print it as, when that isn't its name."
+        },
+        "address": {
+          "type": "string",
+          "description": "How to reach it over SSH. Often an alias from ~/.ssh/config."
+        },
+        "sshHost": {
+          "type": "string",
+          "deprecated": true,
+          "deprecationMessage": "is an older name for \"address\", and nothing connects through it. Use \"address\"."
+        },
+        "type": {
+          "enum": [
+            "server",
+            "agent"
+          ],
+          "description": "Exactly one node should be a server."
+        },
+        "username": {
+          "type": "string",
+          "description": "The SSH user. Needs passwordless sudo to root, without requiretty."
+        },
+        "keyFile": {
+          "type": "string",
+          "description": "A private key path. Otherwise the usual ~/.ssh keys and your agent are tried."
+        },
+        "port": {
+          "$ref": "#/$defs/port",
+          "description": "SSH port, when it isn't 22."
+        },
+        "apiAddress": {
+          "type": "string",
+          "description": "Where other nodes reach this one's Kubernetes API, when that differs from address."
+        },
+        "nodeName": {
+          "type": "string",
+          "description": "What to register as in the cluster, when name and address can't be DNS labels."
+        },
+        "gateway": {
+          "type": "boolean",
+          "description": "true if the outside world can reach this node."
+        },
+        "roles": {
+          "type": "array",
+          "description": "What it's for, applied as node-role.kubernetes.io/<role> labels.",
+          "items": {
+            "enum": [
+              "gateway",
+              "lighthouse",
+              "worker",
+              "worker-gpu",
+              "storage-local",
+              "storage-distributed",
+              "storage"
+            ]
+          }
+        },
+        "labels": {
+          "description": "Anything else worth labelling it with, as key/value pairs. A list here is the older shape for roles.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "region": {
+          "enum": [
+            "nam",
+            "sam",
+            "eur",
+            "naf",
+            "waf",
+            "maf",
+            "eaf",
+            "saf",
+            "mea",
+            "nas",
+            "sas",
+            "eas",
+            "sea",
+            "anz",
+            "pac",
+            "atl",
+            "ant",
+            "mob"
+          ],
+          "description": "Where it physically is. Codes are fixed: see src/topology/regions.ts."
+        },
+        "zone": {
+          "type": "string",
+          "description": "A single physical location within the region, e.g. eur-de-1."
+        },
+        "storage": {
+          "$ref": "#/$defs/storage"
+        },
+        "nebula": {
+          "type": "object",
+          "description": "Per-node mesh settings.",
+          "additionalProperties": false,
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "listenPort": {
+              "$ref": "#/$defs/port",
+              "description": "Required for a lighthouse or a relay, and picked automatically otherwise."
+            },
+            "staticAddresses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "How other hosts reach this one, as host:port. Required for a lighthouse."
+            },
+            "isLighthouse": {
+              "type": "boolean"
+            },
+            "isRelay": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "description": "Which disks TopoLVM may carve volumes out of. Per node, it overrides the cluster-wide section.",
+      "additionalProperties": false,
+      "properties": {
+        "disks": {
+          "$ref": "#/$defs/storageDisks"
+        },
+        "diskClasses": {
+          "$ref": "#/$defs/storageDiskClasses"
+        },
+        "minimumSizeGb": {
+          "$ref": "#/$defs/storageMinimumSizeGb"
+        }
+      }
+    },
+    "clusterStorage": {
+      "type": "object",
+      "description": "Which disks TopoLVM may carve volumes out of, on every node, and how much each service claims from them.",
+      "additionalProperties": false,
+      "properties": {
+        "disks": {
+          "$ref": "#/$defs/storageDisks"
+        },
+        "diskClasses": {
+          "$ref": "#/$defs/storageDiskClasses"
+        },
+        "minimumSizeGb": {
+          "$ref": "#/$defs/storageMinimumSizeGb"
+        },
+        "allocations": {
+          "type": "object",
+          "description": "How much local disk each service claims, in whole GiB. They share the same volume groups, so together they have to fit on the storage nodes. A size can be raised later; it can't be lowered.",
+          "additionalProperties": false,
+          "properties": {
+            "databaseGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The shared Postgres cluster, cc-postgres. Defaults to 30."
+            },
+            "objectStorageGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "SeaweedFS's volume server. Defaults to 50."
+            }
+          }
+        }
+      }
+    },
+    "storageDisks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Consider only these, by path. Narrows what's considered; never overrides a safety check."
+    },
+    "storageDiskClasses": {
+      "type": "object",
+      "description": "Put a disk in a class other than the one its hardware suggests, by path.",
+      "additionalProperties": {
+        "enum": [
+          "ssd",
+          "ssd-sata",
+          "ssd-cache",
+          "hdd"
+        ]
+      }
+    },
+    "storageMinimumSizeGb": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Ignore disks smaller than this. Defaults to 1."
+    },
+    "mail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "$ref": "#/$defs/mailPort"
+        },
+        "security": {
+          "$ref": "#/$defs/mailSecurity"
+        },
+        "fromDomain": {
+          "type": "string",
+          "description": "The domain mail is sent from. Defaults to values.domain.main."
+        },
+        "username": {
+          "type": "string",
+          "description": "Each namespace's own. Preflight refuses credentials in defaults."
+        },
+        "password": {
+          "type": "string",
+          "description": "Each namespace's own. Leave both out for a relay that takes mail without them."
+        }
+      }
+    },
+    "mailSecurity": {
+      "enum": [
+        "starttls",
+        "tls",
+        "none"
+      ],
+      "description": "starttls (587), tls (465) or none (25). Defaults to starttls."
+    },
+    "mailPort": {
+      "type": [
+        "integer",
+        "string"
+      ],
+      "description": "Defaults to the usual port for security."
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    }
+  }
+}

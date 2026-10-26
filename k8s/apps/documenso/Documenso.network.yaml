@@ -1,0 +1,93 @@
+# How Documenso is reached.
+#
+# A ListenerSet on the cluster Gateway rather than a Gateway of its
+# own, so the hostname and its certificate belong to this application
+# while the address and the Envoy serving it are shared. The cluster
+# Gateway only takes listeners from namespaces labelled
+# whereWereGoing=weDontNeedRoads, which cc-office is.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for each HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+#
+# Everything is routed. Documenso's own sign in only goes through
+# Authentik, and the people documents are sent to for signing open
+# them through their links without an account, so there's nothing
+# here to put a gate in front of.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: documenso
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.signing }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.signing }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: documenso-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: documenso
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: documenso
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.signing }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: documenso
+          port: 3000
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: documenso-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: documenso
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.signing }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

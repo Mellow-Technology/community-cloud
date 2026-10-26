@@ -114,7 +114,7 @@ async function run(
   });
 
   if (outcome.dryRun) {
-    printPlan(outcome.plan);
+    printPlan(outcome.plan, config);
     return;
   }
 

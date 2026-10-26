@@ -21,6 +21,11 @@ import { listEmbeddedFiles, readEmbeddedFile } from "../util/embedded.ts";
 import { buildTemplateValues, renderInstallerFile } from "../util/template.ts";
 import { loadFixtureConfig } from "./helpers.ts";
 
+// The namespace the manifests are rendered for. Some of what they read
+// is configured per namespace — mail — and every application the
+// binary carries runs in cc-office, which the fixture gives mail.
+const RENDERED_FOR = { templateNamespace: "cc-office" };
+
 /**
  * Follow a dotted path into the values.
  */
@@ -41,7 +46,7 @@ function check(config: CloudConfig, file: string, values: any) {
   let rendered: string;
 
   try {
-    rendered = renderInstallerFile(config, `embed://${file}`);
+    rendered = renderInstallerFile(config, `embed://${file}`, RENDERED_FOR);
   } catch (error: any) {
     return { broken: `won't render — ${error.message.split("\n")[0]}` };
   }
@@ -77,7 +82,7 @@ function check(config: CloudConfig, file: string, values: any) {
 
 describe("the manifests the binary carries", async () => {
   const config = await loadFixtureConfig();
-  const { Values } = buildTemplateValues(config) as any;
+  const { Values } = buildTemplateValues(config, RENDERED_FOR) as any;
   const files = listEmbeddedFiles();
 
   const results = files.map((file) => ({ file, ...check(config, file, Values) }));

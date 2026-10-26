@@ -97,50 +97,93 @@ tidying up by hand.
 
 | File | What it is |
 |---|---|
-| `SeaweedFS/SeaweedFS.values.yaml` | SeaweedFS's Helm values. |
+| `SeaweedFS/SeaweedFS.namespace.yaml` | Its namespace, labelled so the cluster Gateway takes its listeners. |
+| `SeaweedFS/SeaweedFS.yaml` | The cluster, as a `Seaweed` resource, and the grant saying which namespaces may keep buckets in it. |
+| `SeaweedFS/SeaweedFS.network.yaml` | S3 on `values.domain.storage`, through the cluster Gateway. |
 
 [SeaweedFS](https://github.com/seaweedfs/seaweedfs) provides
-S3-compatible object storage. It's installed as the `seaweedfs`
-package, into the `seaweedfs` namespace.
+S3-compatible object storage. It's run by the
+[SeaweedFS operator](https://github.com/seaweedfs/seaweedfs-operator),
+which the `seaweedfs` package installs into the `seaweedfs` namespace
+(chart 0.1.43, pinned), and the cluster is the `Seaweed` resource
+`seaweed` in the same namespace.
 
-This is the smallest install the chart can do: one pod running
-SeaweedFS's master, volume server, filer and S3 gateway together
-(the chart's `allInOne` mode), on one volume, keeping one copy of
-everything. It's a single point of failure on purpose, as a starting
-point that's easy to verify before anything is spread across
-machines.
+It's the smallest cluster the operator makes: one master, one volume
+server, one filer and one S3 gateway, keeping one copy of everything.
+It's a single point of failure on purpose, as a starting point that's
+easy to verify before anything is spread across machines.
 
-- **Storage**: a claim on `cc-local-ssd-fast`, sized from
-  `storage.allocations.objectStorageGb` (see below). Because the
-  volume is local, the pod stays on the node where the claim was
-  first made.
-- **Access**: S3 on `seaweedfs-all-in-one.seaweedfs.svc:8333`, inside
-  the cluster only. Authentication is on. The chart generates an
-  admin key pair and a read-only key pair into the
-  `seaweedfs-s3-secret` Secret on first install, and keeps them
-  across upgrades.
-- **Region**: SeaweedFS accepts whatever region a request is signed
-  for, so clients can leave theirs at `us-east-1`.
+- **Storage**: three claims on `cc-local-ssd-fast`. The volume
+  server's holds the data and is sized from
+  `storage.allocations.objectStorageGb` (see below). The master's
+  (1 GiB) and the filer's (5 GiB) hold the cluster's state and the
+  names of everything stored, and are fixed. Because the volumes are
+  local, each pod stays on the node where its claim was first made.
+- **Access**: S3 on `seaweed-s3.seaweedfs.svc:8333` inside the
+  cluster, which is what applications talk to. Buckets are addressed
+  by path, and SeaweedFS accepts whatever region a request is signed
+  for, so clients can leave theirs at `us-east-1`. The manifests read
+  both from `.Values.objectStorage`.
+- **From outside**: the same S3 on `values.domain.storage`, with a
+  certificate from cert-manager. It's there for links applications
+  sign and hand to browsers — Authentik's web interface loads icons
+  and backgrounds straight from its bucket. No bucket is readable
+  anonymously, so every request there needs keys, or a link signed
+  with them. Lago and Twenty send their files on themselves instead,
+  and never hand out a link to SeaweedFS.
+- **Version**: SeaweedFS itself is pinned in the resource, since the
+  operator doesn't choose one.
 
-Two settings in the values file are less obvious than they look.
-`allInOne` doesn't switch off the chart's separate master, volume
-and filer components, so the file switches them off. And
-`volume.dataDirs[0].maxVolumes` is set to `0`, which sizes the number
-of volumes to the disk. Without it, `weed server` allows 8 volumes of
-1000 MB each, which caps the store at about 8 GB however large the
-claim is.
+### Buckets
+
+An application doesn't use any cluster-wide key. It asks for its own
+bucket and keys to only that bucket, with three of the operator's
+resources in its own namespace:
+
+- a `Bucket`, naming who may do what with it;
+- an `S3Identity`, the user those keys belong to;
+- an `S3Credentials`, which has the operator make a key pair and
+  write it into a Secret beside it, under `accessKey` and
+  `secretKey`.
+
+`k8s/apps/lago/Lago.bucket.yaml` is the example, and Twenty's and
+Authentik's `*.storage.yaml` are the same shape. The package lists
+the bucket and the credentials under `ready`, so the install waits for
+the operator to finish before it waits for the application.
+
+These point at a cluster in another namespace, which the operator
+refuses unless a `ResourceReferenceGrant` in `seaweedfs` allows it.
+The grant in `SeaweedFS.yaml` lets in any namespace labelled
+`storage.community-cloud.technology/buckets: "true"`, which `cc-office`
+is. Another namespace gets buckets by carrying the label too.
+
+A bucket outlives its resource: the operator's default is to keep it
+and everything in it. The user and its keys don't, so removing an
+application's resources revokes its access and keeps its files.
+
+Two settings in `SeaweedFS.yaml` are less obvious than they look.
+Every bucket is a collection of volume files of its own, and the
+volume server sizes how many it can hold from its disk. At
+SeaweedFS's default of 30 GB a volume, a 50 GiB disk would have room
+for one bucket, so the limit is 1 GiB. And a new bucket is given seven
+volumes at a time by default, which with one copy of everything fills
+those slots after about seven buckets, so it's two.
 
 ### Not yet
 
+- **Signing in through Authentik.** The operator has an
+  `S3OIDCProvider` resource for handing out S3 keys to people signed
+  in elsewhere, but in this release it isn't wired up and is switched
+  off. The other way SeaweedFS can do it, a fixed IAM file, freezes the
+  store the per-application keys live in. Its admin UI has a password
+  of its own and isn't installed.
+- **Backups.** The operator can snapshot the filer's metadata on a
+  schedule, and mirror the data elsewhere. Neither is set up.
 - **Other storage classes.** It's SSD for now. SeaweedFS can tier
   volumes by disk type, which could put cold data on `hdd`, but that
   needs investigating first.
-- **More than one node.** That means the chart's separate components,
-  a replication setting other than `000`, and probably the
-  `storage-distributed` role.
-- **Buckets for applications.** The apps' `ObjectBucketClaim`s expect
-  a bucket provisioner and a `cc-s3-storage` class, and nothing in
-  the cluster provides either yet.
+- **More than one node.** That means more replicas, a replication
+  setting other than `000`, and a filer store shared between filers.
 
 ## How much each service gets
 
@@ -157,12 +200,13 @@ rather than in each manifest:
 | Key | For | Default |
 |---|---|---|
 | `databaseGb` | The shared Postgres cluster, `cc-postgres` | 30 |
-| `objectStorageGb` | SeaweedFS | 50 |
+| `objectStorageGb` | SeaweedFS's volume server | 50 |
 
 The manifests read these back as `.Values.databaseVolumeSize` and
 `.Values.objectStorageVolumeSize`. The classes allow expansion, so a
 size can be raised and the claim grows to match on the next install.
-A size can't be lowered. The sum has to fit on the storage nodes. A
+A size can't be lowered. The sum has to fit on the storage nodes,
+along with the 6 GiB SeaweedFS's master and filer claim. A
 claim bigger than the volume group behind it doesn't fail. It waits,
 with its pod stuck in Pending.
 

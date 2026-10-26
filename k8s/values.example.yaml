@@ -29,6 +29,15 @@ domain:
   auth: "auth.example.com"
   # Picoclaw agent hostname (derived: agent.<main>)
   agent: "agent.example.com"
+  # Lago's web app and its API (derived: billing.<main>, billing-api.<main>)
+  billing: "billing.example.com"
+  billingApi: "billing-api.example.com"
+  # Documenso hostname (derived: sign.<main>)
+  signing: "sign.example.com"
+  # Headlamp, behind Authentik (derived: headlamp.<main>)
+  headlamp: "headlamp.example.com"
+  # SeaweedFS's S3, for links to files in buckets (derived: s3.<main>)
+  storage: "s3.example.com"
 
 # -------------------------------------------------------------------
 # Storage

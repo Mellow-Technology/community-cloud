@@ -10,7 +10,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { checkConfiguration } from "../runners/preflight.ts";
+import { checkConfiguration, findConfigurationWarnings } from "../runners/preflight.ts";
+import { explainSudo } from "../cli/commands/Preflight.ts";
 import { configFrom, loadFixtureConfig } from "./helpers.ts";
 
 const SERVER = { name: "srv", address: "srv", type: "server" };
@@ -59,6 +60,27 @@ describe("a configuration preflight is happy with", () => {
 
 describe("what preflight catches", () => {
   const cases: [string, Record<string, unknown>, string][] = [
+    [
+      "a package nothing provides, as when its plugin isn't loaded",
+      { k3s: { token: "t" }, nodes: [SERVER], packages: { mastodon: true } },
+      'enable the plugin under "plugins"',
+    ],
+    [
+      "a display name that isn't text",
+      { k3s: { token: "t" }, nodes: [{ ...SERVER, displayName: 7 }] },
+      '"nodes[srv].displayName" should be text',
+    ],
+    [
+      "two nodes displayed the same",
+      {
+        k3s: { token: "t" },
+        nodes: [
+          { ...SERVER, displayName: "Bangkok" },
+          { ...AGENT, displayName: "Bangkok" },
+        ],
+      },
+      "both displayed as",
+    ],
     ["no nodes at all", { k3s: { token: "t" } }, "No nodes"],
     ["no server", { k3s: { token: "t" }, nodes: [AGENT] }, "no control plane"],
     [
@@ -123,4 +145,81 @@ describe("what preflight catches", () => {
       );
     });
   }
+});
+
+describe("whether a node's sudo will do", () => {
+  const ask = (status: string, said: string) => explainSudo("deploy", { status, said });
+
+  it("is happy when a shell runs as root without a password", () => {
+    assert.equal(ask("0", "0"), undefined);
+  });
+
+  it("says when sudo runs as someone other than root", () => {
+    assert.match(ask("0", "1001") ?? "", /uid 1001 rather than root/);
+  });
+
+  it("says when sudo wants a password, and how to stop it", () => {
+    const problem = ask("1", "sudo: a password is required") ?? "";
+    assert.match(problem, /asks for a password/);
+    assert.match(problem, /deploy ALL=\(ALL\) NOPASSWD: ALL/);
+  });
+
+  it("recognises newer sudo's way of saying it wants a password", () => {
+    assert.match(ask("1", "sudo: interactive authentication is required") ?? "", /asks for a password/);
+  });
+
+  it("says when sudo insists on a terminal", () => {
+    assert.match(ask("1", "sudo: sorry, you must have a tty to run sudo") ?? "", /requiretty/);
+  });
+
+  it("says when the user isn't in sudoers", () => {
+    assert.match(
+      ask("1", "deploy is not in the sudoers file.  This incident will be reported.") ?? "",
+      /can't use sudo on this node at all/,
+    );
+  });
+
+  it("says when passwordless sudo only covers some commands", () => {
+    assert.match(
+      ask("1", "Sorry, user deploy is not allowed to execute '/bin/sh -c id -u' as root on node1.") ?? "",
+      /only use sudo for some commands/,
+    );
+  });
+
+  it("says when there's no sudo at all", () => {
+    assert.match(ask("missing", "") ?? "", /isn't installed/);
+  });
+
+  it("passes on what sudo said when it's something unrecognised", () => {
+    assert.match(ask("1", "sudo: something new") ?? "", /something new/);
+  });
+});
+
+describe("what preflight warns about without stopping", () => {
+  const warnings = (nebula: Record<string, unknown>) =>
+    findConfigurationWarnings(
+      configFrom({ k3s: { token: "t" }, nodes: [SERVER], network: { nebula } }),
+    );
+
+  it("says a Nebula network \"id\" is ignored, and what's used instead", () => {
+    const [warning] = warnings({ id: "network-abc", network: "home" });
+
+    assert.match(warning ?? "", /"network.nebula.id" isn't a setting/);
+    assert.match(warning ?? "", /by its name, "home"/);
+  });
+
+  it("says when nothing is left to find the network by", () => {
+    assert.match(warnings({ id: "network-abc" })[0] ?? "", /no way to find the network/);
+  });
+
+  it("says nothing when the ID is where it belongs", () => {
+    assert.deepEqual(warnings({ networkID: "network-abc" }), []);
+  });
+
+  it("doesn't stop an install over it", () => {
+    assert.deepEqual(
+      checkConfiguration(configFrom({ k3s: { token: "t" }, nodes: [SERVER], network: { nebula: { id: "x", network: "home" } } })),
+      [],
+    );
+  });
 });

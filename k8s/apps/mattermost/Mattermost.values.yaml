@@ -1,14 +1,11 @@
-# Mattermost Operator Values
+# The Mattermost operator's Helm values.
 #
-# Prepare:
-# From project root directory:
-#
-# 1 .helm repo add mattermost https://helm.mattermost.com
-# 2. kubectl create ns mattermost-operator
-# 3. helm install mattermost-operator mattermost/mattermost-operator -n mattermost-operator
+# Installed by the "mattermost" package, into cc-office beside the
+# installation it runs, from the chart at https://helm.mattermost.com.
+# The installation itself is Mattermost.yaml.
 mattermostOperator:
   enabled: true
-  # Just go with a single operator replica
+  # One is plenty for the one installation
   replicas: 1
   rbac:
     create: true

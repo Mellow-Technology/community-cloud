@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { join } from "node:path/posix";
 
 import { resolveSshHost } from "./sshConfig.ts";
+import { inPosixShell } from "../util/shell.ts";
 
 // Common SSH key paths to try automatically
 const DEFAULT_KEY_PATHS = [
@@ -149,8 +150,9 @@ export default class RemoteHost {
     command: string,
     stdin?: string,
   ): Promise<{ stdout: string; stderr: string; parsed: any }> {
+    // Under sh rather than the login shell; see inPosixShell
     const result = await this.ssh.execCommand(
-      command,
+      inPosixShell(command),
       stdin !== undefined ? { stdin } : {},
     );
 

@@ -21,7 +21,8 @@
  * 10. gateway     — a way in from outside
  * 11. helm        — Helm itself, on the control plane
  * 12. helm-charts — storage classes, databases, applications
- * 13. cluster     — record what this cluster was built from
+ * 13. dns         — publish the applications' names, now they're routed
+ * 14. cluster     — record what this cluster was built from
  *
  * Nebula is not here. A mesh is a decision about how sites reach each
  * other rather than a step in building one cluster, and a
@@ -32,7 +33,7 @@ import chalk from "chalk";
 import CloudConfig from "../util/CloudConfig.ts";
 import { ALL_NODES, resolveTarget } from "../pipeline/fleet.ts";
 import { describeStop, executePipeline, printPlan } from "../pipeline/execute.ts";
-import { checkConfiguration } from "./preflight.ts";
+import { checkConfiguration, printConfigurationWarnings } from "./preflight.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 
 /**
@@ -51,6 +52,7 @@ export const INSTALL_PIPELINE = [
   "gateway",
   "helm",
   "helm-charts",
+  "dns",
   "cluster",
 ];
 
@@ -84,6 +86,7 @@ export async function install(configPath: string, options: InstallOptions = {}) 
   // opened. A configuration with two servers in it is not going to
   // become installable halfway through.
   const problems = checkConfiguration(config);
+  printConfigurationWarnings(config);
 
   if (problems.length > 0) {
     throw new Error(
@@ -114,7 +117,7 @@ export async function install(configPath: string, options: InstallOptions = {}) 
   });
 
   if (outcome.dryRun) {
-    printPlan(outcome.plan);
+    printPlan(outcome.plan, config);
     return;
   }
 

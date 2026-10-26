@@ -97,8 +97,18 @@ cluster in service.
 | `node-joined` | Whether a node has joined the cluster and gone Ready |
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
+| `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
+| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw` | One application on its own, into a cluster that has the rest |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
+
+These install one package on its own. Their checks
+are that package's, which `helm-charts` already asks for every
+package the configuration enables, so a check-up of everything leaves
+them out — otherwise a cluster without Lago would be reported as
+having a broken one. `doctor --bundle lago` still asks.
+A package installed with `run-bundle` alone should be enabled under
+`packages` too, so the doctor knows to ask about it.
 
 The bundles below take a cluster apart rather than building one. Their
 checks assert the opposite of a working cluster — "K3s isn't running
@@ -137,48 +147,42 @@ drifted from the file it was built from.
 
 ```
 k8s/
-├── ai/                          # AI/ML workloads
-│   └── vLLM/
-│       ├── vllm-amd.yaml        # vLLM deployment (Mistral-7B, AMD MI300)
-│       └── vllm-amd-pvc.yaml    # PVC for model weights
+├── ai/vLLM/                     # vLLM deployment and its model PVC (AMD MI300)
 ├── apps/                        # Application deployments
-│   ├── authentik/               # Authentik auth server (6 manifests)
-│   ├── headlamp/                # Headlamp K8s UI plugin
-│   ├── mattermost/              # Mattermost chat (5 manifests)
-│   ├── office/                  # cc-office namespace
-│   ├── twenty/                  # Twenty CRM (7 manifests)
-│   ├── umami/                   # Analytics (template)
+│   ├── authentik/               # Authentik, installed by its plugin
+│   ├── documenso/               # Documenso document signing
+│   ├── headlamp/                # Headlamp cluster UI, behind an Authentik gate
+│   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
+│   ├── mattermost/              # Mattermost chat, through its operator
+│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis
+│   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
+│   ├── twenty/                  # Twenty CRM
 │   └── README.md
-├── certs/                       # TLS certificates
-│   ├── CertIssuer.yaml          # Namespaced issuer (Let's Encrypt)
-│   ├── ClusterIssuer.yaml       # Cluster-wide issuer
-│   ├── CertManagerValues.yaml   # cert-manager Helm values
-│   └── test-resources.yaml      # Self-signed test certificate
+├── certs/
+│   ├── CertManager.values.yaml  # cert-manager Helm values
+│   └── ClusterIssuer.yaml       # cc-lets-encrypt, applied by the cert-manager package
 ├── crd/                         # Custom Resource Definitions
 │   ├── webapps.crd.yaml         # Webapp lifecycle CRD
 │   └── sites.crd.yaml           # Multi-site config CRD
-├── database/                    # Database services
-│   ├── Postgres/
-│   │   ├── PostGISCluster.yaml  # PostGIS cluster (30Gi)
-│   │   └── PostgresCCDefault.yaml  # cc-postgres cluster for apps
-│   ├── Redis/
-│   │   └── RedisStandalone.yaml # Redis (5Gi SSD)
-│   └── MariaDB/                 # Prepared (no manifests yet)
-├── gateway/                     # The default application Gateway
-│   └── Gateway.yaml             # community-cloud de gateway
-├── k3s-config/                  # K3s node config
-│   ├── registries.yaml          # GitLab registry auth
-│   └── README.md
-├── networking/                  # Networking
+├── database/Postgres/
+│   └── PostGISCluster.yaml      # PostGIS cluster (30Gi)
+├── k3s-config/README.md         # K3s node config notes
+├── mq/nats/README.md            # NATS (prepared)
+├── networking/
+│   ├── cilium/
+│   │   ├── Cilium.values.yaml   # Cilium Helm values
+│   │   └── gateway/Gateway.yaml # cc-letsencrypt-web-gateway, made by the gateway bundle
 │   └── tailscale/               # Tailscale cross-site (prepared)
-└── storage/                     # Storage infrastructure
-    ├── StorageClass/
-    │   └── cc-local-ssd-fast.yaml  # Default SSD storage class
-    ├── TopoLVM/
-    │   └── TopoLVM.values.yaml       # TopoLVM values, and the device classes
-    ├── SeaweedFS/
-    │   └── SeaweedFS.values.yaml     # SeaweedFS S3-compatible object storage
-    └── README.md
+├── storage/                     # Storage infrastructure
+│   ├── StorageClass/            # cc-local-ssd-fast (default) and cc-local-ssd-sata
+│   ├── TopoLVM/
+│   │   └── TopoLVM.values.yaml  # TopoLVM values, and the device classes
+│   ├── SeaweedFS/
+│   │   ├── SeaweedFS.namespace.yaml  # Its namespace, labelled for the cluster Gateway
+│   │   ├── SeaweedFS.yaml            # The SeaweedFS cluster, and which namespaces may keep buckets
+│   │   └── SeaweedFS.network.yaml    # S3 on values.domain.storage
+│   └── README.md
+└── values.example.yaml          # The values the templates read
 ```
 
 ### Custom Resource Definitions
@@ -200,59 +204,104 @@ The `WebappController` (`installer/src/controller/WebappController.ts`) generate
 
 #### Twenty CRM (`apps/twenty/`)
 
-Open-source CRM with server + worker architecture:
+Open-source CRM, installed by the `twenty` package, on cc-postgres, the
+shared Redis and a SeaweedFS bucket:
 
 | File | Purpose |
 |---|---|
-| `Twenty.yaml` | Server (1 replica, port 3000) + Worker (1 replica, `yarn worker:prod`) deployments |
+| `Twenty.yaml` | Server (migrates as it starts, `/healthz` probes) and worker deployments, and the Service |
 | `Twenty.database.yaml` | CloudNativePG `Database` for the `twenty_crm` database |
-| `Twenty.storage.yaml` | `ObjectBucketClaim` for S3 storage (20 Gi limit) |
-| `Twenty.config.yaml` | ConfigMap with server URL |
-| `Twenty.install.yaml` | Init Job — runs `yarn database:init:prod` |
-| `Twenty.route.yaml` | Gateway API HTTPRoute |
-| `Twenty.cert.yaml` | Its certificate |
-| `Twenty.network.yaml` | Network policy |
+| `Twenty.storage.yaml` | Its SeaweedFS bucket (20 Gi quota), user and keys |
+| `Twenty.config.yaml` | Its settings: server URL, bucket, mail |
+| `Twenty.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
 
 #### Authentik (`apps/authentik/`)
 
-Authentication provider with Postgres backend and SeaweedFS S3 storage:
+Authentication provider, installed by the Authentik plugin (chart
+2026.8.5), with Postgres in cc-postgres and files in SeaweedFS:
 
 | File | Purpose |
 |---|---|
-| `Authentik.values.yaml` | Helm values — Postgres integration, S3 storage |
+| `Authentik.values.yaml` | Helm values — Postgres integration, S3 storage, mail |
 | `Authentik.database.yaml` | CloudNative-PG `Database` CRD |
-| `Authentik.storage.yaml` | ObjectBucketClaim |
-| `Authentik.cert.yaml` | TLS certificate |
-| `Authentik.config.yaml` | Gateway API route config |
+| `Authentik.storage.yaml` | Its SeaweedFS bucket (20 Gi quota), user and keys |
+| `Authentik.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
+
+#### Lago (`apps/lago/`)
+
+Billing: plans, subscriptions, usage and invoices. Lago has no OpenID
+Connect, so it keeps its own accounts, with sign up switched off. The
+`lago` package or bundle installs it, and the `redis-operator` and
+`seaweedfs` packages with it:
+
+| File | Purpose |
+|---|---|
+| `Lago.yaml` | API (migrations in an init container), worker, and clock (1 replica, `Recreate`) |
+| `Lago.front.yaml` | The web app |
+| `Lago.pdf.yaml` | Gotenberg, which renders invoices as PDFs |
+| `Lago.database.yaml` | Its role and database in cc-postgres |
+| `Lago.bucket.yaml` | Its SeaweedFS bucket for PDFs, exports and logos, and keys to only that |
+| `Lago.config.yaml` | Its environment, the web app's, and an initializer that serves files through the API |
+| `Lago.network.yaml` | ListenerSet on the cluster Gateway for the web app and the API, and their routes |
+
+#### Documenso (`apps/documenso/`)
+
+Document signing, signed into through Authentik over OpenID Connect,
+with passwords switched off. The `documenso` package or bundle
+installs it:
+
+| File | Purpose |
+|---|---|
+| `Documenso.yaml` | The application (1 replica), with its signing certificate mounted |
+| `Documenso.database.yaml` | Its CloudNative-PG role and `Database` — documents are stored there too |
+| `Documenso.config.yaml` | Its environment |
+| `Documenso.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `Documenso.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 
 #### Mattermost (`apps/mattermost/`)
 
-Chat platform using Mattermost Operator:
+Chat, installed by the `mattermost` package through the Mattermost operator, on cc-postgres and a SeaweedFS bucket:
 
 | File | Purpose |
 |---|---|
-| `Mattermost.yaml` | Mattermost CRD (100 users, 2 replicas, v10.11.19) |
-| `Mattermost.values.yaml` | Operator Helm values (v1.25.4, leader election, metrics) |
+| `Mattermost.yaml` | Mattermost installation (100 users, 1 replica, v10.11.19), external database and file store |
+| `Mattermost.values.yaml` | Operator Helm values (chart 1.0.5, operator v1.25.4) |
 | `Mattermost.database.yaml` | CloudNative-PG `Database` CRD |
-| `Mattermost.storage.yaml` | ObjectBucketClaim |
+| `Mattermost.storage.yaml` | Its SeaweedFS bucket (30 Gi quota), user and keys |
+| `Mattermost.network.yaml` | Service, ListenerSet and routes on the cluster Gateway |
 
 #### Headlamp (`apps/headlamp/`)
 
-Kubernetes dashboard plugin:
+Cluster web UI, installed by the `headlamp` package (chart 0.46.0)
+behind an Authentik gate:
 
 | File | Purpose |
 |---|---|
 | `Headlamp.values.yaml` | Helm values with `watchPlugins: true` |
-| `Headlamp.plugins.yaml` | Plugin configuration |
+| `Headlamp.network.yaml` | ListenerSet on the cluster Gateway, and a route to its gate |
 
-`cc-headlamp/` — Headlamp plugin project (TypeScript, `@kinvolk/headlamp-plugin`), with build/storybook/test tooling.
+`headlamp/plugins/` at the top of the repository holds Community
+Cloud's own Headlamp plugins, `cc-cumulus-theme` and
+`cc-storage-explorer`. They aren't deployed into the cluster yet.
+
+#### Picoclaw (`apps/picoclaw/`)
+
+AI agent with a web console, installed by the `picoclaw` package
+behind an Authentik gate:
+
+| File | Purpose |
+|---|---|
+| `Picoclaw.yaml` | The agent and console (1 replica, `Recreate`), and their Service |
+| `Picoclaw.config.yaml` | The configuration it starts with, copied to its volume once |
+| `Picoclaw.storage.yaml` | Its home volume |
+| `Picoclaw.network.yaml` | ListenerSet on the cluster Gateway, and a route to its gate |
 
 ### Storage Architecture
 
 | Layer | Technology | Details |
 |---|---|---|
 | **Local SSD** | TopoLVM | Default StorageClass `cc-local-ssd-fast`, XFS, Retain policy, WaitForFirstConsumer |
-| **Object** | SeaweedFS | S3-compatible, one all-in-one pod, cluster-internal on port 8333, size from `storage.allocations.objectStorageGb` |
+| **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
 
 TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache), `hdd` (cc-hdd-vg).
 
@@ -327,12 +376,12 @@ Build one with `community-cloud` and no arguments, and check it with
 ## Deployment Order
 
 1. **Provision nodes** — `community-cloud preflight`, then the `k3s` bundle
-2. **Storage** — TopoLVM → SeaweedFS
-3. **Networking** — Cilium → Gateway API → the cluster Gateway → cert-manager
-4. **CRDs** — Webapp, Site
-5. **Databases** — cc-postgres → Redis
-6. **Applications** — Twenty CRM → Authentik → Mattermost → Headlamp
-7. **Routes** — Gateway API HTTPRoutes for each domain
+2. **Networking** — Cilium → Gateway API → the cluster Gateway (the
+   `gateway` bundle)
+3. **Charts** — the `helm-charts` bundle, dependencies first:
+   cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
+   CloudNativePG and cc-postgres → Redis → Authentik (plugin) → the
+   applications, each with its own ListenerSet on the cluster Gateway
 
 ---
 
@@ -360,5 +409,5 @@ Proposals, not descriptions of what exists. Each says so at the top.
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
 | **Databases** | CloudNative-PG, Redis (Opstree) |
 | **AI** | vLLM (ROCm/AMD GPU) |
-| **Apps** | Twenty CRM, Authentik, Mattermost, Headlamp, Umami |
+| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |

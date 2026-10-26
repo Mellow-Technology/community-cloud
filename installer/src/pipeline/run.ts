@@ -18,11 +18,14 @@
  * that is the right trade for an installer. Being able to say "every
  * machine got as far as here" is worth more than finishing sooner.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
+import { format } from "node:util";
+
 import { CommandBundle } from "../cli/commands/CommandBundle.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { CommandScope } from "../cli/commands/Command.ts";
+import { CommandScope, CommandTarget } from "../cli/commands/Command.ts";
 import { Fleet, FleetMember } from "./fleet.ts";
-import { Plan, Step } from "./plan.ts";
+import { Plan, Step, getRunningBundles } from "./plan.ts";
 import { Outcome, Reporter, RunSummary, SilentReporter, StepOutcome } from "./reporter.ts";
 
 /**
@@ -45,6 +48,63 @@ export interface RunOptions {
   // Off by default: a command explaining what it found is useful when
   // one is being watched and unreadable when six nodes do it at once.
   verbose?: boolean;
+
+  // A bundle a node has to get through before anything else is asked
+  // of it. For the doctor and preflight: a node that can't sudo, or
+  // can't reach anything, fails every check after it for the same
+  // reason, and fifty failures with one cause bury the cause. An
+  // install doesn't need it, since it stops at the first failure
+  // anyway.
+  gate?: string;
+}
+
+/**
+ * Which node the code running now is on behalf of.
+ *
+ * Commands say things with console.log — a warning about swap, who
+ * the connection is as — from inside steps running on several nodes
+ * at once. Nothing passes the node down to them, and nothing should
+ * have to, so it's carried alongside instead, and the console is
+ * pointed at the reporter while a plan runs. What they say then comes
+ * out labelled with its node and in between the reporter's own lines,
+ * rather than written over the top of its progress bar.
+ */
+const speaker = new AsyncLocalStorage<string>();
+
+// The console methods pointed at the reporter during a run
+const CAPTURED = ["log", "info", "warn", "error"] as const;
+
+/**
+ * Send what's said on the console to the reporter until the returned
+ * function is called.
+ *
+ * Only what's said on behalf of a node. Anything else during a run is
+ * left as it was, since there's no node to label it with.
+ *
+ * @param reporter
+ * @returns a function that puts the console back
+ */
+function captureConsole(reporter: Reporter): () => void {
+  const originals = CAPTURED.map((method) => [method, console[method]] as const);
+
+  for (const [method, original] of originals) {
+    console[method] = (...args: unknown[]) => {
+      const node = speaker.getStore();
+
+      if (node === undefined) {
+        original.apply(console, args);
+        return;
+      }
+
+      reporter.nodeSaid(node, format(...args));
+    };
+  }
+
+  return () => {
+    for (const [method, original] of originals) {
+      console[method] = original;
+    }
+  };
 }
 
 /**
@@ -168,52 +228,78 @@ export async function runPlan(
   let completed = 0;
   let bundle: string | undefined;
 
-  reporter.planned(plan.nodes, plan.steps.length, plan.bundles);
+  // Nodes that didn't get through the gate
+  const blocked = new Set<string>();
 
-  for (const [index, step] of plan.steps.entries()) {
-    if (step.bundle !== bundle) {
-      bundle = step.bundle;
-      reporter.bundleStarted(bundle, step.bundleDescription);
+  reporter.planned(plan.nodes, plan.steps.length, getRunningBundles(plan));
+  const restoreConsole = captureConsole(reporter);
+
+  try {
+    for (const [index, step] of plan.steps.entries()) {
+      if (step.bundle !== bundle) {
+        bundle = step.bundle;
+        reporter.bundleStarted(bundle, step.bundleDescription);
+      }
+
+      const gated = options.gate !== undefined && step.bundle === options.gate;
+
+      // Every node at once. allSettled rather than all: a node that
+      // throws shouldn't stop the others being waited for, because the
+      // whole point is that they finish together.
+      const results = await Promise.all(
+        step.nodes.map((name) => {
+          const why = gated ? undefined : whyBlocked(step, name, fleet, blocked, options.gate);
+
+          return why !== undefined
+            ? Promise.resolve<StepResult>({ node: name, outcome: "blocked", why })
+            : runStepForNode(config, step, fleet, name, memory, reporter, options);
+        }),
+      );
+
+      if (gated) {
+        for (const result of results) {
+          if (result.outcome === "failed" && !blocked.has(result.node)) {
+            blocked.add(result.node);
+            reporter.nodeSaid(
+              result.node,
+              `Nothing else will be asked of this node until ${options.gate} passes`,
+            );
+          }
+        }
+      }
+
+      completed += 1;
+      reporter.stepFinished(step.command.name, index, plan.steps.length);
+
+      for (const result of results) {
+        outcomes.push({
+          bundle: step.bundle,
+          step: step.command.name,
+          node: result.node,
+          outcome: result.outcome,
+          ...(result.why !== undefined ? { why: result.why } : {}),
+        });
+      }
+
+      const failed = results.filter((result) => result.outcome === "failed");
+
+      for (const result of failed) {
+        failures.push({
+          step: step.command.name,
+          node: result.node,
+          why: result.why ?? "no reason given",
+        });
+      }
+
+      // The barrier. Everything above has finished on every node, so
+      // this is the one place where stopping leaves the cluster
+      // somewhere describable.
+      if (failed.length > 0 && options.keepGoing !== true) {
+        break;
+      }
     }
-
-    // Every node at once. allSettled rather than all: a node that
-    // throws shouldn't stop the others being waited for, because the
-    // whole point is that they finish together.
-    const results = await Promise.all(
-      step.nodes.map((name) =>
-        runStepForNode(config, step, fleet, name, memory, reporter, options),
-      ),
-    );
-
-    completed += 1;
-    reporter.stepFinished(step.command.name, index, plan.steps.length);
-
-    for (const result of results) {
-      outcomes.push({
-        bundle: step.bundle,
-        step: step.command.name,
-        node: result.node,
-        outcome: result.outcome,
-        ...(result.why !== undefined ? { why: result.why } : {}),
-      });
-    }
-
-    const failed = results.filter((result) => result.outcome === "failed");
-
-    for (const result of failed) {
-      failures.push({
-        step: step.command.name,
-        node: result.node,
-        why: result.why ?? "no reason given",
-      });
-    }
-
-    // The barrier. Everything above has finished on every node, so
-    // this is the one place where stopping leaves the cluster
-    // somewhere describable.
-    if (failed.length > 0 && options.keepGoing !== true) {
-      break;
-    }
+  } finally {
+    restoreConsole();
   }
 
   const summary: RunSummary = {
@@ -227,6 +313,44 @@ export async function runPlan(
   reporter.finished(summary);
 
   return summary;
+}
+
+/**
+ * Why a step won't be run for a node, when it won't.
+ *
+ * The node itself not having got through the gate is the obvious
+ * case. The other is a step run from the control plane — kubectl,
+ * helm — when the control plane is the one that didn't: whichever
+ * node it's on behalf of, it would run somewhere already known to be
+ * broken.
+ *
+ * @param step
+ * @param name the node the step would run for
+ * @param fleet
+ * @param blocked the nodes that didn't get through
+ * @param gate
+ * @returns
+ */
+function whyBlocked(
+  step: Step,
+  name: string,
+  fleet: Fleet,
+  blocked: Set<string>,
+  gate: string | undefined,
+): string | undefined {
+  if (blocked.has(name)) {
+    return `${gate} failed on ${name}, so this wasn't asked`;
+  }
+
+  if (step.runOn === CommandTarget.ControlPlane && blocked.size > 0) {
+    const controlPlane = fleet.controlPlane().name;
+
+    if (blocked.has(controlPlane)) {
+      return `${gate} failed on ${controlPlane}, which this runs from, so this wasn't asked`;
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -275,8 +399,11 @@ async function runStepForNode(
   bundle.setControlPlaneExec(fleet.controlPlane().connection.exec);
 
   try {
-    await bundle.runAllCommands();
+    await speaker.run(name, () => bundle.runAllCommands());
   } catch (error: any) {
+    reporter.nodeFinished(step.command.name, name, "failed");
+    reporter.nodeSaid(name, error.message);
+
     return { node: name, outcome: "failed", why: error.message };
   }
 

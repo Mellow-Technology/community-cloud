@@ -31,21 +31,26 @@
  */
 import chalk from "chalk";
 
+import { FAILURE, MARK_WIDTH, SUCCESS, padMark } from "../util/chalk.ts";
 import CloudConfig from "../util/CloudConfig.ts";
-import { ALL_NODES, resolveTarget } from "../pipeline/fleet.ts";
+import { ALL_NODES, displayNode, getDisplayNames, resolveTarget } from "../pipeline/fleet.ts";
 import {
   CommandPurpose,
   PROMPT_PURPOSES,
   READ_ONLY_PURPOSES,
 } from "../cli/commands/Command.ts";
-import { ConsoleReporter, StepOutcome } from "../pipeline/reporter.ts";
+import { ConsoleReporter, StepOutcome, numberBundle } from "../pipeline/reporter.ts";
 import { ExecuteOutcome, executePipeline } from "../pipeline/execute.ts";
+import { getRunningBundles } from "../pipeline/plan.ts";
 import {
   getBundle,
   getBundleNames,
   getCheckableBundleNames,
 } from "../cli/commands/bundles.ts";
 import { loadPlugins } from "../plugins/registry.ts";
+import { INSTALL_PIPELINE } from "./install.ts";
+import { printConfigurationWarnings } from "./preflight.ts";
+import { layOut } from "../util/prose.ts";
 
 /**
  * Options for a check-up.
@@ -90,8 +95,14 @@ function getPurposes(options: DoctorOptions): CommandPurpose[] {
     : purposes;
 }
 
+// What every node has to get through before anything else is asked
+// of it. A node that can't sudo, or can't reach the outside world,
+// would otherwise fail most of what follows for that one reason, and
+// the reason would be one line among fifty.
+const GATE = "preflight";
+
 /**
- * The bundles to look at, as a pipeline.
+ * The bundles to look at, as a pipeline, with the gate first.
  *
  * Everything except the ones that take a cluster apart. Their checks
  * are real checks and they assert the opposite of what this is asking:
@@ -104,17 +115,35 @@ function getPurposes(options: DoctorOptions): CommandPurpose[] {
  * @returns
  */
 function getPipeline(options: DoctorOptions): string {
-  if (options.bundle === undefined) {
-    return getCheckableBundleNames().join(",");
-  }
-
-  if (getBundle(options.bundle) === undefined) {
+  if (options.bundle !== undefined && getBundle(options.bundle) === undefined) {
     throw new Error(
       `Couldn't find a command bundle named "${options.bundle}". The bundles that can be run are: ${getBundleNames().join(", ")}.`,
     );
   }
 
-  return options.bundle;
+  // One bundle asked for by name still goes through the gate first,
+  // for the same reason everything does
+  const asked =
+    options.bundle !== undefined ? [options.bundle] : orderForCheckup(getCheckableBundleNames());
+
+  return [GATE, ...asked.filter((name) => name !== GATE)].join(",");
+}
+
+/**
+ * The bundles in the order an install runs them, with anything an
+ * install doesn't run afterwards, as they were.
+ *
+ * Install order because most of a cluster is built in stages — Cilium
+ * on K3s, the charts on Helm — and a check-up in the same order reads
+ * the same way: the first failure is the lowest broken layer, and
+ * everything after it is likely to be its consequence.
+ *
+ * @param names
+ * @returns
+ */
+export function orderForCheckup(names: string[]): string[] {
+  const staged = INSTALL_PIPELINE.filter((name) => names.includes(name));
+  return [...staged, ...names.filter((name) => !staged.includes(name))];
 }
 
 /**
@@ -129,6 +158,11 @@ export async function doctor(configPath: string, options: DoctorOptions = {}) {
   loadPlugins(config);
 
   const names = resolveTarget(config, options.node ?? ALL_NODES);
+  const displayNames = getDisplayNames(config);
+
+  // Settings that are ignored are worth hearing about even when the
+  // cluster is fine, since it's fine for some other reason
+  printConfigurationWarnings(config);
 
   const outcome = await executePipeline(config, {
     pipeline: getPipeline(options),
@@ -136,6 +170,7 @@ export async function doctor(configPath: string, options: DoctorOptions = {}) {
     what: "asked",
     heading: `\n${chalk.bold("Asking")} ${chalk.cyan(`${names.length} node${names.length === 1 ? "" : "s"}`)} ${chalk.bold("how they are")}`,
     purposes: getPurposes(options),
+    gate: GATE,
 
     // Nothing here just changed anything, so there's nothing to wait
     // for. The waits inside these commands exist to ride out the gap
@@ -158,20 +193,22 @@ export async function doctor(configPath: string, options: DoctorOptions = {}) {
       process.stdout,
       options.verbose === true ? false : undefined,
       false,
+      displayNames,
     ),
   });
 
-  report(outcome);
+  report(outcome, displayNames);
 }
 
 /**
  * What one node had to say about one bundle.
  */
-interface Finding {
+export interface Finding {
   node: string;
   bundle: string;
   ran: number;
   skipped: number;
+  blocked: number;
   failures: StepOutcome[];
 }
 
@@ -185,7 +222,7 @@ interface Finding {
  * @param outcomes
  * @returns
  */
-function gather(outcomes: StepOutcome[]): Finding[] {
+function gather(outcomes: StepOutcome[], order: string[]): Finding[] {
   const findings = new Map<string, Finding>();
 
   for (const outcome of outcomes) {
@@ -195,11 +232,14 @@ function gather(outcomes: StepOutcome[]): Finding[] {
       bundle: outcome.bundle,
       ran: 0,
       skipped: 0,
+      blocked: 0,
       failures: [],
     };
 
     if (outcome.outcome === "skipped") {
       finding.skipped += 1;
+    } else if (outcome.outcome === "blocked") {
+      finding.blocked += 1;
     } else {
       finding.ran += 1;
     }
@@ -213,7 +253,7 @@ function gather(outcomes: StepOutcome[]): Finding[] {
 
   return [...findings.values()].sort((one, other) =>
     one.node === other.node
-      ? one.bundle.localeCompare(other.bundle)
+      ? order.indexOf(one.bundle) - order.indexOf(other.bundle)
       : one.node.localeCompare(other.node),
   );
 }
@@ -222,60 +262,116 @@ function gather(outcomes: StepOutcome[]): Finding[] {
  * Say what was found.
  *
  * @param outcome
+ * @param displayNames what to print each node as
  */
-function report(outcome: ExecuteOutcome) {
+function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
   // A doctor run is never a dry run, so there is always a summary;
   // the check is what tells the compiler so
-  const findings = gather(outcome.dryRun ? [] : outcome.summary.outcomes);
+  const order = getRunningBundles(outcome.plan);
+  const findings = gather(outcome.dryRun ? [] : outcome.summary.outcomes, order);
   const problems: string[] = [];
   let asked = 0;
 
   console.log(`\n${chalk.bold("── what was found ──")}`);
 
+  // The widest a line of the report gets before it's broken, rather
+  // than left to wrap back to the edge. Wide terminals still get
+  // lines short enough to read.
+  const width = Math.min(process.stdout.columns ?? 100, 120);
+  const say = (why: string, indent: string) => {
+    for (const line of layOut(why, indent, width)) {
+      console.log(line);
+    }
+  };
+
   // Anything that couldn't be asked at all comes first: a node that's
   // down is a bigger fact than anything the nodes that are up said
   for (const failure of outcome.failures) {
-    console.log(`  ${chalk.red("✗")} ${failure.name} ${chalk.dim("·")} ${failure.why}`);
+    console.log(`  ${FAILURE} ${displayNode(displayNames, failure.name)}`);
+    say(failure.why, "      ");
     problems.push(`${failure.name}: ${failure.kind}`);
   }
 
+  // A bundle that couldn't be planned is one nothing was asked about,
+  // which is a problem in its own right, not a footnote: a run whose
+  // only finding is this would otherwise call itself clean
   for (const problem of outcome.plan.problems) {
-    console.log(
-      `  ${chalk.yellow("!")} ${problem.bundle} ${chalk.dim("·")} ${chalk.dim(problem.why)}`,
-    );
+    console.log(`  ${FAILURE} ${problem.bundle}`);
+    say(problem.why, "      ");
+    problems.push(`${problem.bundle}: couldn't be checked`);
+  }
+
+  // A cause several checks share is said once, with everything it
+  // took down listed under it. One bad API key failing five checks is
+  // one problem, and five copies of its explanation bury whatever else
+  // the report has to say.
+  const shared = findSharedCauses(findings);
+
+  for (const [why, where] of shared) {
+    // Labelled with everywhere it happened, the way the others are
+    // labelled with the one place, and said once underneath
+    for (const [index, { finding, steps }] of where.entries()) {
+      const bundle = numberBundle(order.indexOf(finding.bundle), finding.bundle);
+      const mark = index === 0 ? FAILURE : " ".repeat(MARK_WIDTH);
+      console.log(`  ${mark} ${chalk.dim(`${displayNode(displayNames, finding.node)} · ${bundle}:`)} ${chalk.yellow(steps.join(", "))}`);
+    }
+
+    say(why, "      ");
+
+    problems.push(why);
   }
 
   let node: string | undefined;
 
   for (const finding of findings) {
+    // Numbered as the run was, so the report and what scrolled past
+    // during it agree
+    const bundle = numberBundle(order.indexOf(finding.bundle), finding.bundle);
+
     if (finding.node !== node) {
       node = finding.node;
-      console.log(`\n  ${chalk.bold(node)}`);
+      console.log(`\n  ${chalk.bold(displayNode(displayNames, node))}`);
+    }
+
+    // Not asked because the node didn't get through the gate. Not
+    // counted as a problem: the gate's failure already is, and it's
+    // the one worth reading.
+    if (finding.ran === 0 && finding.blocked > 0) {
+      console.log(`    ${chalk.dim("–")} ${bundle} ${chalk.dim(`not asked, because ${GATE} failed`)}`);
+      continue;
     }
 
     // Everything it would have asked turned out not to apply to this
     // cluster, which is not the same as everything being fine
     if (finding.ran === 0) {
-      console.log(`    ${chalk.dim("·")} ${finding.bundle} ${chalk.dim("nothing to check")}`);
+      console.log(`    ${chalk.dim(padMark("·"))} ${bundle} ${chalk.dim("nothing to check")}`);
       continue;
     }
 
     asked += finding.ran;
 
-    const mark = finding.failures.length > 0 ? chalk.red("✗") : chalk.green("✓");
+    const mark = finding.failures.length > 0 ? FAILURE : SUCCESS;
     const detail =
       finding.failures.length > 0
         ? chalk.red(`${finding.failures.length} of ${finding.ran}`)
         : chalk.dim(`${finding.ran} checked`);
+    const unasked = finding.blocked > 0 ? chalk.dim(`, ${finding.blocked} not asked because ${GATE} failed`) : "";
 
-    console.log(`    ${mark} ${finding.bundle} ${detail}`);
+    console.log(`    ${mark} ${bundle} ${detail}${unasked}`);
 
-    for (const failure of finding.failures) {
-      const why = (failure.why !== undefined && failure.why !== "" ? failure.why : "failed")
-        .split("\n")[0];
+    // Steps that failed for a shared reason point back at it, together
+    // on one line, rather than each repeating it
+    for (const [why, steps] of groupByCause(finding.failures)) {
+      if (shared.has(why)) {
+        console.log(`        ${chalk.yellow(steps.join(", "))}: ${chalk.dim(`↑ ${headline(why)}`)}`);
+        continue;
+      }
 
-      console.log(`        ${chalk.yellow(failure.step)}: ${why}`);
-      problems.push(`${finding.node} · ${finding.bundle} · ${failure.step}`);
+      for (const step of steps) {
+        console.log(`        ${chalk.yellow(step)}`);
+        say(why, "            ");
+        problems.push(`${displayNode(displayNames, finding.node)} · ${finding.bundle} · ${step}`);
+      }
     }
   }
 
@@ -284,4 +380,79 @@ function report(outcome: ExecuteOutcome) {
       ? `\n${chalk.green(`Nothing to report. ${asked} checks, all of them happy.`)}\n`
       : `\n${chalk.red(`${problems.length} problem${problems.length === 1 ? "" : "s"}`)} out of ${asked} checks.\n`,
   );
+}
+
+// What a failure says when it didn't say anything. Never treated as a
+// shared cause: two checks failing silently haven't failed for the
+// same reason, they've both declined to give one.
+const UNEXPLAINED = "failed";
+
+/**
+ * The first line of why a step failed, which is the part that's
+ * printed and the part failures are matched on.
+ *
+ * @param failure
+ * @returns
+ */
+function explain(failure: StepOutcome): string {
+  return (failure.why !== undefined && failure.why !== "" ? failure.why : UNEXPLAINED).split("\n")[0] ?? UNEXPLAINED;
+}
+
+/**
+ * A bundle's failures, with the steps that failed for the same reason
+ * together, in the order they ran.
+ *
+ * @param failures
+ * @returns
+ */
+function groupByCause(failures: StepOutcome[]): Map<string, string[]> {
+  const causes = new Map<string, string[]>();
+
+  for (const failure of failures) {
+    const why = explain(failure);
+    causes.set(why, [...(causes.get(why) ?? []), failure.step]);
+  }
+
+  return causes;
+}
+
+/**
+ * The reasons more than one check failed for, each with where.
+ *
+ * Matched on the exact text. Commands that fail for one underlying
+ * reason say so in the same words — that's what an explanation keyed
+ * on a status code is — and anything looser would risk folding two
+ * different problems that happen to read alike into one.
+ *
+ * @param findings
+ * @returns
+ */
+export function findSharedCauses(
+  findings: Finding[],
+): Map<string, { finding: Finding; steps: string[] }[]> {
+  const causes = new Map<string, { finding: Finding; steps: string[] }[]>();
+
+  for (const finding of findings) {
+    for (const [why, steps] of groupByCause(finding.failures)) {
+      if (why !== UNEXPLAINED) {
+        causes.set(why, [...(causes.get(why) ?? []), { finding, steps }]);
+      }
+    }
+  }
+
+  return new Map(
+    [...causes].filter(([, where]) => where.reduce((total, { steps }) => total + steps.length, 0) > 1),
+  );
+}
+
+/**
+ * Enough of a reason to recognise it by: up to the first colon or full
+ * stop, which is where these messages turn from what happened to why.
+ *
+ * @param why
+ * @returns
+ */
+export function headline(why: string): string {
+  const first = why.split(/[:.](?:\s|$)/)[0] ?? why;
+  return first.length > 72 ? `${first.slice(0, 71)}…` : first;
 }
