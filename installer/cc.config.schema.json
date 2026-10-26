@@ -637,6 +637,14 @@
           "type": "string",
           "description": "What to register as in the cluster, when name and address can't be DNS labels."
         },
+        "nodeIp": {
+          "type": "string",
+          "description": "The address it registers on, which every other node reaches its pods through. Defaults to its address on the Nebula mesh when the cluster uses one, otherwise K3s's choice: the address of its default route."
+        },
+        "nodeExternalIp": {
+          "type": "string",
+          "description": "The address it's reached at from outside the cluster, such as a gateway's public address, when that isn't one K3s can tell is the outside."
+        },
         "gateway": {
           "type": "boolean",
           "description": "true if the outside world can reach this node."

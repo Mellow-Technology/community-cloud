@@ -139,12 +139,33 @@ function fileContents(lines: string[]): string {
 }
 
 /**
+ * Shell asking whether the kernel offers an algorithm right now.
+ *
+ * The list is only of what's built in or already loaded. An algorithm
+ * shipped as a module joins it once the module is loaded, and not
+ * before. The algorithms come back space separated, so they're split
+ * onto lines of their own and matched whole.
+ *
+ * @param algorithm
+ * @returns
+ */
+function offersAlgorithm(algorithm: string): string {
+  return `sysctl -n net.ipv4.tcp_available_congestion_control | tr ' ' '\\n' | grep -qx ${quoteForShell(algorithm)}`;
+}
+
+/**
  * Confirm the kernel can do what we're about to ask of it, before we
  * write anything. Setting an algorithm the kernel doesn't have leaves
  * the node quietly on whatever it was using before, and writing a
  * sysctl key the kernel doesn't expose makes every later
  * "sysctl --system" on that node fail, including for settings that
  * have nothing to do with us.
+ *
+ * "Can do" includes a module that's there and not loaded yet, which
+ * is how most distributions ship BBR: loading it is this bundle's
+ * first step, but preflight and the doctor change nothing and so ask
+ * without it. "modinfo" finds the module's file, and can't load
+ * anything.
  *
  * Exported because it's about the machine rather than about anything
  * this installer did, which makes it a preflight check as much as a
@@ -156,13 +177,17 @@ export const checkNetworkSupportCommand: CommandSpec = {
   description: "Check the kernel supports the configured congestion control and qdisc",
   command: (config: CloudConfig) => {
     const algorithm = getCongestionControl(config);
+    const module = getCongestionModule(config);
 
     return [
       "available=$(sysctl -n net.ipv4.tcp_available_congestion_control)",
       'echo "available congestion control: $available"',
-      // The algorithms come back space separated, so split them onto
-      // their own lines and match one whole
-      `echo "$available" | tr ' ' '\\n' | grep -qx ${quoteForShell(algorithm)} || { echo "This kernel doesn't offer ${algorithm} congestion control. Available: $available" >&2; exit 1; }`,
+      `if ${offersAlgorithm(algorithm)}`,
+      `then echo "${algorithm} is available"`,
+      `elif modinfo -n ${module} > /dev/null 2>&1`,
+      `then echo "${algorithm} is in the ${module} module, which isn't loaded yet. The network bundle loads it."`,
+      `else echo "This kernel doesn't offer ${algorithm} congestion control: it isn't built in, and there's no ${module} module to load. Available: $available" >&2; exit 1`,
+      "fi",
       `[ -e "${QDISC_SYSCTL_PATH}" ] || { echo "This kernel doesn't expose ${QDISC_SYSCTL_KEY}, so the default qdisc can't be set" >&2; exit 1; }`,
     ];
   },
@@ -175,16 +200,28 @@ export const NetworkingCommands: CommandSpec[] = [
   readInterfacesCommand,
 
   /**
-   * Load the module for this boot. A kernel with the algorithm built
-   * in has nothing to load, and modprobe says so, so we let this one
-   * pass either way and leave the real check to the next command.
+   * Load the module for this boot, unless the kernel already offers
+   * the algorithm — built in, or loaded before. Either way the
+   * algorithm has to be on offer afterwards: the check that follows
+   * accepts a module that could be loaded, so this is where one that
+   * won't load is caught.
    */
   {
     name: "load-congestion-module",
     description: "Load the TCP congestion control kernel module",
-    sudo: true,
-    command: (config: CloudConfig) =>
-      `modprobe ${getCongestionModule(config)} || true`,
+    command: (config: CloudConfig) => {
+      const algorithm = getCongestionControl(config);
+      const module = getCongestionModule(config);
+
+      return [
+        `if ${offersAlgorithm(algorithm)}`,
+        `then echo "${algorithm} is already available"`,
+        `else sudo modprobe ${module} || { echo "Couldn't load ${module}, which ${algorithm} congestion control needs" >&2; exit 1; }`,
+        `  ${offersAlgorithm(algorithm)} || { echo "Loaded ${module}, and the kernel still doesn't offer ${algorithm}" >&2; exit 1; }`,
+        `  echo "loaded ${module}"`,
+        "fi",
+      ];
+    },
     output: OutputType.Raw,
   },
 

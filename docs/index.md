@@ -174,7 +174,7 @@ k8s/
 ├── networking/
 │   ├── cilium/
 │   │   ├── Cilium.values.yaml   # Cilium Helm values
-│   │   └── gateway/Gateway.yaml # cc-letsencrypt-web-gateway, made by the gateway bundle
+│   │   └── gateway/             # The community-cloud namespace and cc-letsencrypt-web-gateway, made by the gateway bundle
 │   └── tailscale/               # Tailscale cross-site (prepared)
 ├── storage/                     # Storage infrastructure
 │   ├── StorageClass/            # cc-local-ssd-fast (default) and cc-local-ssd-sata
@@ -280,7 +280,7 @@ installs it:
 
 #### Mattermost (`apps/mattermost/`)
 
-Chat, installed by the `mattermost` package through the Mattermost operator, on cc-postgres and a SeaweedFS bucket:
+Chat, installed by the `mattermost` package through the Mattermost operator (the `mattermost-operator` package, in `community-cloud`), on cc-postgres and a SeaweedFS bucket:
 
 | File | Purpose |
 |---|---|
@@ -292,7 +292,7 @@ Chat, installed by the `mattermost` package through the Mattermost operator, on 
 
 #### Headlamp (`apps/headlamp/`)
 
-Cluster web UI, installed by the `headlamp` package (chart 0.46.0).
+Cluster web UI, installed by the `headlamp` package (chart 0.46.0) into `community-cloud`.
 People sign in through Authentik over OpenID Connect, and Headlamp
 uses their token with the API server, which the package has trust
 Authentik:

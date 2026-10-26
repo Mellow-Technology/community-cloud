@@ -116,6 +116,8 @@ The only required section. Each entry is one machine.
 | `port` | SSH port, when it isn't 22. |
 | `apiAddress` | Where *other nodes* reach this one's Kubernetes API, when that differs from `address`. A bastion or port forward gets you to a node without being a name the cluster can use. |
 | `nodeName` | What to register as in the cluster, when `name` and `address` can't be DNS labels. `"Mamoru BKK"` and `10.0.0.5` both can't. |
+| `nodeIp` | The address it registers on, which the other nodes reach its pods through. On a cluster using Nebula, its address on the mesh, found on the node; otherwise the address of its default route. See [Nodes across sites](#nodes-across-sites). |
+| `nodeExternalIp` | The address it's reached at from outside, such as a gateway's public address. Nothing on a node says which of its addresses is the outside, so K3s can't work this out. |
 | `gateway` | `true` if the outside world can reach this node. See `network.gateway`. |
 | `roles` | What it's for: `worker`, `worker-gpu`, `storage-local`, `storage-distributed`, `storage`, `gateway`, `lighthouse`. Applied as `node-role.kubernetes.io/<role>` labels, which is what the manifests in `k8s/` select on. |
 | `labels` | Anything else worth labelling it with, as key/value pairs. |
@@ -147,6 +149,15 @@ else is a subsection.
 | `congestionControl` | `bbr` | TCP congestion control. BBR holds throughput up over links that lose the odd packet, which CUBIC reads as congestion. |
 | `qdisc` | `fq` | The default queueing discipline. BBR wants a fair-queueing one underneath it. |
 | `congestionModule` | `tcp_<algorithm>` | The kernel module, when it isn't named after the algorithm. |
+
+Most kernels ship BBR as a module that isn't loaded until something
+asks for it, so a kernel only lists it as available once it is.
+Preflight and the doctor count a module that's there as support, since
+they load nothing. The `network` bundle loads it, loads it on every boot
+from then on (`/etc/modules-load.d/community-cloud.conf`), and makes it
+the default with sysctl (`/etc/sysctl.d/99-community-cloud-network.conf`).
+Until it has run, the doctor reports the node still on its old
+algorithm.
 
 #### `network.cilium`
 
@@ -191,6 +202,28 @@ directly.
 | `network` / `networkID` | Which network, by name or by ID. |
 | `defaultRole` | The role nodes enrol under. |
 | `roles` | Roles to create: `name`, `description`, and `firewallRules` of `protocol` (`ANY`/`TCP`/`UDP`/`ICMP`), `allowedRole` or `allowedTags`, and `portRange`. |
+
+#### Nodes across sites
+
+Every node registers in the cluster on one address, and that address
+is what the rest of the cluster reaches it on: Cilium tunnels pod
+traffic between nodes' registered addresses. Left to itself, K3s picks
+the address of the default route — on a machine behind a router at
+home, its LAN address, which a node at another site can't reach. Pods
+on the two would never meet.
+
+So on a cluster using Nebula, the `k3s` bundle first finds each
+node's address on the mesh (`find-node-ip`, on its `defined*`
+interface) and installs K3s with `--node-ip` set to it. A node that
+isn't on the mesh stops the install there rather than registering on
+its LAN address; run the `nebula` bundle on it first. `nodeIp` on a
+node overrides the mesh address, and is checked to be one the node
+has. Afterwards `verify-node-ip` asks the cluster which addresses it
+actually has the node on — the doctor asks too, so a node registered
+somewhere else is found.
+
+The server is joined at its `apiAddress`, or its `address`, so on a
+cluster across sites that should be an address on the mesh as well.
 
 ### `storage`
 
@@ -240,11 +273,17 @@ Which Helm charts to install. `true` is shorthand for enabled.
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`seaweedfs`, `redis-operator`, `rabbitmq-operator`, `headlamp`,
-`tailscale-operator`, `twenty`, `lago`, `documenso`, `mattermost`,
-`picoclaw`, `plane`. Dependencies
+`seaweedfs`, `redis-operator`, `rabbitmq-operator`,
+`mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
+`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`. Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too.
+
+Applications go in `cc-office`, along with the Postgres, Redis and
+RabbitMQ they share. What runs the cluster goes in `community-cloud`:
+Headlamp, and operators, since one operator serves every namespace. The exception is an operator whose project gives it a
+namespace of its own: cert-manager, `cnpg-system`, `rabbitmq-system`,
+`topolvm-system`, `seaweedfs` and `tailscale`.
 
 `cert-manager` also applies `cc-lets-encrypt`, the ClusterIssuer every
 application's certificate comes from, with `values.adminEmail` as the
@@ -261,8 +300,9 @@ browsers to its icons and backgrounds. Every request there still
 needs keys or a link signed with them. See
 [Object storage](../k8s/storage/README.md#object-storage-seaweedfs).
 
-`redis-operator` installs the OpsTree Redis operator and, through it,
-the one Redis the applications in `cc-office` share, with its password
+`redis-operator` installs the OpsTree Redis operator into
+`community-cloud` and, through it, the one Redis the applications in
+`cc-office` share, with its password
 in the `cc-redis` Secret there.
 
 `rabbitmq-operator` installs the RabbitMQ team's Cluster Operator and
@@ -313,8 +353,10 @@ account is made with `values.adminEmail` and a generated password, in
 the `lago-admin` Secret, and everyone else is invited from inside
 Lago.
 
-Mattermost is team chat, on `values.domain.mattermost`, installed by
-its operator. It keeps its database in cc-postgres, with the
+Mattermost is team chat, on `values.domain.mattermost`. The
+`mattermost-operator` package installs the operator into
+`community-cloud`, and enabling `mattermost` enables it too; the
+`mattermost` bundle on its own expects the operator already there. It keeps its database in cc-postgres, with the
 `mattermost` role CloudNativePG's package makes, and its files in a
 bucket in SeaweedFS. The operator wants the database as one connection
 string, which the installer builds from that role's credentials into
@@ -340,7 +382,7 @@ Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
-Headlamp, on `values.domain.headlamp`, signs in through Authentik
+Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in through Authentik
 too, and then talks to the Kubernetes API as whoever signed in. That
 needs the API server to trust Authentik, so enabling the `headlamp`
 package also starts K3s's API server with Authentik as an OpenID

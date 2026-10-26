@@ -59,6 +59,7 @@ import {
   readInterfacesCommand,
 } from "./Network.ts";
 import { getNodeName } from "./K3s.ts";
+import { CLUSTER_NAMESPACE } from "./packages.ts";
 import { renderInstallerFile } from "../../util/template.ts";
 
 // What the pool and the policy are called when the configuration
@@ -73,8 +74,9 @@ const GATEWAY_CLASS = "cilium";
 // The Gateway every application attaches to, and where it's written
 // down
 const CLUSTER_GATEWAY = "cc-letsencrypt-web-gateway";
-const CLUSTER_GATEWAY_NAMESPACE = "community-cloud";
+const CLUSTER_GATEWAY_NAMESPACE = CLUSTER_NAMESPACE;
 const CLUSTER_GATEWAY_MANIFEST = "embed://networking/cilium/gateway/Gateway.yaml";
+const CLUSTER_NAMESPACE_MANIFEST = "embed://networking/cilium/gateway/Gateway.namespace.yaml";
 
 // Where Cilium keeps the settings it was installed with. Read rather
 // than the CLI, so this works on a node that only has kubectl.
@@ -932,7 +934,8 @@ export const GatewayCommands: CommandSpec[] = [
    *
    * Made whether or not there are addresses for it yet: a ListenerSet
    * whose parent doesn't exist is refused, and one whose parent has no
-   * address is merely waiting. Over standard input, like the pool.
+   * address is merely waiting. Over standard input, like the pool, and
+   * after its namespace.
    */
   {
     name: "apply-cluster-gateway",
@@ -940,7 +943,8 @@ export const GatewayCommands: CommandSpec[] = [
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     command: "kubectl apply -f -",
-    stdin: (config: CloudConfig) => renderInstallerFile(config, CLUSTER_GATEWAY_MANIFEST),
+    stdin: (config: CloudConfig) =>
+      [CLUSTER_NAMESPACE_MANIFEST, CLUSTER_GATEWAY_MANIFEST].map((path) => renderInstallerFile(config, path)).join("\n---\n"),
     output: OutputType.Raw,
   },
 

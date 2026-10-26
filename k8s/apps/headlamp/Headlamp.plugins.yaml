@@ -12,7 +12,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: headlamp-plugins
-  namespace: cc-office
+  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 data:
@@ -24,7 +24,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: headlamp-plugin-{{ .name }}
-  namespace: cc-office
+  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
     app.kubernetes.io/part-of: headlamp

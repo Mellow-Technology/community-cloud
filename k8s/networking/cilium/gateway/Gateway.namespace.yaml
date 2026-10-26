@@ -1,0 +1,16 @@
+# community-cloud: what runs the cluster rather than the applications
+# on it. The cluster Gateway, the operators that don't ask for a
+# namespace of their own, and Headlamp.
+#
+# Made by the gateway bundle, ahead of the Gateway, and again by the
+# headlamp package ahead of its chart. It carries the label the
+# Gateway's allowedListeners selects on, in Gateway.yaml, since
+# Headlamp's ListenerSet is in here; without it that's refused and
+# Headlamp has no way in.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: community-cloud
+  labels:
+    whereWereGoing: "weDontNeedRoads"
+    app.kubernetes.io/managed-by: "community-cloud"

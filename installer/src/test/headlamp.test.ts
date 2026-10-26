@@ -35,7 +35,7 @@ const HEADLAMP = getPackage("headlamp")!;
 async function render(...paths: string[]): Promise<any[]> {
   const config = await loadFixtureConfig({ packages: { headlamp: true } });
   return paths.flatMap((path) =>
-    parseAllDocuments(renderInstallerFile(config, path, { templateNamespace: "cc-office" })).map((document) => {
+    parseAllDocuments(renderInstallerFile(config, path, { templateNamespace: "community-cloud" })).map((document) => {
       assert.deepEqual(document.errors, [], path);
       return document.toJS();
     }),
@@ -53,12 +53,12 @@ describe("installing Headlamp", () => {
   it("has its plugins, its client's credentials and Authentik's client before the chart", () => {
     const chart = position("helm-install-headlamp");
     assert.ok(position("helm-manifest-before-headlamp-Headlamp-plugins") < chart);
-    assert.ok(position("create-secret-cc-office-headlamp-oidc") < chart);
+    assert.ok(position("create-secret-community-cloud-headlamp-oidc") < chart);
     assert.ok(position("authentik-blueprint-headlamp") < chart);
   });
 
   it("makes its namespace before its credentials", () => {
-    assert.ok(position("namespace-headlamp") < position("create-secret-cc-office-headlamp-oidc"));
+    assert.ok(position("namespace-headlamp") < position("create-secret-community-cloud-headlamp-oidc"));
   });
 
   it("is a client with the fixed ID the API server is told", () => {

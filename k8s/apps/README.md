@@ -36,7 +36,7 @@ which also makes each role's Secret. Applications added since bring
 their own role instead.
 
 The Redis comes with the `redis-operator` package, which installs the
-operator and applies `RedisStandalone.yaml`. It's `redis` on 6379 in
+operator into `community-cloud` and applies `RedisStandalone.yaml`. It's `redis` on 6379 in
 `cc-office`, with its password in the `cc-redis` Secret; each
 application keeps to a database number of its own.
 
@@ -175,8 +175,9 @@ installer generates.
 
 [Mattermost](https://mattermost.com) is team chat. Install it with the
 `mattermost` package; it's reached at `values.domain.mattermost`. The
-package installs the Mattermost operator, which runs the installation
-in `Mattermost.yaml`.
+package needs `mattermost-operator`, which installs the Mattermost
+operator into `community-cloud`; the operator runs the installation in
+`Mattermost.yaml`, in `cc-office`.
 
 | File | What it is |
 |---|---|
@@ -190,7 +191,9 @@ in `Mattermost.yaml`.
 
 [Headlamp](https://headlamp.dev) is a web UI for the cluster itself.
 Install it with the `headlamp` package; it's reached at
-`values.domain.headlamp`. People sign in through Authentik, and
+`values.domain.headlamp`. It runs the cluster rather than being one
+of the applications on it, so it goes in `community-cloud`, not
+`cc-office`. People sign in through Authentik, and
 Headlamp talks to the cluster as them: the package also has K3s's API
 server trust Authentik, so what someone can see is what RBAC gives
 `oidc:<their email>` and their `oidc:<group>`s.

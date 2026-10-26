@@ -11,7 +11,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: ListenerSet
 metadata:
   name: headlamp
-  namespace: cc-office
+  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
   annotations:
@@ -41,7 +41,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: headlamp
-  namespace: cc-office
+  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 spec:
@@ -67,7 +67,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: headlamp-redirect
-  namespace: cc-office
+  namespace: community-cloud
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 spec:

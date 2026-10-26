@@ -16,6 +16,7 @@
  * is enforced rather than assumed.
  */
 import chalk from "chalk";
+import { isIP } from "node:net";
 
 import { FAILURE, SUCCESS } from "../util/chalk.ts";
 import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
@@ -160,6 +161,33 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
 
     if (node.address === undefined || node.address === "") {
       say(`Node "${node.name}" has no address, so there's no way to reach it.`);
+    }
+  }
+
+  // The addresses a node registers on go straight to K3s, which takes
+  // only an IP and says what it made of anything else in its own logs.
+  // Two nodes on one address would each be the other to Cilium.
+  const registered = new Map<string, string>();
+  for (const node of nodes) {
+    for (const key of ["nodeIp", "nodeExternalIp"]) {
+      const address = node[key];
+
+      if (address === undefined) {
+        continue;
+      }
+
+      if (typeof address !== "string" || isIP(address) === 0) {
+        say(`Node "${node.name}" has a "${key}" of ${JSON.stringify(address)}, which isn't an IP address. K3s takes an address here, not a name.`);
+        continue;
+      }
+
+      if (key === "nodeIp") {
+        const already = registered.get(address);
+        if (already !== undefined) {
+          say(`"${node.name}" and "${already}" both register on ${address}, so the rest of the cluster couldn't tell them apart.`);
+        }
+        registered.set(address, node.name);
+      }
     }
   }
 

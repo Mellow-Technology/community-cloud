@@ -43,6 +43,11 @@ export interface InterfaceClass {
   description: string;
 }
 
+// What dnclient calls the interface it brings the Nebula mesh up on,
+// "defined1" and so on. Named on its own because a node's address on
+// the mesh is looked for by it.
+export const NEBULA_INTERFACE_PREFIX = "defined";
+
 export const INTERFACE_CLASSES: InterfaceClass[] = [
   {
     prefix: "enp",
@@ -75,7 +80,7 @@ export const INTERFACE_CLASSES: InterfaceClass[] = [
     description: "Wireless, the old unpredictable name",
   },
   {
-    prefix: "defined",
+    prefix: NEBULA_INTERFACE_PREFIX,
     kind: InterfaceKind.Mesh,
     description: "The Nebula mesh, from Defined Networking",
   },
