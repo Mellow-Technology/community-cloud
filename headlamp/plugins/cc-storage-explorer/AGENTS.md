@@ -18,10 +18,6 @@ That rules out `headlamp-plugin`'s own `start`, `package`, `storybook`, `test`
 and `i18n` commands as well, so there are no npm scripts for them here. On an
 older Node they can still be run with `npx @kinvolk/headlamp-plugin <command>`.
 
-`npm run build` is not a thin wrapper around `headlamp-plugin build`: it runs
-the same Vite config with the asset inline limit raised, which is what puts the
-bundled fonts inside `main.js`. See `scripts/build.mjs`.
-
 ## Plugin Development Resources
 
 ### Example Plugins
@@ -124,7 +120,7 @@ Check out production-ready plugins in `node_modules/@kinvolk/headlamp-plugin/off
 
 #### Internationalization (i18n)
 
-- Use `npm run i18n <locale>` to add new locales (e.g., `npm run i18n es` for Spanish)
+- Add new locales with `npx @kinvolk/headlamp-plugin i18n <locale>` on a Node older than 26 (there is no npm script for it; see above)
 - Translation files are in `locales/<locale>/translation.json`
 - Use `useTranslation()` hook from `@kinvolk/headlamp-plugin/i18n`
 

@@ -61,8 +61,8 @@ export const INSTALL_PIPELINE = [
  *
  * - dryRun: work out every step and print it, changing nothing
  * - keepGoing: carry on past a failed step
- * - node: install onto one node rather than the whole cluster, which
- *   is for adding a machine to a cluster that already exists
+ * - node: install onto one node rather than the whole cluster. Adding
+ *   a machine to a cluster that already exists is add-node's job
  */
 export interface InstallOptions {
   dryRun?: boolean;

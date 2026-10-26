@@ -1,8 +1,16 @@
 # Plugins
 
-**Status: draft for discussion.** Nothing here is built. This describes how
-commands, manifests and charts could be packaged and loaded by the installer,
-and records what was measured rather than assumed.
+**Status: mostly built.** This began as a proposal for how commands, manifests
+and charts could be packaged and loaded by the installer, and records what was
+measured rather than assumed. Steps 1–6 of [Sequencing](#sequencing) now exist
+in `installer/src/plugins/`: `plugin://` templates, directory and `.ccp` (zip)
+plugins under `~/.community-cloud/plugins/`, `registerBundle` and
+`registerPackage`, value contributors, `<plugin>:<name>` namespacing, and
+approval by a pinned `sha256`. Authentik ships as a plugin. Still not built:
+the `inspection` type, `code` plugins (refused, as step 7 says), `tar.gz`
+archives, `context.plugins`, and separate privilege on the node. Where the
+code settled differently from the proposal, the section below says so. For
+using plugins, see [`plugins` in the installer README](../installer/README.md#plugins).
 
 ---
 
@@ -103,6 +111,10 @@ Command names are result keys and context keys. Two plugins each defining
 `<plugin>:<name>` at registration, and put plugin context under
 `context.plugins[name]`. Cheap now, painful to retrofit.
 
+*Built:* the `<plugin>:<name>` prefix, except that a thing named after its own
+plugin isn't doubled (`authentik`, not `authentik:authentik`).
+`context.plugins` is still open.
+
 ---
 
 ## What a plugin is
@@ -120,7 +132,7 @@ mastodon/
 apiVersion: community-cloud/v1
 name: mastodon
 description: Federated social, backed by the cluster's Postgres
-type: package                 # refused at load if it ships commands
+type: node                    # it has commands; "package" would be refused at load
 
 packages:
   - name: mastodon
@@ -200,6 +212,9 @@ Implement `DirectorySource` first — a dozen lines, and it makes the whole syst
 testable without any packaging. Then `ZipSource` as the wire format on `.ccp`.
 Keeping `Bun.Archive` behind the same interface for `.tgz` is then nearly free.
 
+*Built:* `DirectorySource`, and `ArchiveSource` for `.ccp` zips, read whole into
+memory with nothing unpacked. `.tgz` isn't supported.
+
 ### The load path
 
 ```
@@ -262,8 +277,10 @@ on every node at the next run.
   property of a copy; the name is a property of the plugin, and it is what the
   configuration and every namespaced command refer to. A mismatch is worth a
   warning; two plugins claiming one name is an error naming both paths.
-- **Load in a defined order.** Alphabetical by name, so two machines with the
-  same directory contents resolve identically.
+- **Load in a defined order.** So two machines with the same directory
+  contents resolve identically. *As built:* the directory is read in sorted
+  filename order, and plugins load in the order the configuration's `plugins`
+  section names them.
 - **Resolve the home directory properly.** The installer cross-compiles to
   Windows, so `os.homedir()` rather than a literal `~`, and the directory is
   created on demand rather than being a prerequisite.
@@ -497,7 +514,10 @@ In descending order of value for effort:
    plugin will produce without executing any of it. No imperative plugin API can
    offer this. It turns "trust this stranger" into "read these forty lines".
 5. **Trust on first use.** Print everything a plugin registers, take one
-   confirmation, pin the `sha256`. The SSH host key model.
+   confirmation, pin the `sha256`. The SSH host key model. *As built*, there's
+   no prompt: a plugin enabled without a `sha256` is printed in full and
+   refused, with the line to paste into the configuration, and one whose
+   fingerprint has changed is refused until the new one is pasted in.
 6. **Separate privilege on the node.** The only OS-enforced boundary available.
    `connectToNode` already takes a `username` per node, so connecting as a
    second user without sudo for plugin commands is architecturally close.
