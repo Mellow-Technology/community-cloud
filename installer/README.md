@@ -124,7 +124,7 @@ The only required section. Each entry is one machine.
 | `gateway` | `true` if the outside world can reach this node. See `network.gateway`. |
 | `roles` | What it's for: `worker`, `worker-gpu`, `storage-local`, `storage-distributed`, `storage`, `gateway`, `lighthouse`. Applied as `node-role.kubernetes.io/<role>` labels, which is what the manifests in `k8s/` select on. |
 | `labels` | Anything else worth labelling it with, as key/value pairs. |
-| `region`, `zone` | Where it physically is. Kubernetes spreads workloads across zones. Region codes are fixed — see `src/topology/regions.ts`. |
+| `region`, `zone` | Where it physically is, put on the node as `topology.kubernetes.io/region` and `zone`. Kubernetes spreads workloads across zones, and [`placement`](#placement) keeps a namespace in a region. Region codes are fixed — see `src/topology/regions.ts`. |
 | `storage` | Per-node storage settings, overriding the cluster-wide `storage` section. |
 | `nebula` | Per-node mesh settings: `role`, `listenPort`, `staticAddresses`, `isLighthouse`, `isRelay`. |
 
@@ -264,6 +264,42 @@ so their sizes are set side by side, and together they have to fit.
 A size can be raised later and the claim will grow. A size can't be
 lowered. See
 [How much each service gets](../k8s/storage/README.md#how-much-each-service-gets).
+
+### `placement`
+
+Which region each namespace's pods run in:
+
+```json
+"placement": { "cc-office": "sea" }
+```
+
+A cluster can span regions and stay one cluster, but workloads that
+talk to each other belong together. An application in one region
+querying its database in another pays the distance on every query —
+Plane's API in Germany, against cc-postgres in Thailand, took six
+seconds for a simple request.
+
+The `placement` bundle annotates each namespace listed for Kubernetes'
+`PodNodeSelector` admission plugin, which the `k3s` bundle turns on for
+the API server when anything is placed. Every pod made in the
+namespace then gets a node selector on `topology.kubernetes.io/region`,
+including the ones operators make — Postgres, Redis, RabbitMQ — so
+nothing in an application's manifests has to know. A region comes from
+each node's `region`, which `nodeLabels` puts on the node.
+
+It's strict: with no node in the region up, a pod waits rather than
+starting somewhere else. And it only applies to pods made after it, so
+placing a namespace that already has workloads leaves them where they
+are until they're restarted. The doctor lists any running outside
+their region. On a cluster that's already running:
+
+```bash
+community-cloud run-bundle k3s <server> cc.config.json   # turns the plugin on; restarts K3s
+community-cloud run-bundle nodeLabels all cc.config.json
+community-cloud run-bundle placement <server> cc.config.json
+```
+
+Preflight reports a namespace placed in a region no node is in.
 
 ### `packages`
 

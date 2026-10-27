@@ -30,6 +30,7 @@ import {
   getSignInClients,
   signsInThroughAuthentik,
 } from "../cli/commands/ClusterSignIn.ts";
+import { getPlacement } from "../util/placement.ts";
 import { getObjectStorageShape } from "../util/objectStorage.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
@@ -315,6 +316,19 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
       }
     } catch (error: any) {
       say(error.message);
+    }
+  }
+
+  // Placing a namespace in a region with no nodes in it, or none that
+  // say where they are, leaves every pod made there waiting forever
+  for (const [namespace, region] of Object.entries(getPlacement(config))) {
+    if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(namespace) || namespace.length > 63) {
+      say(`"placement" names "${namespace}", which isn't a namespace name Kubernetes would take: lower case letters, digits and hyphens, at most 63.`);
+    }
+
+    const there = nodes.filter((node: any) => node.region === region);
+    if (there.length === 0) {
+      say(`"placement" puts ${namespace} in ${region}, and no node has "region": "${region}", so nothing made in ${namespace} could be scheduled.`);
     }
   }
 

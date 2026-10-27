@@ -48,6 +48,7 @@ export const INSTALL_PIPELINE = [
   "lvm",
   "k3s",
   "nodeLabels",
+  "placement",
   "cilium",
   "gateway",
   "helm",

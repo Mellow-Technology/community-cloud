@@ -232,3 +232,37 @@ describe("the RabbitMQ operators", () => {
     assert.deepEqual(RABBITMQ.rollout, ["deployment/rabbitmq-cluster-operator", "deployment/messaging-topology-operator"]);
   });
 });
+
+describe("Plane's MCP server", () => {
+  it("is installed with Plane, and waited for", () => {
+    assert.ok(PLANE.manifests?.after?.includes("embed://apps/plane/Plane.mcp.yaml"));
+    assert.ok(PLANE.rollout?.includes("deployment/plane-mcp"));
+  });
+
+  it("calls Plane inside the cluster, under a prefix of its own, keeping requests out of its logs", async () => {
+    const deployment = (await render("embed://apps/plane/Plane.mcp.yaml")).find((each) => each.kind === "Deployment");
+    const container = deployment.spec.template.spec.containers[0];
+
+    assert.equal(envValue(container, "PLANE_INTERNAL_BASE_URL"), "http://plane-api:8000");
+    assert.equal(envValue(container, "MCP_PATH_PREFIX"), "/mcp");
+    assert.equal(envValue(container, "LOG_PAYLOADS"), "false");
+
+    // The server refuses to start without these, even unused
+    assert.ok(envValue(container, "PLANE_OAUTH_PROVIDER_CLIENT_ID"));
+    assert.ok(envValue(container, "PLANE_OAUTH_PROVIDER_CLIENT_SECRET"));
+  });
+
+  it("is reachable only on its API token route", async () => {
+    const route = (await render("embed://apps/plane/Plane.network.yaml")).find(
+      (each) => each.kind === "HTTPRoute" && each.metadata.name === "plane",
+    );
+    const toMcp = route.spec.rules.filter((rule: any) =>
+      rule.backendRefs.some((backend: any) => backend.name === "plane-mcp"),
+    );
+
+    assert.deepEqual(
+      toMcp.flatMap((rule: any) => rule.matches.map((match: any) => match.path.value)),
+      ["/mcp/http/api-key"],
+    );
+  });
+});

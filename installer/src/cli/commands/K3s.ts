@@ -49,6 +49,7 @@ import {
   buildAuthenticationConfig,
   signsInThroughAuthentik,
 } from "./ClusterSignIn.ts";
+import { buildPlacementServerArgs } from "../../util/placement.ts";
 import { usesNebula } from "./NebulaNetwork.ts";
 
 // Where the install script comes from
@@ -372,6 +373,10 @@ function buildInstallExec(config: CloudConfig, context: any): string {
   // Trusting Authentik to say who someone is, for Headlamp and kubectl,
   // which talk to the API as whoever signed in. See ClusterSignIn.ts.
   args.push(...buildApiServerAuthArgs(config));
+
+  // Enforcing "placement": a namespace's pods in its region. See
+  // util/placement.ts.
+  args.push(...buildPlacementServerArgs(config));
 
   return [...args, ...(extraServerArgs !== undefined ? extraServerArgs : [])].join(" ");
 }

@@ -39,6 +39,7 @@ import { getClusterNodeName } from "./K3s.ts";
 import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
 import { ROLE_PREFIX, buildKubeEnv } from "../../util/kube.ts";
 import { CLASSES_LABEL, buildShape, isUsableShape } from "../../util/storage.ts";
+import { REGION_LABEL, ZONE_LABEL } from "../../util/placement.ts";
 
 // Where automatic hardware labels live. Namespaced, so it's obvious
 // which labels this installer owns and which came from elsewhere.
@@ -125,6 +126,33 @@ function getAutomaticRoles(context: any): string[] {
   }
 
   return roles;
+}
+
+/**
+ * The labels saying where the node is.
+ *
+ * Kubernetes' own, so the scheduler's spreading across zones and
+ * anything selecting on them work with no translation, and so placing
+ * a namespace in a region (see Placement.ts) has something to select
+ * on. Taken from the node's "region" and "zone" in the configuration;
+ * a node that gives neither gets neither.
+ *
+ * @param context
+ * @returns
+ */
+function getTopologyLabels(context: any): Record<string, string> {
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+  const labels: Record<string, string> = {};
+
+  if (typeof node.region === "string" && node.region !== "") {
+    labels[REGION_LABEL] = node.region;
+  }
+
+  if (typeof node.zone === "string" && node.zone !== "") {
+    labels[ZONE_LABEL] = node.zone;
+  }
+
+  return labels;
 }
 
 /**
@@ -229,6 +257,7 @@ export function buildDesiredLabels(context: any): Record<string, string> {
   // Free-form labels last, so a node can correct something the rules
   // above worked out
   for (const [key, value] of Object.entries({
+    ...getTopologyLabels(context),
     ...getAutomaticLabels(context),
     ...getConfiguredLabels(context),
   })) {

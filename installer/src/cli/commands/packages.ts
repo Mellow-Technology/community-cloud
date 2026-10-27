@@ -638,6 +638,7 @@ const builtInPackages: PackageDefinition[] = [
         "embed://apps/plane/Plane.bucket.yaml",
         "embed://apps/plane/Plane.config.yaml",
         "embed://apps/plane/Plane.yaml",
+        "embed://apps/plane/Plane.mcp.yaml",
         "embed://apps/plane/Plane.network.yaml",
       ],
     },
@@ -695,6 +696,7 @@ const builtInPackages: PackageDefinition[] = [
       "deployment/plane-web",
       "deployment/plane-space",
       "deployment/plane-admin",
+      "deployment/plane-mcp",
     ],
     mail: true,
 

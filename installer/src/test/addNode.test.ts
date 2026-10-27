@@ -35,7 +35,7 @@ const CONFIG = configFrom({
 
 // What the install does to build the cluster itself, as opposed to
 // what it does to a machine
-const CLUSTER_WIDE = ["cilium", "gateway", "helm", "helm-charts", "dns", "cluster"];
+const CLUSTER_WIDE = ["placement", "cilium", "gateway", "helm", "helm-charts", "dns", "cluster"];
 
 describe("the bundles adding a node runs", () => {
   it("names only bundles that exist", () => {
