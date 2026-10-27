@@ -39,5 +39,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 registries.yaml
 *.secret.yaml
 
-# compiled installers
+# compiled installers, and what bun build --compile leaves behind
+# when it's interrupted
 installer/build
+*.bun-build

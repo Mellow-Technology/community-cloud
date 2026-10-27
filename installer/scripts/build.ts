@@ -14,6 +14,7 @@
  *
  *   bun run build            every target
  *   bun run build linux      just the ones matching "linux"
+ *   bun run build linux-x64  just that one, not linux-x64-musl too
  */
 import { $ } from "bun";
 import { mkdir, stat } from "node:fs/promises";
@@ -99,9 +100,14 @@ async function main() {
   const root = getInstallerRoot();
   const filter = process.argv[2];
 
-  const wanted = filter !== undefined
-    ? TARGETS.filter((target) => target.name.includes(filter))
-    : TARGETS;
+  // A target's exact name means that target alone: "linux-x64" is
+  // also part of "linux-x64-musl", and CI builds one target per job
+  const exact = TARGETS.filter((target) => target.name === filter);
+  const wanted = filter === undefined
+    ? TARGETS
+    : exact.length > 0
+      ? exact
+      : TARGETS.filter((target) => target.name.includes(filter));
 
   if (wanted.length === 0) {
     console.log(`Nothing matches "${filter}". Targets: ${TARGETS.map((target) => target.name).join(", ")}`);
