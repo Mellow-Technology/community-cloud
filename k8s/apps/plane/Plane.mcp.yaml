@@ -1,0 +1,105 @@
+# Plane's MCP server, so an AI agent can read and work with Plane's
+# projects and work items: https://github.com/makeplane/plane-mcp-server
+#
+# Reached on Plane's own hostname at /mcp/http/api-key/mcp, with each
+# person's own Plane API token (Workspace Settings → API tokens) and
+# their workspace:
+#
+#   Authorization: Bearer <token>
+#   X-Workspace-slug: <workspace>
+#
+# so it acts as whoever connected, with what Plane lets them do, and no
+# credential of anyone's is kept here. It checks each token by asking
+# Plane's API, inside the cluster.
+#
+# The server also has OAuth routes, for signing in through an OAuth
+# application registered with Plane. Nothing here registers one, and
+# Plane.network.yaml routes only the API token path, so they're never
+# reached. They still have to be configured for the server to start at
+# all, which is all the placeholders below are for.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-mcp
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: plane
+    role: mcp
+  ports:
+    - name: http
+      port: 8211
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-mcp
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: plane
+      role: mcp
+  template:
+    metadata:
+      labels:
+        app: plane
+        role: mcp
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      containers:
+        - name: mcp
+          image: makeplane/plane-mcp-server:v0.3.5
+          imagePullPolicy: IfNotPresent
+          env:
+            # The address people know Plane by, and the one the server
+            # actually calls it on, which stays inside the cluster
+            - name: PLANE_BASE_URL
+              value: {{ printf "https://%s" .Values.domain.plane | quote }}
+            - name: PLANE_INTERNAL_BASE_URL
+              value: "http://plane-api:8000"
+
+            # Under /mcp, so it shares Plane's hostname without taking
+            # any of Plane's own paths
+            - name: MCP_PATH_PREFIX
+              value: "/mcp"
+
+            # What people ask Plane for stays out of the logs. Each call
+            # is still logged, by tool, time taken and outcome.
+            - name: LOG_PAYLOADS
+              value: "false"
+
+            # Required to start, never used; see the top of this file
+            - name: PLANE_OAUTH_PROVIDER_CLIENT_ID
+              value: "unused"
+            - name: PLANE_OAUTH_PROVIDER_CLIENT_SECRET
+              value: "unused"
+            - name: PLANE_OAUTH_PROVIDER_BASE_URL
+              value: {{ printf "https://%s/mcp" .Values.domain.plane | quote }}
+          ports:
+            - name: http
+              containerPort: 8211
+          # No health endpoint of its own; listening is what there is
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: 50m

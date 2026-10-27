@@ -30,6 +30,7 @@ import { DrainCommands } from "./Drain.ts";
 import { K3sUninstallCommands, NodeRemovedCommands } from "./Uninstall.ts";
 import { CleanCommands, StorageRemoveCommands } from "./Clean.ts";
 import { DnsCommands } from "./Dns.ts";
+import { PlacementCommands } from "./Placement.ts";
 
 /**
  * A bundle that can be run.
@@ -263,9 +264,20 @@ const builtInBundles: BundleDefinition[] = [
     checkedBy: "helm-charts",
   },
   {
+    name: "placement",
+    description: "Keep each placed namespace's pods in its region",
+    commands: PlacementCommands,
+  },
+  {
     name: "preflight",
     description: "Check a node could be installed on, changing nothing",
     commands: PreflightCommands,
+  },
+  {
+    name: "rabbitmq",
+    description: "Install the RabbitMQ operators into rabbitmq-system, and the RabbitMQ cc-office shares",
+    commands: buildSinglePackageBundle("rabbitmq-operator"),
+    checkedBy: "helm-charts",
   },
   {
     name: "redis",

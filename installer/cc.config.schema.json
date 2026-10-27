@@ -316,6 +316,17 @@
         ]
       }
     },
+    "placement": {
+      "type": "object",
+      "description": "Which region each namespace's pods run in, e.g. {\"cc-office\": \"sea\"}. Every pod made in the namespace gets a node selector on topology.kubernetes.io/region, so related workloads stay near each other. Strict: with no node in the region up, the pods wait.",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+        "maxLength": 63
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/region"
+      }
+    },
     "plugins": {
       "type": "object",
       "description": "Which plugins to load from ~/.community-cloud/plugins/.",
@@ -706,26 +717,7 @@
           ]
         },
         "region": {
-          "enum": [
-            "nam",
-            "sam",
-            "eur",
-            "naf",
-            "waf",
-            "maf",
-            "eaf",
-            "saf",
-            "mea",
-            "nas",
-            "sas",
-            "eas",
-            "sea",
-            "anz",
-            "pac",
-            "atl",
-            "ant",
-            "mob"
-          ],
+          "$ref": "#/$defs/region",
           "description": "Where it physically is. Codes are fixed: see src/topology/regions.ts."
         },
         "zone": {
@@ -905,6 +897,29 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 65535
+    },
+    "region": {
+      "enum": [
+        "nam",
+        "sam",
+        "eur",
+        "naf",
+        "waf",
+        "maf",
+        "eaf",
+        "saf",
+        "mea",
+        "nas",
+        "sas",
+        "eas",
+        "sea",
+        "anz",
+        "pac",
+        "atl",
+        "ant",
+        "mob"
+      ],
+      "description": "A region code. Codes are fixed: see src/topology/regions.ts."
     }
   }
 }

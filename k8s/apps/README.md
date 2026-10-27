@@ -101,7 +101,8 @@ accounts; signing in through Authentik needs Twenty's enterprise key.
 with the `plane` package; it's reached at `values.domain.plane`, with
 its parts divided by path — `/api` and `/auth` to its API, `/live` to
 its live collaboration server, `/spaces` to its public pages,
-`/god-mode` to its admin pages, and everything else to its web app.
+`/god-mode` to its admin pages, `/mcp/http/api-key` to its MCP server,
+and everything else to its web app.
 
 | File | What it is |
 |---|---|
@@ -110,6 +111,7 @@ its live collaboration server, `/spaces` to its public pages,
 | `Plane.queue.yaml` | Its vhost in the shared RabbitMQ, and a user limited to it. |
 | `Plane.bucket.yaml` | Its bucket in SeaweedFS, `uploads`, and keys to only that. |
 | `Plane.config.yaml` | Its settings, and the script that makes its first administrator. |
+| `Plane.mcp.yaml` | Its [MCP server](https://github.com/makeplane/plane-mcp-server), for AI agents. |
 | `Plane.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
 
 Plane signs the links it gives browsers for its files for its own
@@ -126,6 +128,31 @@ first: with `values.adminEmail` and the password in the `plane-admin`
 Secret, and only while there's no administrator at all. Most of its
 settings, mail among them, live in its database once it's running,
 and are changed from its admin pages.
+
+Its MCP server gives an AI agent Plane's projects, work items, cycles
+and the rest, as whoever connects: each person uses their own Plane
+API token (Workspace Settings → API tokens), so the agent can do what
+they can and no more, and no one's credentials are kept in the
+cluster. Point an MCP client at it with two headers:
+
+```json
+{
+  "mcpServers": {
+    "plane": {
+      "type": "http",
+      "url": "https://<values.domain.plane>/mcp/http/api-key/mcp",
+      "headers": {
+        "Authorization": "Bearer <Plane API token>",
+        "X-Workspace-slug": "<workspace>"
+      }
+    }
+  }
+}
+```
+
+The server can also sign people in with OAuth, but that needs an OAuth
+application registered with Plane, so only the API token route is
+reachable. What people ask through it is kept out of its logs.
 
 ## Lago (`lago/`)
 

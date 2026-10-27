@@ -99,14 +99,15 @@ cluster in service.
 | `gateway` | A way into the cluster from outside |
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
-| `nodeLabels` | Roles, labels, and what was detected |
+| `nodeLabels` | Roles, labels, region and zone, and what was detected |
+| `placement` | Each namespace in `placement` kept to its region |
 | `cluster-online` | Whether the cluster is up, before joining a node to it |
 | `node-joined` | Whether a node has joined the cluster and gone Ready |
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
-| `postgres`, `redis` | One shared service on its own: its operator, and what cc-office shares from it |
+| `postgres`, `redis`, `rabbitmq` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -431,11 +432,13 @@ Enabled under `packages` in the configuration: `cert-manager`,
 
 `community-cloud install` runs all of it, as one pipeline: `preflight`,
 `base`, `network`, `gpu`, `registries`, `lvm`, `k3s`, `nodeLabels`,
-`cilium`, `gateway`, `helm`, `helm-charts`, `dns`, `cluster`. In stages:
+`placement`, `cilium`, `gateway`, `helm`, `helm-charts`, `dns`, `cluster`.
+In stages:
 
 1. **Prepare nodes** — preflight checks, packages, kernel networking,
    GPU detection, registry credentials, volume groups
-2. **K3s** — the servers, then the agents, then each node's labels
+2. **K3s** — the servers, then the agents, then each node's labels,
+   then which region each placed namespace runs in
 3. **Networking** — the Gateway API resources → Cilium → the cluster
    Gateway (the `gateway` bundle)
 4. **Charts** — the `helm-charts` bundle, dependencies first:

@@ -582,8 +582,9 @@ function buildVerifyReadyCommand(definition: PackageDefinition): CommandSpec {
  * How to tell whether a package is on the cluster at all.
  *
  * Its Helm release, for a package that's a chart. For one that's only
- * manifests, the first workload it says to wait for: what makes it an
- * application rather than a few objects. A package with neither has
+ * manifests, its own workload among those it says to wait for — the
+ * one named after it, or the first: what makes it an application
+ * rather than a few objects. A package with neither has
  * nothing that says it's there, and isn't asked about.
  *
  * @param definition
@@ -603,7 +604,12 @@ export function buildPresenceProbe(
     };
   }
 
-  const workload = definition.rollout?.[0];
+  // Its own workload, named after it, rather than whatever is waited
+  // on first: an application lists the shared Redis it runs on ahead
+  // of itself, and that being there says nothing about whether it is
+  const rollout = definition.rollout ?? [];
+  const workload =
+    rollout.find((entry) => (entry.split("/")[1] ?? "").startsWith(definition.name)) ?? rollout[0];
   if (workload !== undefined) {
     return {
       probe: `kubectl -n ${namespace} get ${quoteForShell(workload)} > /dev/null 2>&1`,
@@ -932,8 +938,7 @@ export function buildPackageInventoryCommand(config: CloudConfig): CommandSpec {
  * an application to a cluster that already has its foundations, and
  * re-running the whole chart bundle to get one more application would
  * upgrade everything else in passing. What it needs is checked
- * instead, by the package's own commands and the manifests failing
- * to apply.
+ * instead, before anything is changed.
  *
  * The configuration still counts: a version, a namespace or a values
  * file it gives for the package is used here as it would be by
@@ -944,25 +949,78 @@ export function buildPackageInventoryCommand(config: CloudConfig): CommandSpec {
  */
 export function buildSinglePackageBundle(name: string) {
   return (config: CloudConfig): CommandSpec[] => {
-    const definition = resolvePackage(name, getPackageSelections(config)[name]);
+    const selections = getPackageSelections(config);
+    const definition = resolvePackage(name, selections[name]);
+    const required = (definition.requires ?? []).map((other) => resolvePackage(other, selections[other]));
 
-    const commands: CommandSpec[] = [
-      {
-        name: `require-cluster-${name}`,
-        purpose: CommandPurpose.Require,
-        description: `Check the namespace ${name} goes in is there`,
-        runOn: CommandTarget.ControlPlane,
-        env: buildKubeEnv,
-        command: `kubectl get namespace ${quoteForShell(definition.namespace)} > /dev/null || { echo "There's no ${definition.namespace} namespace to install ${name} into. It comes with ${(definition.requires ?? []).join(", ") || "the cluster's foundations"} — install that first, or use the \\"helm-charts\\" bundle with ${name} enabled, which installs what it needs." >&2; exit 1; }`,
-        output: OutputType.Raw,
-      },
-    ];
+    const commands: CommandSpec[] = [];
 
-    if (definition.chart !== undefined) {
+    // Asking whether a charted package is there takes Helm, so it has
+    // to be found before anything is asked
+    if (definition.chart !== undefined || required.some((other) => other.chart !== undefined)) {
       commands.push(checkHelmAvailableCommand);
     }
 
+    const requirement = buildRequirementCommand(definition, required);
+    if (requirement !== undefined) {
+      commands.push(requirement);
+    }
+
     return [...commands, ...buildPackageCommands(definition)];
+  };
+}
+
+/**
+ * Check everything a package needs is already on the cluster.
+ *
+ * Asked with the same probe as each one's own check that it's
+ * installed, before anything is changed. A missing one would otherwise
+ * show up partway through, as a manifest refused for a kind the cluster
+ * doesn't know, after some of this package had already been applied.
+ *
+ * It asks about the packages rather than about the namespace this one
+ * goes in, which is what it used to do. That stood in for the same
+ * question and got it wrong both ways: an operator whose own manifests
+ * make its namespace was refused for the namespace not being there
+ * yet, and an application whose namespace was there was let through
+ * without what it runs on.
+ *
+ * @param definition
+ * @param required what it requires, as the configuration has them
+ * @returns nothing for a package that requires nothing that can be asked about
+ */
+function buildRequirementCommand(
+  definition: PackageDefinition,
+  required: PackageDefinition[],
+): CommandSpec | undefined {
+  const probes = required
+    .map((other) => ({ name: other.name, presence: buildPresenceProbe(other) }))
+    .filter((entry) => entry.presence !== undefined);
+
+  if (probes.length === 0) {
+    return undefined;
+  }
+
+  return {
+    name: `require-cluster-${definition.name}`,
+    purpose: CommandPurpose.Require,
+
+    // Re-running this package's bundle wouldn't help; the message
+    // names what to install instead
+    remedy: false,
+    description: `Check what ${definition.name} needs is installed`,
+    runOn: CommandTarget.ControlPlane,
+    env: buildHelmEnv,
+    command: [
+      "missing=''",
+      ...probes.map(
+        ({ name, presence }) =>
+          `${presence!.probe} || missing="$missing ${name}"`,
+      ),
+      `[ -z "$missing" ] || { echo "${definition.name} needs$missing, which isn't installed. Install it first, with its own bundle (see \"list-bundles\") or the \"helm-charts\" bundle with ${definition.name} enabled, which installs what it needs." >&2; exit 1; }`,
+      `echo "Everything ${definition.name} needs is installed: ${probes.map(({ name }) => name).join(", ")}"`,
+    ],
+    output: OutputType.Raw,
   };
 }
 

@@ -64,6 +64,16 @@ spec:
       backendRefs:
         - name: plane-api
           port: 8000
+    # Its MCP server, for AI agents, with a Plane API token. Only this
+    # path: the server's OAuth routes aren't set up, and Plane.mcp.yaml
+    # says why.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp/http/api-key
+      backendRefs:
+        - name: plane-mcp
+          port: 8211
     # Its documents' live collaboration, over a WebSocket
     - matches:
         - path:
