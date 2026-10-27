@@ -1,0 +1,79 @@
+# What Cirrus may do, cluster-wide.
+#
+# WebApplications can be in any namespace, so Cirrus needs to reach
+# every namespace: their Deployments, Services and migration Jobs,
+# the Secrets it writes credentials into and reads tokens from, and
+# the namespace labels that say whether a namespace may have routes
+# and buckets. Beyond that, only the kinds it asks the cluster's other
+# operators for — CloudNativePG, SeaweedFS, RabbitMQ's topology
+# operator — and the Gateway API's listeners and routes.
+#
+# Reading every Secret is the broadest of these, and is what an
+# operator that hands out credentials has to be able to do; keep an
+# eye on it if Cirrus's scope narrows.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cirrus
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cirrus
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+rules:
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["webapplications"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["webapplications/status", "webapplications/finalizers"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets", "services"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["databases", "databaseroles"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["seaweed.seaweedfs.com"]
+    resources: ["buckets", "s3identities", "s3credentials"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["rabbitmq.com"]
+    resources: ["vhosts", "users", "permissions"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["listenersets", "httproutes"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cirrus
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cirrus
+subjects:
+  - kind: ServiceAccount
+    name: cirrus
+    namespace: community-cloud

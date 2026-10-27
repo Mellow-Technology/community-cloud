@@ -318,7 +318,8 @@ manifests alone. `true` is shorthand for enabled, and
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
 `mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
-`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`. Dependencies
+`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`, `cirrus`.
+Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too. `cloudnative-pg`, `redis-operator` and
 `seaweedfs` each need TopoLVM, so enabling any of them brings TopoLVM
@@ -358,6 +359,16 @@ RabbitMQ the applications in `cc-office` share, `rabbitmq` on 5672. An
 application asks for its own vhost and a user limited to it with
 `Vhost`, `User` and `Permission` resources, and the operator writes
 the user's credentials into `<user>-user-credentials` beside it.
+
+`cirrus` installs Cirrus, Community Cloud's own operator, into
+`community-cloud`, with the `WebApplication` resource it runs. A
+WebApplication asks for a database, a bucket or a vhost by naming
+them, and Cirrus makes them through CloudNativePG, SeaweedFS and the
+RabbitMQ topology operator, so the package requires all three. It
+also takes GitLab's pipeline webhooks on `values.domain.cirrus` and
+rolls out each image a successful pipeline publishes, running the
+application's migrations first. See
+[operators/cirrus](../operators/cirrus/README.md).
 
 Plane is projects, issues and docs, on `values.domain.plane`, with its
 web app, public pages, admin pages and API all on that hostname. Its

@@ -906,6 +906,36 @@ const builtInPackages: PackageDefinition[] = [
     values: ["domain.headlamp", "domain.auth"],
   },
   {
+    name: "cirrus",
+    description: "Cirrus, which runs WebApplications and rolls out what their forges publish",
+    namespace: CLUSTER_NAMESPACE,
+
+    // Cirrus provisions through the cluster's own services and nothing
+    // else, so an application asking for a database, a bucket or a
+    // queue needs them there. Its webhook endpoint's certificate is
+    // cert-manager's.
+    requires: ["cert-manager", "cloudnative-pg", "seaweedfs", "rabbitmq-operator"],
+
+    // No chart: Cirrus is ours, and its manifests are the whole of it.
+    // The namespace again, for the label the cluster Gateway looks for,
+    // as for Headlamp; then the CRD, so the operator finds it when it
+    // starts watching. The image is pinned in Cirrus.yaml, beside the
+    // CRD it matches.
+    manifests: {
+      before: [
+        "embed://networking/cilium/gateway/Gateway.namespace.yaml",
+        "embed://operators/cirrus/Cirrus.crd.yaml",
+        "embed://operators/cirrus/Cirrus.rbac.yaml",
+      ],
+      after: ["embed://operators/cirrus/Cirrus.yaml", "embed://operators/cirrus/Cirrus.network.yaml"],
+    },
+
+    rollout: ["deployment/cirrus"],
+
+    // Where GitLab sends its webhooks
+    values: ["domain.cirrus"],
+  },
+  {
     name: "tailscale-operator",
     description: "Exposes cluster services on a tailnet",
     chart: { repo: "https://pkgs.tailscale.com/helmcharts", name: "tailscale-operator" },

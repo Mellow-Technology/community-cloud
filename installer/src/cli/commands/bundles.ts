@@ -152,6 +152,12 @@ const builtInBundles: BundleDefinition[] = [
     commands: CiliumCommands,
   },
   {
+    name: "cirrus",
+    description: "Install Cirrus into community-cloud, to run WebApplications",
+    commands: buildSinglePackageBundle("cirrus"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "clean",
     description: "Remove the configuration and data directories an uninstall kept",
     commands: CleanCommands,

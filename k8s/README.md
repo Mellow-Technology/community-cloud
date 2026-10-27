@@ -55,6 +55,7 @@ k8s/
 ├── crd/               # Community Cloud's own custom resources
 ├── database/Postgres/ # CloudNativePG clusters
 ├── k3s-config/        # Placeholder: the installer generates K3s's configuration
+├── operators/         # Community Cloud's own operators: Cirrus
 ├── mq/                # Message queues: the RabbitMQ operators, and a placeholder for NATS
 ├── networking/        # CNI, the Gateway API, the mesh
 │   ├── cilium/        # Cilium, and gateway/ with the cluster Gateway
@@ -113,10 +114,17 @@ See [apps/README.md](./apps/README.md).
 
 | File | What it is |
 |---|---|
-| `sites.crd.yaml` | Meant to become a `Site`, a physical location and what runs there. Currently a copy of the WebApp CRD. |
-| `webapps.crd.yaml` | A `WebApp`: an application with a domain, an image and storage. |
+| `sites.crd.yaml` | Meant to become a `Site`, a physical location and what runs there. Still a copy of the old WebApp draft. |
 
-Nothing applies these yet, and nothing reconciles them.
+Nothing applies it yet, and nothing reconciles it.
+
+## Operators (`operators/`)
+
+Community Cloud's own operators, as the installer applies them.
+
+| Directory | What it is |
+|---|---|
+| `cirrus/` | Cirrus: the `WebApplication` CRD (generated from `operators/cirrus`; don't edit it by hand), its RBAC, its Deployment, and the route GitLab's webhooks arrive on, at `values.domain.cirrus`. Installed by the `cirrus` package. |
 
 ## Databases (`database/`)
 

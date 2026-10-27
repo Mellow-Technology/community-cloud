@@ -107,6 +107,7 @@ cluster in service.
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
+| `cirrus` | Cirrus, the operator that runs WebApplications |
 | `postgres`, `redis`, `rabbitmq` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
@@ -172,11 +173,11 @@ k8s/
 │   ├── CertManager.values.yaml  # cert-manager Helm values
 │   └── ClusterIssuer.yaml       # cc-lets-encrypt, applied by the cert-manager package
 ├── crd/                         # Custom Resource Definitions, not applied by anything yet
-│   ├── webapps.crd.yaml         # Webapp lifecycle CRD
-│   └── sites.crd.yaml           # Meant for sites; currently a copy of the Webapp CRD
+│   └── sites.crd.yaml           # Meant for sites; currently a copy of the old Webapp draft
 ├── database/Postgres/
 │   └── PostGISCluster.yaml      # PostGIS cluster (30Gi), applied by hand
 ├── k3s-config/README.md         # Placeholder: the installer generates K3s's configuration
+├── operators/cirrus/            # Cirrus: the WebApplication CRD, its RBAC, Deployment and webhook route
 ├── mq/
 │   ├── RabbitMQ/                # The RabbitMQ operators, vendored at pinned versions
 │   └── nats/README.md           # Placeholder for NATS: nothing deployed
@@ -201,21 +202,17 @@ k8s/
 
 | CRD | Scope | Purpose |
 |---|---|---|
-| `Webapp` | Namespace | Declarative webapp lifecycle — auto-generates deployment, service, PVC, database, Gateway API route, TLS cert |
-Nothing installs the CRD yet. `sites.crd.yaml` is meant to define a
-cluster-scoped `Site` for multi-site configuration, but is currently a
-copy of the Webapp CRD.
+| `WebApplication` (`webapp`) | Namespace | An application and what it needs — Deployment, Service, a cc-postgres database, a SeaweedFS bucket, a RabbitMQ vhost, routes on the cluster Gateway, migrations — rolled out from GitLab pipelines |
 
-A sketch of a `WebappController`, in
-`installer/src/runners/scratch/controller/WebappController.ts`,
-generates manifests from a Webapp spec. Nothing imports it — see that
-directory's README. It handles:
-- Deployment with configurable replicas, resources, env vars
-- Service on port 80
-- PVC with configurable size/mount path
-- CloudNative-PG database cluster
-- Gateway API HTTPRoute
-- cert-manager Certificate
+`WebApplication` is run by Cirrus, in `operators/cirrus`, and installed
+by the `cirrus` package; its CRD is generated from Cirrus's Rust types
+into `k8s/operators/cirrus/Cirrus.crd.yaml`. See
+[operators/cirrus](../operators/cirrus/README.md).
+
+`sites.crd.yaml` is meant to define a cluster-scoped `Site` for
+multi-site configuration, but is still a copy of the old Webapp draft,
+and nothing applies it. The scratch `WebappController` sketch in
+`installer/src/runners/scratch/controller/` is superseded by Cirrus.
 
 ### Application Details
 

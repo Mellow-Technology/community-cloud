@@ -1,0 +1,163 @@
+# Checks Cirrus and builds its image for amd64 and arm64, publishing
+# it to ghcr.io/mellow-technology/cirrus.
+#
+# - Pull requests: fmt, clippy, tests (which include the check that
+#   k8s/operators/cirrus/Cirrus.crd.yaml is current), and both images
+#   built but not pushed.
+# - Pushes to main: the same, then :main and :sha-<commit>.
+# - A tag "cirrus-v<version>", e.g. cirrus-v0.2.0: :<version> and
+#   :latest as well. Bump the image pinned in
+#   k8s/operators/cirrus/Cirrus.yaml to match.
+#
+# Each architecture builds on a runner of its own kind rather than
+# under QEMU, where a Rust release build takes many times as long.
+# Each pushes by digest alone, and the merge job ties the two into
+# one multi-architecture tag.
+name: Cirrus
+
+on:
+  push:
+    branches: [main]
+    tags: ["cirrus-v*"]
+    paths:
+      - "operators/cirrus/**"
+      - "k8s/operators/cirrus/**"
+      - ".github/workflows/cirrus.yml"
+  pull_request:
+    paths:
+      - "operators/cirrus/**"
+      - "k8s/operators/cirrus/**"
+      - ".github/workflows/cirrus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cirrus-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/mellow-technology/cirrus
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operators/cirrus
+    steps:
+      - uses: actions/checkout@v5
+      # rustup reads rust-toolchain.toml and installs the pinned
+      # toolchain, with rustfmt and clippy, on first use
+      - run: rustup show active-toolchain
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            operators/cirrus/target
+          key: cirrus-${{ runner.os }}-${{ hashFiles('operators/cirrus/Cargo.lock', 'operators/cirrus/rust-toolchain.toml') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  # Only for a tag: the version it names, checked before anything is
+  # built
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cirrus-v* ]]; then
+            version="${GITHUB_REF#refs/tags/cirrus-v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::The tag's version, \"$version\", isn't semver: cirrus-v1.2.3 or cirrus-v1.2.3-rc.1"
+              exit 1
+            fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: [check, version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest, arch: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: operators/cirrus
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=cirrus-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=cirrus-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # Pull requests only prove the image builds
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
+      - if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cirrus-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    if: github.event_name != 'pull_request'
+    needs: [image, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cirrus-digest-*
+          merge-multiple: true
+          path: /tmp/digests
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-architecture image
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags+=(-t "$IMAGE:main")
+          fi
+          if [[ -n "$VERSION" ]]; then
+            tags+=(-t "$IMAGE:$VERSION")
+            # A prerelease doesn't move "latest"
+            [[ "$VERSION" == *-* ]] || tags+=(-t "$IMAGE:latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:sha-${GITHUB_SHA::7}"
