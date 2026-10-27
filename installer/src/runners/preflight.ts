@@ -18,7 +18,7 @@
 import chalk from "chalk";
 import { isIP } from "node:net";
 
-import { FAILURE, SUCCESS } from "../util/chalk.ts";
+import { FAILURE, SUCCESS, heading } from "../util/chalk.ts";
 import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
@@ -417,7 +417,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
 
   // The configuration first, since nothing else matters if it doesn't
   // describe a cluster
-  console.log(`\n${chalk.bold("── the configuration ──")}`);
+  console.log(heading("The Configuration"));
   const configProblems = checkConfiguration(config);
   problems.push(...configProblems);
 
@@ -460,7 +460,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
   const displayNames = getDisplayNames(config);
 
   for (const node of nodes) {
-    console.log(`\n${chalk.bold(`── ${displayNode(displayNames, node.name)} ──`)}`);
+    console.log(heading(displayNode(displayNames, node.name)));
 
     let connection: NodeConnection;
     try {
