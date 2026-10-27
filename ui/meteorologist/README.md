@@ -92,22 +92,27 @@ sign-in from a laptop.
 
 ## Settings
 
-| Variable                                       | Needed for                   | Meaning                                                                                          |
-| ---------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| `METEOROLOGIST_KUBE_MODE`                      |                              | `user` (default), `kubeconfig` or `fixtures`                                                     |
-| `METEOROLOGIST_URL`                            | `user`                       | The public address, e.g. `https://meteorologist.example.org`. Redirect URIs are built from it    |
-| `OIDC_ISSUER`                                  | `user`                       | The Authentik application's issuer, e.g. `https://auth.example.org/application/o/meteorologist/` |
-| `OIDC_CLIENT_ID`                               | `user`                       | The provider's client ID                                                                         |
-| `OIDC_CLIENT_SECRET`                           | `user`, confidential clients | The provider's client secret                                                                     |
-| `OIDC_SCOPES`                                  |                              | Defaults to `openid profile email offline_access`                                                |
-| `SESSION_SECRET`                               | `user`                       | At least 32 characters; `openssl rand -base64 48`                                                |
-| `KUBE_API_SERVER`, `KUBE_CA_FILE`              | outside a cluster            | The API server's address and CA. Inside a pod, the in-cluster ones are used                      |
-| `KUBE_INSECURE_SKIP_TLS_VERIFY`                |                              | `true` to skip checking the API server's certificate (development only)                          |
-| `METEOROLOGIST_KUBECONFIG`                     | `kubeconfig`                 | Path to a kubeconfig; a leading `~` works                                                        |
-| `METEOROLOGIST_KUBECONFIG_CONTEXT`             |                              | A context in it other than the current one                                                       |
-| `METEOROLOGIST_ALLOW_KUBECONFIG_IN_PRODUCTION` |                              | `true` to let `next start` use the kubeconfig mode                                               |
+| Variable                                       | Needed for                   | Meaning                                                                                                                                                                                                                          |
+| ---------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `METEOROLOGIST_KUBE_MODE`                      |                              | `user`, `kubeconfig` or `fixtures`. Deployed, it's always `user`. Locally, when unset, it follows from what's set: `OIDC_ISSUER` means `user`, `METEOROLOGIST_KUBECONFIG` alone means `kubeconfig`, and nothing means `fixtures` |
+| `METEOROLOGIST_URL`                            | `user`, deployed             | The public address, e.g. `https://meteorologist.example.org`. Redirect URIs are built from it. Locally it defaults to `http://localhost:$PORT` (3000)                                                                            |
+| `OIDC_ISSUER`                                  | `user`                       | The Authentik application's issuer, e.g. `https://auth.example.org/application/o/meteorologist/`                                                                                                                                 |
+| `OIDC_CLIENT_ID`                               | `user`                       | The provider's client ID                                                                                                                                                                                                         |
+| `OIDC_CLIENT_SECRET`                           | `user`, confidential clients | The provider's client secret                                                                                                                                                                                                     |
+| `OIDC_SCOPES`                                  |                              | Defaults to `openid profile email offline_access`                                                                                                                                                                                |
+| `SESSION_SECRET`                               | `user`                       | At least 32 characters; `openssl rand -base64 48`                                                                                                                                                                                |
+| `KUBE_API_SERVER`, `KUBE_CA_FILE`              | outside a cluster            | The API server's address and CA. Inside a pod, the in-cluster ones are used                                                                                                                                                      |
+| `KUBE_INSECURE_SKIP_TLS_VERIFY`                |                              | `true` to skip checking the API server's certificate (development only)                                                                                                                                                          |
+| `METEOROLOGIST_KUBECONFIG`                     | `kubeconfig`                 | Path to a kubeconfig; a leading `~` works                                                                                                                                                                                        |
+| `METEOROLOGIST_KUBECONFIG_CONTEXT`             |                              | A context in it other than the current one                                                                                                                                                                                       |
+| `METEOROLOGIST_ALLOW_KUBECONFIG_IN_PRODUCTION` |                              | `true` to let `next start` use the kubeconfig mode                                                                                                                                                                               |
 
 Put local settings in `.env.local`, which git ignores.
+
+Anything the mode needs that's missing is listed, all of it at once,
+as the response to every page and in the server's log, rather than
+as a stack trace. A plain-HTTP `OIDC_ISSUER`, such as an Authentik
+running on your machine, is accepted outside production.
 
 ## Running it locally
 
@@ -120,19 +125,22 @@ bun install
 bun run dev:fixtures        # http://localhost:3000, a pretend cluster
 ```
 
-Against a cluster, as a kubeconfig's user:
+`bun run dev` with nothing set up does the same.
+
+Against a cluster, as a kubeconfig's user — naming the kubeconfig is
+enough:
 
 ```sh
-METEOROLOGIST_KUBE_MODE=kubeconfig \
-METEOROLOGIST_KUBECONFIG=~/.kube/dev-cluster.yaml \
-bun run dev
+METEOROLOGIST_KUBECONFIG=~/.kube/dev-cluster.yaml bun run dev
 ```
+
+Whoever that kubeconfig is, Meteorologist acts as them for everyone
+who opens the page, so mind which cluster it points at.
 
 With the real sign-in, from a laptop:
 
 ```sh
 # .env.local
-METEOROLOGIST_URL=http://localhost:3000
 OIDC_ISSUER=https://auth.example.org/application/o/meteorologist/
 OIDC_CLIENT_ID=meteorologist
 OIDC_CLIENT_SECRET=...

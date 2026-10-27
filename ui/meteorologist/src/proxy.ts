@@ -25,6 +25,7 @@ import {
   unsealSession,
 } from "./lib/auth/session";
 import { getOidcSettings, signsIn } from "./lib/config";
+import { setupProblem } from "./lib/setupError";
 
 /**
  * Sends someone to sign in, and back here afterwards.
@@ -47,6 +48,10 @@ function toLogin(request: NextRequest): NextResponse {
  * @returns
  */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  const problem = setupProblem();
+  if (problem !== undefined) {
+    return problem;
+  }
   if (!signsIn()) {
     return NextResponse.next();
   }

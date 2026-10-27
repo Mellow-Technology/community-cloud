@@ -22,6 +22,16 @@ import type { PendingLogin, Session } from "./session";
 let configuration: Promise<client.Configuration> | undefined;
 
 /**
+ * Whether the issuer is plain HTTP, and allowed to be.
+ *
+ * @param issuer
+ * @returns
+ */
+function insecureIssuer(issuer: string): boolean {
+  return issuer.startsWith("http://") && process.env.NODE_ENV !== "production";
+}
+
+/**
  * Authentik's endpoints and keys, and this client's credentials.
  *
  * @returns
@@ -35,6 +45,9 @@ function getConfiguration(): Promise<client.Configuration> {
         settings.clientId,
         undefined,
         settings.clientSecret !== undefined ? client.ClientSecretBasic(settings.clientSecret) : client.None(),
+        // openid-client only speaks HTTPS. An Authentik on plain HTTP is
+        // only ever a local one, so that's allowed outside production.
+        insecureIssuer(settings.issuer) ? { execute: [client.allowInsecureRequests] } : undefined,
       )
       .catch((error: unknown) => {
         // Try again next time rather than remembering the failure
