@@ -1,0 +1,87 @@
+# A typical full application: a Rails app with a database, a bucket
+# for uploads and a queue for its background jobs, rolled out from
+# GitLab whenever a pipeline on main succeeds.
+#
+# Everything it needs is in this file: the namespace with both of
+# Community Cloud's labels, the GitLab token, and the application.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acme
+  labels:
+    # Lets the cluster Gateway take this namespace's listeners, for
+    # "hostnames"
+    whereWereGoing: "weDontNeedRoads"
+    # Lets SeaweedFS take this namespace's buckets, for "bucket"
+    storage.community-cloud.technology/buckets: "true"
+---
+# A GitLab access token for the project, with the api scope and the
+# Maintainer role: Cirrus manages the project's webhook and reads its
+# container registry with it. Put the real token in with
+#   kubectl -n acme create secret generic gitlab-token --from-literal=token=glpat-...
+# rather than committing it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-token
+  namespace: acme
+stringData:
+  token: glpat-REPLACE-ME
+---
+apiVersion: community-cloud.technology/v1alpha1
+kind: WebApplication
+metadata:
+  name: shop
+  namespace: acme
+spec:
+  # What runs until the first successful pipeline is seen; after that,
+  # whatever the newest one published, by digest
+  image:
+    repository: registry.gitlab.com/acme/shop
+    tag: main
+  replicas: 2
+  port: 3000
+  healthCheck:
+    path: /up
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  hostnames:
+    - shop.acme.example
+
+  # DATABASE_URL and PG*, from the Secret shop-postgres
+  postgres: {}
+  # S3_* and AWS_*, for Active Storage
+  bucket:
+    quota: 20Gi
+  # AMQP_URL and RABBITMQ_*, from the Secret shop-rabbitmq
+  rabbitmq: {}
+
+  # Set after what Cirrus provides, so these win
+  env:
+    - name: RAILS_ENV
+      value: production
+    - name: RAILS_LOG_TO_STDOUT
+      value: "1"
+    - name: SECRET_KEY_BASE
+      valueFrom:
+        secretKeyRef:
+          name: shop-rails
+          key: secret-key-base
+
+  # Run with each new image, before the Deployment is given it
+  migrations:
+    command: ["bin/rails", "db:migrate"]
+    timeoutSeconds: 900
+
+  source:
+    gitlab:
+      project: acme/shop
+      ref: main
+      tokenSecret:
+        name: gitlab-token
+      # The pipeline pushes registry.gitlab.com/acme/shop:<commit sha>
+      imageTag: "{commit_sha}"

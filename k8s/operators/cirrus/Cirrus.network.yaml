@@ -1,0 +1,83 @@
+# How code forges reach Cirrus: a ListenerSet on the cluster Gateway
+# for values.domain.cirrus, and a route for its webhooks and nothing
+# else. The health checks stay inside the cluster.
+#
+# The certificate is cert-manager's, asked for by the annotation, as
+# for the applications in k8s/apps.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: cirrus
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.cirrus }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.cirrus }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cirrus-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cirrus
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: cirrus
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.cirrus }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /hooks/
+      backendRefs:
+        - name: cirrus
+          port: 8080
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cirrus-redirect
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: cirrus
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.cirrus }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

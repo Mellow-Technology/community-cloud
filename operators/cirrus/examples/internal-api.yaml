@@ -1,0 +1,36 @@
+# An application with no hostname: a service only other workloads in
+# the cluster call, at http://inventory.platform.svc:8080. With no
+# hostnames, its namespace needs no Gateway label.
+#
+# It's on a self-managed GitLab, tracks a release branch, and its
+# pipeline tags images as "<branch>-<short sha>" — "release-2-1a2b3c4d"
+# for a pipeline on release/2. Its migrations are a separate binary
+# in the same image.
+apiVersion: community-cloud.technology/v1alpha1
+kind: WebApplication
+metadata:
+  name: inventory
+  namespace: platform
+spec:
+  image:
+    repository: gitlab.acme.internal:5050/platform/inventory
+    tag: release-2
+  port: 8080
+  healthCheck:
+    path: /healthz
+
+  postgres: {}
+
+  migrations:
+    command: ["/app/migrate"]
+    args: ["up"]
+
+  source:
+    gitlab:
+      url: https://gitlab.acme.internal
+      project: platform/inventory
+      ref: release/2
+      tokenSecret:
+        name: gitlab
+        key: access-token
+      imageTag: "{ref}-{short_sha}"

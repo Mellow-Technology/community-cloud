@@ -1,0 +1,83 @@
+# Cirrus: the operator behind WebApplications, and the endpoint code
+# forges send their webhooks to. See operators/cirrus.
+#
+# One replica, replaced rather than rolled: two controllers would
+# both act on every WebApplication, and Cirrus doesn't elect a leader.
+# A few seconds without it only delays reconciles and webhooks, which
+# GitLab retries.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cirrus
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cirrus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cirrus
+    spec:
+      serviceAccountName: cirrus
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cirrus
+          # Pinned, so the operator and the CRD beside it move together.
+          # Released from a cirrus-v<version> tag; see
+          # .github/workflows/cirrus.yml.
+          image: ghcr.io/mellow-technology/cirrus:0.1.0
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Where GitLab reaches the webhooks; Cirrus.network.yaml
+            - name: CIRRUS_WEBHOOK_BASE_URL
+              value: "https://{{ .Values.domain.cirrus }}"
+            - name: RUST_LOG
+              value: info
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cirrus
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app.kubernetes.io/name: cirrus
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

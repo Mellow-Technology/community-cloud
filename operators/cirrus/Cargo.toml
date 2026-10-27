@@ -1,0 +1,46 @@
+[package]
+name = "cirrus"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Runs web applications on Community Cloud: their workloads, what they depend on, and their rollouts"
+license = "LGPL-3.0-or-later"
+publish = false
+default-run = "cirrus"
+
+[[bin]]
+name = "cirrus"
+path = "src/main.rs"
+
+[[bin]]
+name = "crdgen"
+path = "src/bin/crdgen.rs"
+
+[dependencies]
+# The oldest Kubernetes the cluster is expected to run; the APIs Cirrus
+# uses haven't changed since
+k8s-openapi = { version = "0.28", features = ["v1_34", "schemars"] }
+kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "runtime", "derive"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+futures = "0.3"
+axum = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+rand = "0.9"
+sha2 = "0.11"
+subtle = "2"
+urlencoding = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[profile.release]
+strip = true
+lto = "thin"

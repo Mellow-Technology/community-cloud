@@ -455,6 +455,10 @@
               "type": "string",
               "description": "Plane, its web app, admin pages and API on the one hostname."
             },
+            "cirrus": {
+              "type": "string",
+              "description": "Cirrus's webhook endpoint, which code forges such as GitLab call when they publish an image."
+            },
             "storage": {
               "type": "string",
               "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."

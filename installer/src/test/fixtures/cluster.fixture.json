@@ -15,6 +15,7 @@
       "billingApi": "billing-api.example.test",
       "signing": "sign.example.test",
       "plane": "plane.example.test",
+      "cirrus": "cirrus.example.test",
       "headlamp": "headlamp.example.test",
       "storage": "s3.example.test"
     },
