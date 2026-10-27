@@ -24,7 +24,16 @@ import {
   getBundleCommands,
   getCheckableBundleNames,
 } from "../cli/commands/bundles.ts";
-import { Finding, findSharedCauses, headline, orderForCheckup } from "../runners/doctor.ts";
+import {
+  Finding,
+  findSharedCauses,
+  formatRemedy,
+  getRemedy,
+  headline,
+  orderForCheckup,
+} from "../runners/doctor.ts";
+import { DEFINED_API_ERRORS } from "../cli/commands/NebulaNetwork.ts";
+import { CommandSpec } from "../cli/commands/Command.ts";
 import { INSTALL_PIPELINE } from "../runners/install.ts";
 import { Plan, Step, getRunningBundles } from "../pipeline/plan.ts";
 import { numberBundle } from "../pipeline/reporter.ts";
@@ -252,5 +261,115 @@ describe("failures with one cause", () => {
     assert.equal(headline(REFUSED), "Defined Networking refused the API key");
     assert.equal(headline("Expected bbr, got cubic"), "Expected bbr, got cubic");
     assert.equal(headline("Version 1.2.3 isn't 1.3"), "Version 1.2.3 isn't 1.3");
+  });
+});
+
+describe("how a failure is put right", () => {
+  /**
+   * The step a bundle's command makes, as far as the remedy cares.
+   *
+   * @param bundle
+   * @param command
+   * @returns
+   */
+  function stepOf(bundle: string, command: CommandSpec): Step {
+    return { bundle, bundleDescription: "", command, nodes: ["guandi"] } as unknown as Step;
+  }
+
+  /**
+   * One of a bundle's own commands, by name.
+   *
+   * @param config
+   * @param bundle
+   * @param name
+   * @returns
+   */
+  function commandOf(config: any, bundle: string, name: string): CommandSpec {
+    const found = getBundleCommands(getBundle(bundle)!, config).find((command) => command.name === name);
+    assert.ok(found, `${bundle} has no ${name}`);
+    return found;
+  }
+
+  /**
+   * A failure of a step, for a reason.
+   *
+   * @param bundle
+   * @param step
+   * @param why
+   * @returns
+   */
+  function failed(bundle: string, step: string, why = "something's wrong") {
+    return { node: "guandi", bundle, step, outcome: "failed" as const, why };
+  }
+
+  it("re-runs the check's own bundle when that bundle changes things", async () => {
+    const config = await loadFixtureConfig();
+    const step = stepOf("nodeLabels", commandOf(config, "nodeLabels", "verify-node-labels"));
+
+    assert.deepEqual(getRemedy(step, failed("nodeLabels", "verify-node-labels"), config), ["nodeLabels"]);
+  });
+
+  it("suggests nothing for a bundle that only looks", async () => {
+    const config = await loadFixtureConfig();
+    const step = stepOf("node-joined", getBundleCommands(getBundle("node-joined")!, config)[0]!);
+
+    assert.equal(getRemedy(step, failed("node-joined", step.command.name), config), undefined);
+  });
+
+  it("suggests nothing when the check's explanation is the remedy", async () => {
+    const config = await loadFixtureConfig();
+    const step = stepOf("nebula", commandOf(config, "nebula", "find-nebula-network"));
+
+    assert.equal(getRemedy(step, failed("nebula", "find-nebula-network", DEFINED_API_ERRORS[401]), config), undefined);
+    assert.deepEqual(getRemedy(step, failed("nebula", "find-nebula-network", "No network named prime"), config), ["nebula"]);
+  });
+
+  it("takes a check's own remedy over its bundle, including none at all", async () => {
+    const config = await loadFixtureConfig();
+    const command = commandOf(config, "nodeLabels", "verify-node-labels");
+
+    assert.deepEqual(
+      getRemedy(stepOf("nodeLabels", { ...command, remedy: ["gpu", "nodeLabels"] }), failed("nodeLabels", command.name), config),
+      ["gpu", "nodeLabels"],
+    );
+    assert.equal(getRemedy(stepOf("nodeLabels", { ...command, remedy: false }), failed("nodeLabels", command.name), config), undefined);
+  });
+
+  it("says it as somebody would type it, looking first when it could destroy something", () => {
+    assert.equal(formatRemedy(["cluster"], "cleverswing", "cc.config.json"), "community-cloud run-bundle cluster cleverswing cc.config.json");
+    assert.equal(formatRemedy(["lvm"], "guandi", "cc.config.json"), "community-cloud run-bundle lvm guandi cc.config.json --dry-run");
+    assert.equal(formatRemedy(["gpu", "nodeLabels"], "all", "../cc.config.json"), "community-cloud run-pipeline gpu,nodeLabels all ../cc.config.json");
+    assert.equal(formatRemedy(["cluster"], "all", "My Cluster/cc.json"), "community-cloud run-bundle cluster all 'My Cluster/cc.json'");
+  });
+});
+
+describe("labelling a node on its own", () => {
+  const commands = getBundle("nodeLabels")!.commands as CommandSpec[];
+  const named = (name: string) => commands.find((command) => command.name === name)!;
+
+  it("looks for GPUs and disks itself, and only looks", () => {
+    assert.ok(named("detect-video-hardware"));
+    assert.ok(named("find-disks"));
+
+    // The lvm bundle's other commands make volume groups of free disks
+    assert.equal(commands.find((command) => command.name.startsWith("create-")), undefined);
+  });
+
+  it("doesn't look again when an earlier bundle in the run already did", () => {
+    const earlier = { videoDevices: [], storageClassesPresent: ["ssd"] };
+
+    assert.equal(named("detect-video-hardware").skipWhen!({}, earlier), true);
+    assert.equal(named("find-disks").skipWhen!({}, earlier), true);
+  });
+
+  it("finishes looking once it has started, rather than taking its own finding as an earlier one", () => {
+    const detect = named("detect-video-hardware");
+    const found = detect.saveToContext as Function;
+    const context = {
+      ...found({ processed: { devices: [{ vendor: "nvidia" }], renderNodes: [] } }, {}, {}),
+    };
+
+    assert.equal(named("detect-video-hardware").skipWhen!({}, {}), false);
+    assert.equal(named("name-video-hardware").skipWhen!({}, context), false);
   });
 });

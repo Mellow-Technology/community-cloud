@@ -15,6 +15,23 @@
  * the charts that ship their own are configured to use it instead. So
  * enabling Authentik has to mean installing CloudNativePG first,
  * whether or not anyone remembered to ask for it.
+ *
+ * Where a package goes follows from what it's for:
+ *
+ * - cc-office is for the applications the cluster is there to run,
+ *   and the things they share — the one Postgres, Redis and RabbitMQ.
+ * - community-cloud is for what runs the cluster itself: operators,
+ *   and tools for running it, like Headlamp. An operator serves every
+ *   namespace, so it doesn't belong in any one application's.
+ * - An operator goes in a namespace of its own instead when its
+ *   project says to install it there (cert-manager, cnpg-system,
+ *   rabbitmq-system, topolvm-system, tailscale), or when it's made to
+ *   run one copy per namespace it serves.
+ *
+ * So an operator and what it runs are two packages whenever they're in
+ * different namespaces: a package's rollout, readiness and credentials
+ * are all looked for in its one namespace. See "mattermost-operator"
+ * and "mattermost".
  */
 import CloudConfig from "../../util/CloudConfig.ts";
 import { MailSecurity } from "../../util/mail.ts";
@@ -146,6 +163,10 @@ export interface PackageSelection {
   requires?: string[];
 }
 
+// Where what runs the cluster goes: the cluster Gateway, and the
+// operators that don't ask for a namespace of their own
+export const CLUSTER_NAMESPACE = "community-cloud";
+
 /**
  * The packages Community Cloud knows how to install.
  *
@@ -184,6 +205,10 @@ const builtInPackages: PackageDefinition[] = [
     name: "cloudnative-pg",
     description: "The Postgres operator every database in the cluster runs on",
     chart: { repo: "https://cloudnative-pg.github.io/charts", name: "cloudnative-pg" },
+    // Pinned. Upgrading the operator restarts every Postgres it runs,
+    // so it should be an upgrade somebody chose. 0.29 is operator 1.30,
+    // the first with the DatabaseRole that Office.roles.yaml uses.
+    version: "0.29.1",
     namespace: "cnpg-system",
 
     // The shared cluster asks for "cc-local-ssd-fast", so the storage
@@ -249,6 +274,42 @@ const builtInPackages: PackageDefinition[] = [
         labels: { "cnpg.io/reload": "true" },
       },
     ],
+  },
+  {
+    name: "authentik",
+    description: "Single sign on, for the applications and for the cluster itself",
+    chart: { repo: "https://charts.goauthentik.io", name: "authentik" },
+    // Pinned. Authentik migrates its database on start and has no way
+    // back, so an upgrade should be one somebody chose.
+    version: "2026.5.3",
+    namespace: "cc-office",
+    valuesFile: "embed://apps/authentik/Authentik.values.yaml",
+
+    // Its database is in cc-postgres, with the role CloudNativePG's
+    // package makes, and its files in a bucket in SeaweedFS
+    requires: ["cloudnative-pg", "seaweedfs"],
+
+    manifests: {
+      // What the chart's pods read as they start: the namespace, for
+      // the label the cluster Gateway looks for, the database, and the
+      // bucket, whose keys the SeaweedFS operator writes into the
+      // Secret "authentik-s3"
+      before: [
+        "embed://apps/office/Office.namespace.yaml",
+        "embed://apps/authentik/Authentik.database.yaml",
+        "embed://apps/authentik/Authentik.storage.yaml",
+      ],
+
+      after: ["embed://apps/authentik/Authentik.network.yaml"],
+    },
+
+    ready: ["buckets.seaweed.seaweedfs.com/authentik", "s3credentials.seaweed.seaweedfs.com/authentik"],
+    mail: true,
+
+    // The secret key signs its sessions, and replacing it signs
+    // everybody out, so it's the configuration's to keep rather than
+    // made afresh
+    values: ["domain.auth", "domain.storage", "authentik.secretKey"],
   },
   {
     name: "documenso",
@@ -371,15 +432,18 @@ const builtInPackages: PackageDefinition[] = [
     name: "redis-operator",
     description: "The Redis operator, and the one Redis the applications in cc-office share",
     chart: { repo: "https://ot-container-kit.github.io/helm-charts/", name: "redis-operator" },
-    namespace: "redis-operator",
+    // Pinned, so installing an application that needs Redis doesn't
+    // also upgrade the operator under every Redis in the cluster
+    version: "0.24.0",
+    namespace: CLUSTER_NAMESPACE,
 
     // The Redis asks for "cc-local-ssd-fast", as the databases do
     requires: ["topolvm"],
 
     manifests: {
-      // The operator has a namespace of its own; the Redis is in
-      // cc-office, with the applications using it, and its password
-      // has to have somewhere to go before it does
+      // The operator runs the cluster, so it's in community-cloud; the
+      // Redis is in cc-office, with the applications using it, and its
+      // password has to have somewhere to go before it does
       before: ["embed://apps/office/Office.namespace.yaml"],
       after: ["embed://apps/office/RedisStandalone.yaml"],
     },
@@ -520,11 +584,21 @@ const builtInPackages: PackageDefinition[] = [
     },
 
     secrets: [
-      // What it signs tokens with, and, with no separate key set, what
-      // it encrypts stored credentials with. Losing it loses those.
+      // What it signs tokens with. Replacing it signs everybody out.
       {
         name: "twenty-crm-app-secret",
-        description: "the key Twenty signs and encrypts with",
+        description: "the key Twenty signs sessions with",
+        keyBytes: 32,
+      },
+
+      // What it encrypts stored credentials with. Losing it loses
+      // those, which is why it's apart from the one above. A cluster
+      // moving from an older key can add it as
+      // twenty-crm-fallback-encryption-key, which Twenty reads when
+      // this one doesn't fit; see Twenty.yaml.
+      {
+        name: "twenty-crm-encryption-key",
+        description: "the key Twenty encrypts stored credentials with",
         keyBytes: 32,
       },
     ],
@@ -627,22 +701,29 @@ const builtInPackages: PackageDefinition[] = [
     values: ["domain.plane", "adminEmail"],
   },
   {
-    name: "mattermost",
-    description: "Team chat",
+    name: "mattermost-operator",
+    description: "The Mattermost operator, which runs Mattermost installations in any namespace",
     chart: { repo: "https://helm.mattermost.com", name: "mattermost-operator" },
     // Pinned, so the operator and the version of Mattermost.yaml it
     // understands move together
     version: "1.0.5",
-    namespace: "cc-office",
+    namespace: CLUSTER_NAMESPACE,
     releaseName: "mattermost-operator",
     valuesFile: "embed://apps/mattermost/Mattermost.values.yaml",
+  },
+  {
+    name: "mattermost",
+    description: "Team chat",
+    namespace: "cc-office",
 
     // Its database is in cc-postgres, with the role CloudNativePG's
-    // package makes, and its files in a bucket in SeaweedFS
-    requires: ["cloudnative-pg", "seaweedfs"],
+    // package makes, and its files in a bucket in SeaweedFS. The
+    // operator runs it.
+    requires: ["cloudnative-pg", "seaweedfs", "mattermost-operator"],
 
-    // The chart is the operator. The installation it runs, and what
-    // that needs, are ours.
+    // No chart: the operator is a package of its own, in
+    // community-cloud. The installation it runs, and what that needs,
+    // are ours.
     manifests: {
       // The namespace again, for the label the cluster Gateway looks
       // for, as for Documenso
@@ -779,7 +860,8 @@ const builtInPackages: PackageDefinition[] = [
     description: "A web interface for the cluster, signed into through Authentik",
     chart: { repo: "https://kubernetes-sigs.github.io/headlamp/", name: "headlamp" },
     version: "0.46.0",
-    namespace: "cc-office",
+    // A tool for running the cluster, not one of the applications on it
+    namespace: CLUSTER_NAMESPACE,
     valuesFile: "embed://apps/headlamp/Headlamp.values.yaml",
 
     // It signs in through Authentik, which goes first when it's being
@@ -789,11 +871,11 @@ const builtInPackages: PackageDefinition[] = [
     after: ["authentik"],
 
     manifests: {
-      // The namespace again, for the label the cluster Gateway looks
-      // for, as for Documenso; and the plugins, which Headlamp mounts
-      // and won't start without
+      // The namespace, which the gateway bundle makes too, for the label
+      // the cluster Gateway looks for; and the plugins, which Headlamp
+      // mounts and won't start without
       before: [
-        "embed://apps/office/Office.namespace.yaml",
+        "embed://networking/cilium/gateway/Gateway.namespace.yaml",
         "embed://apps/headlamp/Headlamp.plugins.yaml",
       ],
 

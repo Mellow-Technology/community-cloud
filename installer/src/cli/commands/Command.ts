@@ -276,6 +276,11 @@ export type CommandResults = Record<string, any>;
  *   needs this: a shell command can check the state it's about to
  *   change, but an API call that creates something can't take itself
  *   back once it has been sent.
+ * - remedy: for a check, the bundles that put right what it finds
+ *   wrong, in the order to run them. The doctor prints them as the
+ *   command to type. Left out, it's the check's own bundle, as long as
+ *   that bundle changes anything; false when the fix isn't something
+ *   the installer does, and the check's message says what to do.
  */
 export interface BaseCommandSpec {
   name: string;
@@ -290,6 +295,7 @@ export interface BaseCommandSpec {
   purpose?: CommandPurpose;
   runOn?: CommandTarget;
   scope?: CommandScope;
+  remedy?: string[] | false;
 }
 
 /**

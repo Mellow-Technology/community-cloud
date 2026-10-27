@@ -22,6 +22,7 @@ import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { buildAllocationValues } from "./allocations.ts";
+import { buildObjectStorageValues } from "./objectStorage.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import { buildMailValues } from "./mail.ts";
@@ -397,6 +398,13 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   for (const [name, size] of Object.entries(buildAllocationValues(rawConfig))) {
     if (values[name] === undefined) {
       values[name] = size;
+    }
+  }
+
+  // How many of each SeaweedFS keeps, from "storage.objectStorage"
+  for (const [name, value] of Object.entries(buildObjectStorageValues(rawConfig))) {
+    if (values[name] === undefined) {
+      values[name] = value;
     }
   }
 

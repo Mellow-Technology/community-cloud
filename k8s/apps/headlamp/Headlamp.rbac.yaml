@@ -1,17 +1,18 @@
 # Who administers the cluster, signed in through Authentik.
 #
-# The members of one Authentik group — "authentik Admins" unless
+# The members of one Authentik group — "k8s-admins" unless
 # values.clusterAdminGroup says otherwise — are cluster admins. The
-# API server knows them by their Authentik groups with "oidc:" in
-# front; see installer/src/cli/commands/ClusterSignIn.ts.
+# API server knows them by their Authentik groups with "authentik:" in
+# front, and only lets in members of a group starting "k8s-"; see
+# installer/src/cli/commands/ClusterSignIn.ts.
 #
-# Anyone else who signs in to Headlamp is let in and can see nothing
-# until something is bound to them. Bind a narrower role to another
-# group, "oidc:<group>", for people who should look but not touch.
+# Anyone else in a "k8s-" group is let in and can see nothing until
+# something is bound to them. Bind a narrower role to their group,
+# "authentik:k8s-<name>", for people who should look but not touch.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cc-oidc-cluster-admins
+  name: cc-authentik-cluster-admins
   labels:
     app.kubernetes.io/managed-by: "community-cloud"
 roleRef:
@@ -21,4 +22,4 @@ roleRef:
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
-    name: {{ printf "oidc:%s" .Values.clusterAdminGroup | quote }}
+    name: {{ printf "authentik:%s" .Values.clusterAdminGroup | quote }}

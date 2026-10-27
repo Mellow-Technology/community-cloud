@@ -1,13 +1,13 @@
 # S3 from outside the cluster, on values.domain.storage.
 #
 # For the links applications hand to browsers. Authentik's web
-# interface loads icons and backgrounds straight from links it signs
-# for its bucket, so browsers have to be able to reach SeaweedFS. The
-# applications themselves still talk to it inside the cluster, at
-# seaweed-s3:8333, and sign their links for this hostname.
+# interface loads icons and backgrounds straight from its bucket, so
+# browsers have to be able to reach SeaweedFS. The applications
+# themselves still talk to it inside the cluster, at seaweed-s3:8333.
 #
-# Every request still needs keys, or a link signed with them: no
-# bucket here is readable anonymously.
+# Authentik's links aren't signed, so its bucket allows anonymous
+# reads of an object by name (see apps/authentik/Authentik.storage.yaml).
+# Every other bucket needs keys, or a link signed with them.
 #
 # The certificate is cert-manager's, asked for by the annotation:
 # cert-manager makes one for the HTTPS listener and answers the

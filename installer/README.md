@@ -119,6 +119,8 @@ The only required section. Each entry is one machine.
 | `port` | SSH port, when it isn't 22. |
 | `apiAddress` | Where *other nodes* reach this one's Kubernetes API, when that differs from `address`. A bastion or port forward gets you to a node without being a name the cluster can use. |
 | `nodeName` | What to register as in the cluster, when `name` and `address` can't be DNS labels. `"Mamoru BKK"` and `10.0.0.5` both can't. |
+| `nodeIp` | The address it registers on, which the other nodes reach its pods through. On a cluster using Nebula, its address on the mesh, found on the node; otherwise the address of its default route. See [Nodes across sites](#nodes-across-sites). |
+| `nodeExternalIp` | The address it's reached at from outside, such as a gateway's public address. Nothing on a node says which of its addresses is the outside, so K3s can't work this out. |
 | `gateway` | `true` if the outside world can reach this node. See `network.gateway`. |
 | `roles` | What it's for: `worker`, `worker-gpu`, `storage-local`, `storage-distributed`, `storage`, `gateway`, `lighthouse`. Applied as `node-role.kubernetes.io/<role>` labels, which is what the manifests in `k8s/` select on. |
 | `labels` | Anything else worth labelling it with, as key/value pairs. |
@@ -134,10 +136,11 @@ gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
 | Key | Default | Meaning |
 |---|---|---|
 | `token` | — | The cluster token. The server and every agent need the same one. Required. |
-| `version` / `channel` | current stable | Pin the K3s release. |
+| `version` / `channel` | current stable | Pin the K3s release. The doctor reports any node whose kubelet is on a different `version`, such as one the k3s bundle never reached. |
 | `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
 | `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik`, `servicelb` and `local-storage` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API, Cilium's own IP management hands out load balancer addresses, and TopoLVM provisions local volumes. K3s's local-path provisioner also claims to be the default storage class, and Kubernetes allows only one. |
 | `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
+| `signInClients` | — | Clients in Authentik, besides Headlamp's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
 | `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
 
 ### `network`
@@ -150,6 +153,15 @@ else is a subsection.
 | `congestionControl` | `bbr` | TCP congestion control. BBR holds throughput up over links that lose the odd packet, which CUBIC reads as congestion. |
 | `qdisc` | `fq` | The default queueing discipline. BBR wants a fair-queueing one underneath it. |
 | `congestionModule` | `tcp_<algorithm>` | The kernel module, when it isn't named after the algorithm. |
+
+Most kernels ship BBR as a module that isn't loaded until something
+asks for it, so a kernel only lists it as available once it is.
+Preflight and the doctor count a module that's there as support, since
+they load nothing. The `network` bundle loads it, loads it on every boot
+from then on (`/etc/modules-load.d/community-cloud.conf`), and makes it
+the default with sysctl (`/etc/sysctl.d/99-community-cloud-network.conf`).
+Until it has run, the doctor reports the node still on its old
+algorithm.
 
 #### `network.cilium`
 
@@ -195,6 +207,28 @@ directly.
 | `defaultRole` | The role nodes enrol under. |
 | `roles` | Roles to create: `name`, `description`, and `firewallRules` of `protocol` (`ANY`/`TCP`/`UDP`/`ICMP`), `allowedRole` or `allowedTags`, and `portRange`. |
 
+#### Nodes across sites
+
+Every node registers in the cluster on one address, and that address
+is what the rest of the cluster reaches it on: Cilium tunnels pod
+traffic between nodes' registered addresses. Left to itself, K3s picks
+the address of the default route — on a machine behind a router at
+home, its LAN address, which a node at another site can't reach. Pods
+on the two would never meet.
+
+So on a cluster using Nebula, the `k3s` bundle first finds each
+node's address on the mesh (`find-node-ip`, on its `defined*`
+interface) and installs K3s with `--node-ip` set to it. A node that
+isn't on the mesh stops the install there rather than registering on
+its LAN address; run the `nebula` bundle on it first. `nodeIp` on a
+node overrides the mesh address, and is checked to be one the node
+has. Afterwards `verify-node-ip` asks the cluster which addresses it
+actually has the node on — the doctor asks too, so a node registered
+somewhere else is found.
+
+The server is joined at its `apiAddress`, or its `address`, so on a
+cluster across sites that should be an address on the mesh as well.
+
 ### `storage`
 
 Which disks TopoLVM may carve volumes out of. Can also be set per
@@ -206,7 +240,8 @@ more than in anything else.
 | `disks` | Consider only these, by path. This **narrows** what's considered; it never overrides a safety check. |
 | `diskClasses` | Put a disk in a class other than the one its hardware suggests: `{"/dev/sdb": "hdd"}`. |
 | `minimumSizeGb` | Ignore disks smaller than this. Defaults to 1. |
-| `allocations` | How much each service claims, in whole GiB: `databaseGb` (default 30) and `objectStorageGb` (default 50). Read from the cluster-wide section only. |
+| `allocations` | How much each service claims, in whole GiB: `databaseGb` (default 30) and `objectStorageGb` (default 50, per SeaweedFS volume server). Read from the cluster-wide section only. |
+| `objectStorage` | SeaweedFS's shape: `masters` (odd), `volumeServers` (one per `storage-local` node) and `copies` (no more than `volumeServers`). One of each by default. See [Object storage](../k8s/storage/README.md#object-storage-seaweedfs). |
 
 Disks are sorted by what they are — NVMe to `ssd`, other solid state
 to `ssd-sata`, spinning to `hdd` — and the volume group each class
@@ -245,13 +280,19 @@ manifests alone. `true` is shorthand for enabled, and
 ```
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
-`seaweedfs`, `redis-operator`, `rabbitmq-operator`, `headlamp`,
-`tailscale-operator`, `twenty`, `lago`, `documenso`, `mattermost`,
-`picoclaw`, `plane`. Dependencies
+`seaweedfs`, `redis-operator`, `rabbitmq-operator`,
+`mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
+`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`. Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too. `cloudnative-pg`, `redis-operator` and
 `seaweedfs` each need TopoLVM, so enabling any of them brings TopoLVM
 and cert-manager; `rabbitmq-operator` needs both directly.
+
+Applications go in `cc-office`, along with the Postgres, Redis and
+RabbitMQ they share. What runs the cluster goes in `community-cloud`:
+Headlamp, and operators, since one operator serves every namespace. The exception is an operator whose project gives it a
+namespace of its own: cert-manager, `cnpg-system`, `rabbitmq-system`,
+`topolvm-system`, `seaweedfs` and `tailscale`.
 
 `cert-manager` also applies `cc-lets-encrypt`, the ClusterIssuer every
 application's certificate comes from, with `values.adminEmail` as the
@@ -264,12 +305,14 @@ cluster's S3-compatible object storage. Applications get a bucket
 each, and keys to only that bucket, which the operator writes into a
 Secret in their namespace. They talk to it inside the cluster; it's
 also on `values.domain.storage`, for the links Authentik hands
-browsers to its icons and backgrounds. Every request there still
-needs keys or a link signed with them. See
+browsers to its icons and backgrounds. Those links aren't signed, so
+Authentik's bucket can be read anonymously, by object name only; every
+other bucket needs keys or a link signed with them. See
 [Object storage](../k8s/storage/README.md#object-storage-seaweedfs).
 
-`redis-operator` installs the OpsTree Redis operator and, through it,
-the one Redis the applications in `cc-office` share, with its password
+`redis-operator` installs the OpsTree Redis operator into
+`community-cloud` and, through it, the one Redis the applications in
+`cc-office` share, with its password
 in the `cc-redis` Secret there.
 
 `rabbitmq-operator` installs the RabbitMQ team's Cluster Operator and
@@ -305,8 +348,12 @@ Twenty is a CRM, on `values.domain.crm`. Its database is in
 cc-postgres, with the `twenty_crm` role CloudNativePG's package makes,
 its queues in the shared Redis and its uploads in a SeaweedFS bucket.
 The server sets up and migrates the database as it starts. It signs
-and encrypts with a key in the `twenty-crm-app-secret` Secret, and
-sends mail through the namespace's server.
+sessions with the key in `twenty-crm-app-secret` and encrypts stored
+credentials with the one in `twenty-crm-encryption-key`, so replacing
+the first signs everybody out and loses nothing. To move from an older
+encryption key, put it in a `twenty-crm-fallback-encryption-key`
+Secret, under `password`: Twenty decrypts with it when the current key
+doesn't fit. It sends mail through the namespace's server.
 
 Lago is billing: plans, subscriptions, usage and invoices. Its web app
 is on `values.domain.billing` and its API, which the web app calls
@@ -320,8 +367,10 @@ account is made with `values.adminEmail` and a generated password, in
 the `lago-admin` Secret, and everyone else is invited from inside
 Lago.
 
-Mattermost is team chat, on `values.domain.mattermost`, installed by
-its operator. It keeps its database in cc-postgres, with the
+Mattermost is team chat, on `values.domain.mattermost`. The
+`mattermost-operator` package installs the operator into
+`community-cloud`, and enabling `mattermost` enables it too; the
+`mattermost` bundle on its own expects the operator already there. It keeps its database in cc-postgres, with the
 `mattermost` role CloudNativePG's package makes, and its files in a
 bucket in SeaweedFS. The operator wants the database as one connection
 string, which the installer builds from that role's credentials into
@@ -331,7 +380,7 @@ Authentik, and sends no mail yet.
 
 Documenso is on `values.domain.signing`, and signs people in through
 Authentik over OpenID Connect. It needs Authentik running — from the
-Authentik plugin, or installed by hand as the release `authentik` —
+`authentik` package, or installed by hand as the release `authentik` —
 which the install checks for before it starts on it. When the
 Authentik package is being installed in the same run, it goes first.
 Passwords are switched off, so Authentik is the only way in, and an
@@ -347,26 +396,43 @@ Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
-Headlamp, on `values.domain.headlamp`, signs in through Authentik
-too, and then talks to the Kubernetes API as whoever signed in. Like
-Documenso, it waits for Authentik, and the install checks Authentik is
-running before it starts on it. Signing in needs the API server to
-trust Authentik, so enabling the `headlamp` package, with
-`values.domain.auth` set, also starts K3s's API server with Authentik
-as an OpenID Connect issuer, for the client `headlamp` — re-run the
-`k3s` bundle on the servers of an existing cluster after enabling it
-(see `installer/src/cli/commands/ClusterSignIn.ts`). People are
-`oidc:<email>` to the cluster, in `oidc:<group>` for each Authentik
-group; members of `clusterAdminGroup` (`authentik Admins` by default)
-are cluster admins, and anyone else sees nothing until a role is bound
-to them. Headlamp's own account has no permissions. It carries
-Community Cloud's plugins from `headlamp/plugins/`, built into the
-installer with `bun run build:plugins` then `bun run build:embedded`
-(see [Embedded manifests](#embedded-manifests)) and mounted from a
+Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
+through Authentik too, and then talks to the Kubernetes API as
+whoever signed in; see [signing in to the cluster](#signing-in-to-the-cluster).
+Like Documenso, it waits for Authentik. Headlamp's own account has no
+permissions. It carries Community Cloud's plugins from
+`headlamp/plugins/`, built into the installer with
+`bun run build:plugins` then `bun run build:embedded` (see
+[Embedded manifests](#embedded-manifests)) and mounted from a
 ConfigMap applied before the chart; see
 `installer/src/util/headlampPlugins.ts`. Headlamp has no bundle of its
 own, so on an existing cluster it's installed or updated with
 `run-bundle helm-charts`.
+
+#### Signing in to the cluster
+
+The API server trusts Authentik through an `AuthenticationConfiguration`
+the `k3s` bundle writes to `/etc/rancher/k3s/authentication.yaml` on
+each server, whenever there's a `values.domain.auth` and a client to
+trust it for: Headlamp's, `headlamp`, when the `headlamp` package is
+enabled, and any listed in `k3s.signInClients`, such as one made in
+Authentik for kubectl. Each Authentik application is its own issuer.
+The API server rereads the file when it changes, so adding a client
+needs only the `k3s` bundle again; the first one also restarts K3s
+with the setting that points at the file.
+
+- People are `authentik:<username>` to the cluster, in
+  `authentik:<group>` for each of their Authentik groups. The prefix
+  keeps an Authentik group from being taken for one of the cluster's
+  own.
+- Only members of a group whose name starts `k8s-` get in at all, so
+  being in Authentik for some other application isn't enough.
+- Members of `values.clusterAdminGroup`, `k8s-admins` by default, are
+  cluster admins. Make the group in Authentik; nothing makes it for
+  you. Anyone else gets in and sees nothing until a role is bound to
+  `authentik:k8s-<their group>`.
+
+See `installer/src/cli/commands/ClusterSignIn.ts`.
 
 A package for something with no sign in of its own can declare a
 `gate` instead, and gets an oauth2-proxy in front of it signing in
@@ -379,8 +445,8 @@ A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
 the working directory), `requires`, `enabled` and `description`.
 
-Applications live in plugins rather than in the catalogue. Authentik is
-the worked example — see [`plugins`](#plugins) below.
+Applications can also come from plugins rather than the catalogue —
+see [`plugins`](#plugins) below.
 
 Some packages bring credentials with them — the database passwords the
 applications connect with, for instance. Those aren't configured here;
@@ -395,7 +461,7 @@ names it, and only when its fingerprint matches.
 
 ```jsonc
 "plugins": {
-  "authentik": {
+  "mastodon": {
     "enabled": true,
     "sha256": "481ec17bce6555d9ea01cb23ec1bdf6290bb0b7644be562a0fdc298b8bfbd4c2"
   }
@@ -410,7 +476,8 @@ paste. It won't ask again until the plugin changes.
 A plugin's packages and bundles are prefixed with its name, so a
 plugin called `mastodon` adding a `media` bundle contributes
 `mastodon:media`. A thing named after its own plugin isn't doubled:
-Authentik's package is `authentik`, not `authentik:authentik`.
+its package is `mastodon`, not `mastodon:mastodon`. A plugin can't
+add a package the installer ships, such as `authentik`.
 
 Plugins are covered properly in [docs/plugins.md](../docs/plugins.md).
 
@@ -449,8 +516,10 @@ The manifests currently reference `adminEmail`, `domain.main`,
 `domain.billing`, `domain.billingApi`, `domain.signing`, `domain.plane`,
 `domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
 `authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
-members are cluster admins through Headlamp, `authentik Admins` unless
-it's set. Unlike
+members are cluster admins through Headlamp or kubectl, `k8s-admins`
+unless it's set; it has to start with `k8s-`, which preflight checks.
+`authentik.secretKey` signs Authentik's sessions: keep it, since a new
+one signs everybody out. Unlike
 the rest of the configuration, `values` is open: plugins and your own
 manifests can read anything put here, and preflight won't call it
 unknown.
@@ -467,7 +536,7 @@ would have been worked out:
 | `mail` | [`smtp`](#smtp), for the namespace being rendered. |
 | `databaseVolumeSize`, `objectStorageVolumeSize` | `storage.allocations`: `databaseGb` (30 by default) and `objectStorageGb` (50). |
 | `objectStorage` | The cluster's S3 gateway: `endpoint`, `host` (`seaweed-s3.seaweedfs.svc:8333`) and `region`. |
-| `clusterAdminGroup` | `authentik Admins`. |
+| `clusterAdminGroup` | `k8s-admins`, unless `values.clusterAdminGroup` names another `k8s-` group. |
 | `headlampPlugins`, `headlampPluginsRevision` | The Headlamp plugins built into the installer, and a revision that changes with them so Headlamp restarts for a new build. |
 | `lvmdBaseSelector`, `lvmdAdditionalConfigs` | The storage node shapes found, one lvmd configuration for each. |
 
@@ -702,6 +771,29 @@ Networking key fails every call to its API — the report says it once,
 near the top, listing each check it took down, and counts it as one
 problem. Those checks point back to it from their own places in the
 report.
+
+Under each problem is the command that would put it right, and the
+commands are listed again at the end, deduplicated and in install
+order, with one for `all` when every node needs the same one:
+
+```
+━━ To Put It Right ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  community-cloud run-bundle lvm guandi cc.config.json --dry-run
+  community-cloud run-bundle nodeLabels guandi cc.config.json
+  community-cloud run-bundle cluster cleverswing cc.config.json
+```
+
+A failed check is usually fixed by running its own bundle again, since
+bundles are safe to re-run and exist to make true what their checks
+look for. So that's the suggestion unless the check names other
+bundles in its `remedy`, or says there's nothing to run with
+`remedy: false`. A bundle that only looks (`preflight`, `node-joined`)
+gets no suggestion, because running it again would find the same
+thing. Neither does a failure the check explains by its status code,
+such as a refused API key, because the explanation already says what
+to do and no bundle can do it. A bundle marked `destructive`, such as
+`lvm`, which formats free disks, is suggested with `--dry-run`, so the
+first thing you type shows what it would do.
 
 Each enabled package is first asked whether it's installed at all. One
 that isn't fails that one check, which says so, and its other checks

@@ -17,22 +17,39 @@
  * through the Gateway API with Cilium's Envoy and hands out addresses
  * with Cilium's own IP management. See ALWAYS_DISABLED below.
  *
+ * Every node registers on an address the others can reach. On a
+ * cluster spread across sites that's its address on the Nebula mesh,
+ * found on the node before K3s is installed, rather than whatever its
+ * default route happens to be; see getNodeIp.
+ *
  * Requires:
  * - curl
  * - sudo, which the K3s install script uses itself for the privileged
  *   parts, so these commands don't set the sudo flag
  */
+import { dirname } from "node:path";
+
 import {
   CommandContext,
   CommandPurpose,
   CommandScope,
   CommandSpec,
+  CommandTarget,
   OutputType,
 } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 import { K3SInstallationType } from "../../util/types.ts";
-import { getWaitSeconds, quoteForShell, waitUntil } from "../../util/shell.ts";
-import { buildApiServerOidcArgs } from "./ClusterSignIn.ts";
+import { NEBULA_INTERFACE_PREFIX } from "../../util/interfaces.ts";
+import { buildKubeEnv } from "../../util/kube.ts";
+import { getWaitSeconds, quoteForShell, waitUntil, writeFileCommand } from "../../util/shell.ts";
+import {
+  AUTHENTICATION_CONFIG_PATH,
+  SignInClient,
+  buildApiServerAuthArgs,
+  buildAuthenticationConfig,
+  signsInThroughAuthentik,
+} from "./ClusterSignIn.ts";
+import { usesNebula } from "./NebulaNetwork.ts";
 
 // Where the install script comes from
 const K3S_INSTALL_URL = "https://get.k3s.io";
@@ -92,6 +109,7 @@ interface K3sConfig {
   disable?: string[];
   extraServerArgs?: string[];
   extraAgentArgs?: string[];
+  signInClients?: SignInClient[];
 }
 
 /**
@@ -217,6 +235,85 @@ export function getClusterNodeName(context: CommandContext): string {
 }
 
 /**
+ * The address a node says it should register on, if it says.
+ *
+ * @param context
+ * @returns
+ */
+function getConfiguredNodeIp(context: any): string | undefined {
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+  return typeof node.nodeIp === "string" && node.nodeIp !== "" ? node.nodeIp : undefined;
+}
+
+/**
+ * The address the node is reached at from outside the cluster, if
+ * the configuration gives one. K3s can't work this out: on a machine
+ * behind NAT, or one holding a public address alongside the mesh,
+ * nothing on the node says which is the outside.
+ *
+ * @param context
+ * @returns
+ */
+function getNodeExternalIp(context: any): string | undefined {
+  const node = context.node !== undefined && context.node !== null ? context.node : {};
+  return typeof node.nodeExternalIp === "string" && node.nodeExternalIp !== ""
+    ? node.nodeExternalIp
+    : undefined;
+}
+
+/**
+ * The address the node registers on in the cluster, and so the one
+ * every other node reaches its pods through.
+ *
+ * Left to itself K3s takes the address of the default route, which is
+ * right for a cluster on one network and wrong for one spread across
+ * several: a machine behind a router at home registers its LAN address,
+ * and a node at another site can't reach it. Cilium tunnels between
+ * nodes' registered addresses, so pods on the two would never meet.
+ *
+ * So a node on the Nebula mesh registers on its mesh address, which
+ * every other node can reach. What find-node-ip found is used where
+ * it ran; otherwise the configuration's own "nodeIp", which is also
+ * what overrides the mesh.
+ *
+ * @param context
+ * @returns undefined to leave it to K3s
+ */
+export function getNodeIp(context: any): string | undefined {
+  const configured = getConfiguredNodeIp(context);
+  if (configured !== undefined) {
+    return configured;
+  }
+
+  return typeof context.nodeIp === "string" && context.nodeIp !== "" ? context.nodeIp : undefined;
+}
+
+/**
+ * The flags saying which addresses the node registers on.
+ *
+ * Both a server and an agent take these, unlike the networking flags
+ * only a server is given.
+ *
+ * @param context
+ * @returns
+ */
+function buildAddressArgs(context: any): string[] {
+  const args: string[] = [];
+
+  const nodeIp = getNodeIp(context);
+  if (nodeIp !== undefined) {
+    args.push(`--node-ip=${nodeIp}`);
+  }
+
+  const externalIp = getNodeExternalIp(context);
+  if (externalIp !== undefined) {
+    args.push(`--node-external-ip=${externalIp}`);
+  }
+
+  return args;
+}
+
+/**
  * Build the arguments K3s is started with.
  *
  * Anything K3s reads from the environment is left out of here on
@@ -237,11 +334,14 @@ function buildInstallExec(config: CloudConfig, context: any): string {
   // --disable-kube-proxy on an agent outright.
   if (installationType === K3SInstallationType.Agent) {
     const agentArgs = extraAgentArgs !== undefined ? extraAgentArgs : [];
-    return [K3SInstallationType.Agent, ...agentArgs].join(" ");
+    return [K3SInstallationType.Agent, ...buildAddressArgs(context), ...agentArgs].join(" ");
   }
 
   const args = [
     K3SInstallationType.Server,
+
+    // Which of its addresses the rest of the cluster reaches it on
+    ...buildAddressArgs(context),
 
     // Cilium is the CNI, so K3s shouldn't bring up flannel
     "--flannel-backend=none",
@@ -269,9 +369,9 @@ function buildInstallExec(config: CloudConfig, context: any): string {
     args.push(`--disable=${component}`);
   }
 
-  // Trusting Authentik to say who someone is, for Headlamp, which
-  // talks to the API as whoever signed in. See ClusterSignIn.ts.
-  args.push(...buildApiServerOidcArgs(config));
+  // Trusting Authentik to say who someone is, for Headlamp and kubectl,
+  // which talk to the API as whoever signed in. See ClusterSignIn.ts.
+  args.push(...buildApiServerAuthArgs(config));
 
   return [...args, ...(extraServerArgs !== undefined ? extraServerArgs : [])].join(" ");
 }
@@ -364,6 +464,71 @@ const INSTALL_SCRIPT = [
 ];
 
 export const K3sCommands: CommandSpec[] = [
+  /**
+   * Work out which address the node registers on, before anything is
+   * installed with it.
+   *
+   * A "nodeIp" in the configuration is checked rather than trusted:
+   * K3s told to use an address the machine doesn't have fails to start,
+   * and says so only in its own logs. Without one, a cluster on Nebula
+   * uses the node's address on the mesh, and a node that isn't on the
+   * mesh stops here — registering it on its local address instead
+   * would install cleanly and leave it unable to reach anything at
+   * another site.
+   *
+   * Changes nothing, so the doctor asks it too.
+   */
+  {
+    name: "find-node-ip",
+    purpose: CommandPurpose.Require,
+    description: "Find the address the node registers on in the cluster",
+    skipWhen: (config: CloudConfig, context: any) =>
+      getConfiguredNodeIp(context) === undefined && !usesNebula(config),
+    command: (_config: CloudConfig, context: any) => {
+      const configured = getConfiguredNodeIp(context);
+
+      if (configured !== undefined) {
+        const quoted = quoteForShell(configured);
+
+        return [
+          `ip -o addr show | awk '{ split($4, a, "/"); print a[1] }' | grep -qxF ${quoted} || { echo "\\"nodeIp\\" is ${configured}, which isn't an address this node has, so K3s would fail to start on it. These are the ones it has:" >&2; ip -o addr show >&2; exit 1; }`,
+          `echo ${quoted}`,
+        ];
+      }
+
+      return [
+        `address=$(ip -o -4 addr show | awk '$2 ~ /^${NEBULA_INTERFACE_PREFIX}/ { split($4, a, "/"); print a[1]; exit }')`,
+        `[ -n "$address" ] || { echo "The cluster is on a Nebula network and this node has no address on it — no ${NEBULA_INTERFACE_PREFIX}* interface with an IPv4 address. Registered on its local address instead, it couldn't reach nodes at other sites. Run the nebula bundle on it, or set \\"nodeIp\\" on it to say which address to use." >&2; exit 1; }`,
+        'echo "$address"',
+      ];
+    },
+    output: OutputType.Raw,
+    saveToContext: (output: any) => ({
+      nodeIp: output.parsed.trim(),
+    }),
+  },
+
+  /**
+   * The API server's sign in settings, ahead of the server that's told
+   * to read them. Rewritten on every run, and reread by the API server
+   * when they change, so a client added to the configuration needs
+   * only this.
+   */
+  {
+    name: "write-authentication-config",
+    description: "Write the API server's settings for signing in through Authentik",
+    scope: CommandScope.EachServer,
+    skipWhen: (config: CloudConfig, context: any) =>
+      getInstallationType(context) !== K3SInstallationType.Server || !signsInThroughAuthentik(config),
+    command: [
+      `sudo mkdir -p ${dirname(AUTHENTICATION_CONFIG_PATH)} || { echo "Couldn't create ${dirname(AUTHENTICATION_CONFIG_PATH)}" >&2; exit 1; }`,
+      ...writeFileCommand(AUTHENTICATION_CONFIG_PATH, { asRoot: true }),
+      `echo "wrote ${AUTHENTICATION_CONFIG_PATH}"`,
+    ],
+    stdin: (config: CloudConfig) => buildAuthenticationConfig(config) ?? "",
+    output: OutputType.Raw,
+  },
+
   /**
    * Install the servers.
    *
@@ -466,6 +631,92 @@ export const K3sCommands: CommandSpec[] = [
         // Containers won't start without this
         `sudo test -S /run/k3s/containerd/containerd.sock || { echo "containerd isn't listening, so the agent can't run workloads" >&2; exit 1; }`,
         'echo "containerd is up"',
+      ];
+    },
+    output: OutputType.Raw,
+  },
+
+  /**
+   * Check the cluster has the node on the addresses it was meant to.
+   *
+   * The flags only say what K3s was asked for. A node installed before
+   * they were set, or one whose flags were changed by hand, can be
+   * running quite happily on another address — and the cluster's own
+   * record of the node is what Cilium tunnels to, so that's the one
+   * asked.
+   */
+  {
+    name: "verify-node-ip",
+    purpose: CommandPurpose.Verify,
+    description: "Verify the node is registered on the addresses it should be",
+    runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it runs on a server, once for each node it asks about
+    scope: CommandScope.EachNode,
+    skipWhen: (_config: CloudConfig, context: any) =>
+      getNodeIp(context) === undefined && getNodeExternalIp(context) === undefined,
+    env: buildKubeEnv,
+    command: (_config: CloudConfig, context: any) => {
+      // A DNS label, so safe to print as it is inside the messages
+      const nodeName = getClusterNodeName(context);
+      const name = quoteForShell(nodeName);
+      const checks = [
+        waitUntil(`kubectl get node ${name} > /dev/null 2>&1`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
+        `kubectl get node ${name} > /dev/null || { echo "The cluster has no node called ${nodeName}" >&2; exit 1; }`,
+      ];
+
+      // An address of each type per IP family, space separated, so a
+      // dual-stack node's IPv4 is found among its two
+      const expected: [string, string | undefined, string][] = [
+        ["InternalIP", getNodeIp(context), "nodeIp"],
+        ["ExternalIP", getNodeExternalIp(context), "nodeExternalIp"],
+      ];
+
+      for (const [type, address, key] of expected) {
+        if (address === undefined) {
+          continue;
+        }
+
+        checks.push(
+          `found=$(kubectl get node ${name} -o jsonpath='{.status.addresses[?(@.type=="${type}")].address}')`,
+          `echo " $found " | grep -qF ${quoteForShell(` ${address} `)} || { echo "${nodeName} is registered with ${type} \${found:-none}, not ${address}. It was installed without \\"${key}\\", or its K3s flags were changed since — run the k3s bundle on it again." >&2; exit 1; }`,
+          `echo "${type} ${address}"`,
+        );
+      }
+
+      return checks;
+    },
+    output: OutputType.Raw,
+  },
+
+  /**
+   * Check the node runs the K3s release the configuration pins.
+   *
+   * Asked of the cluster rather than of the binary on the node. The
+   * kubelet reports the version it's running, so a node whose binary
+   * was replaced without K3s restarting reads as what it still is.
+   * Nothing to compare when no version is pinned: a channel moves, and
+   * without either the install took whatever was current.
+   */
+  {
+    name: "verify-k3s-version",
+    purpose: CommandPurpose.Verify,
+    description: "Verify the node runs the pinned K3s release",
+    runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it runs on a server, once for each node it asks about
+    scope: CommandScope.EachNode,
+    skipWhen: (config: CloudConfig) => getK3sConfig(config).version === undefined,
+    env: buildKubeEnv,
+    command: (config: CloudConfig, context: any) => {
+      const nodeName = getClusterNodeName(context);
+      const name = quoteForShell(nodeName);
+      const version = getK3sConfig(config).version!;
+
+      return [
+        `running=$(kubectl get node ${name} -o jsonpath='{.status.nodeInfo.kubeletVersion}') || { echo "The cluster has no node called ${nodeName}" >&2; exit 1; }`,
+        `[ "$running" = ${quoteForShell(version)} ] || { echo "${nodeName} is running K3s \${running:-unknown}, not ${version}, which \\"k3s.version\\" pins. Run the k3s bundle on it again to bring it in line." >&2; exit 1; }`,
+        `echo "K3s $running"`,
       ];
     },
     output: OutputType.Raw,

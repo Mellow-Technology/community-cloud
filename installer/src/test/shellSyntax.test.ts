@@ -75,6 +75,7 @@ function buildContext(): Record<string, any> {
     nebulaHostID: "h1",
     nebulaEnrollmentCode: "code",
     nebulaIPAddresses: ["10.10.0.2"],
+    nodeIp: "10.10.0.2",
     videoDevices: [{ vendor: "nvidia", compute: true }],
     gpuVendors: ["nvidia", "amd", "intel"],
     disks: [{ name: "sdb", path: "/dev/sdb", rotational: false }],

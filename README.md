@@ -173,13 +173,13 @@ cluster-scoped `Site`, but is currently a copy of the `Webapp` CRD.
 
 | App | Namespace | Status |
 |---|---|---|
-| Authentik | `cc-office` | Plugin — single sign on, on cc-postgres and a SeaweedFS bucket |
+| Authentik | `cc-office` | `authentik` package — single sign on, for the applications and the cluster, on cc-postgres and a SeaweedFS bucket |
 | Twenty CRM | `cc-office` | `twenty` package — server and worker, on cc-postgres, Redis and a SeaweedFS bucket |
 | Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
 | Plane | `cc-office` | `plane` package — projects, on cc-postgres, Redis, RabbitMQ and a SeaweedFS bucket |
 | Documenso | `cc-office` | `documenso` package — document signing, through Authentik |
 | Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
-| Headlamp | `cc-office` | `headlamp` package — cluster UI, signed into through Authentik, with our plugins |
+| Headlamp | `community-cloud` | `headlamp` package — cluster UI, signed into through Authentik, with our plugins |
 | Picoclaw | `cc-office` | `picoclaw` package — AI agent, behind an Authentik gate |
 
 None of these has run on real hardware in its current form yet.

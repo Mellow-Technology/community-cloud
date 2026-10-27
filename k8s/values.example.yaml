@@ -15,9 +15,10 @@
 # -------------------------------------------------------------------
 adminEmail: "admin@example.com"
 
-# The Authentik group whose members are cluster admins through Headlamp.
-# Defaults to "authentik Admins".
-clusterAdminGroup: "authentik Admins"
+# The Authentik group whose members are cluster admins, through Headlamp
+# or kubectl. Has to start "k8s-", since only those groups may sign in
+# to the cluster. Defaults to "k8s-admins".
+clusterAdminGroup: "k8s-admins"
 
 # -------------------------------------------------------------------
 # Domains

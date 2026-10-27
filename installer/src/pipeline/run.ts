@@ -396,7 +396,11 @@ async function runStepForNode(
   // step is for. Labelling a node is kubectl on a server, about a
   // machine that may be somewhere else entirely.
   bundle.setExec(member.connection.exec);
-  bundle.setControlPlaneExec(fleet.controlPlane().connection.exec);
+  // Only when there's one: a run with nothing to do on the cluster
+  // isn't given a server, and then no step asks for it
+  if (fleet.hasControlPlane()) {
+    bundle.setControlPlaneExec(fleet.controlPlane().connection.exec);
+  }
 
   try {
     await speaker.run(name, () => bundle.runAllCommands());

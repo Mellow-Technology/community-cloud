@@ -13,16 +13,20 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseAllDocuments } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 
 import { buildPackageCommands } from "../cli/commands/Helm.ts";
 import { getPackage } from "../cli/commands/packages.ts";
 import {
+  AUTHENTICATION_CONFIG_PATH,
+  AUTHENTIK_PREFIX,
   CLUSTER_CLIENT_ID,
-  OIDC_PREFIX,
-  buildApiServerOidcArgs,
+  buildApiServerAuthArgs,
+  buildAuthenticationConfig,
   getClusterIssuer,
 } from "../cli/commands/ClusterSignIn.ts";
+import { K3sCommands } from "../cli/commands/K3s.ts";
+import { checkConfiguration } from "../runners/preflight.ts";
 import { listEmbeddedFiles } from "../util/embedded.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { configFrom, loadFixtureConfig } from "./helpers.ts";
@@ -35,7 +39,7 @@ const HEADLAMP = getPackage("headlamp")!;
 async function render(...paths: string[]): Promise<any[]> {
   const config = await loadFixtureConfig({ packages: { headlamp: true } });
   return paths.flatMap((path) =>
-    parseAllDocuments(renderInstallerFile(config, path, { templateNamespace: "cc-office" })).map((document) => {
+    parseAllDocuments(renderInstallerFile(config, path, { templateNamespace: "community-cloud" })).map((document) => {
       assert.deepEqual(document.errors, [], path);
       return document.toJS();
     }),
@@ -53,12 +57,12 @@ describe("installing Headlamp", () => {
   it("has its plugins, its client's credentials and Authentik's client before the chart", () => {
     const chart = position("helm-install-headlamp");
     assert.ok(position("helm-manifest-before-headlamp-Headlamp-plugins") < chart);
-    assert.ok(position("create-secret-cc-office-headlamp-oidc") < chart);
+    assert.ok(position("create-secret-community-cloud-headlamp-oidc") < chart);
     assert.ok(position("authentik-blueprint-headlamp") < chart);
   });
 
   it("makes its namespace before its credentials", () => {
-    assert.ok(position("namespace-headlamp") < position("create-secret-cc-office-headlamp-oidc"));
+    assert.ok(position("namespace-headlamp") < position("create-secret-community-cloud-headlamp-oidc"));
   });
 
   it("is a client with the fixed ID the API server is told", () => {
@@ -98,9 +102,9 @@ describe("Headlamp, Authentik and the API server agreeing", async () => {
     assert.ok(JSON.stringify(provider.attrs.signing_key).includes("authentik Self-signed Certificate"));
   });
 
-  it("says the address is verified, which the API server needs for an email as a name", () => {
-    const mapping = blueprint.entries.find((entry: any) => entry.id === "email-verified");
-    assert.match(mapping.attrs.expression, /"email_verified": True/);
+  it("hands over the username and groups the API server reads", () => {
+    assert.match(env.get("OIDC_SCOPES"), /\bprofile\b/);
+    assert.ok(JSON.stringify(provider.attrs.property_mappings).includes("scope-profile"));
   });
 
   it("gives Headlamp's own account nothing", () => {
@@ -108,31 +112,77 @@ describe("Headlamp, Authentik and the API server agreeing", async () => {
   });
 });
 
-describe("the API server trusting Authentik", () => {
-  it("does, when Headlamp is enabled", async () => {
-    const args = buildApiServerOidcArgs(await loadFixtureConfig({ packages: { headlamp: true } }));
-    assert.ok(args.includes("--kube-apiserver-arg=oidc-issuer-url=https://auth.example.test/application/o/headlamp/"));
-    assert.ok(args.includes(`--kube-apiserver-arg=oidc-client-id=${CLUSTER_CLIENT_ID}`));
-    assert.ok(args.includes("--kube-apiserver-arg=oidc-username-claim=email"));
-    assert.ok(args.includes("--kube-apiserver-arg=oidc-groups-claim=groups"));
+/**
+ * The API server's sign in settings for a configuration, parsed.
+ *
+ * @param config
+ * @returns
+ */
+function authenticationFor(config: any): any {
+  const text = buildAuthenticationConfig(config);
+  return text === undefined ? undefined : parse(text);
+}
+
+describe("the API server trusting Authentik", async () => {
+  const fixture = await loadFixtureConfig();
+  const withHeadlamp = await loadFixtureConfig({ packages: { headlamp: true } });
+
+  it("does, for Headlamp's client, when Headlamp is enabled", () => {
+    const [authenticator] = authenticationFor(withHeadlamp).jwt;
+    assert.equal(authenticator.issuer.url, "https://auth.example.test/application/o/headlamp/");
+    assert.deepEqual(authenticator.issuer.audiences, [CLUSTER_CLIENT_ID]);
+    assert.deepEqual(buildApiServerAuthArgs(withHeadlamp), [`--kube-apiserver-arg=authentication-config=${AUTHENTICATION_CONFIG_PATH}`]);
   });
 
-  it("puts a prefix on every name, so no Authentik group can be one of the cluster's own", async () => {
-    const args = buildApiServerOidcArgs(await loadFixtureConfig({ packages: { headlamp: true } }));
-    assert.ok(args.includes(`--kube-apiserver-arg=oidc-username-prefix=${OIDC_PREFIX}`));
-    assert.ok(args.includes(`--kube-apiserver-arg=oidc-groups-prefix=${OIDC_PREFIX}`));
+  it("names people by their Authentik username, with a prefix no group of the cluster's own has", () => {
+    const { claimMappings } = authenticationFor(withHeadlamp).jwt[0];
+    assert.deepEqual(claimMappings.username, { claim: "preferred_username", prefix: AUTHENTIK_PREFIX });
+    assert.deepEqual(claimMappings.groups, { claim: "groups", prefix: AUTHENTIK_PREFIX });
   });
 
-  it("doesn't, when Headlamp isn't", async () => {
-    assert.deepEqual(buildApiServerOidcArgs(await loadFixtureConfig()), []);
-    assert.deepEqual(buildApiServerOidcArgs(await loadFixtureConfig({ packages: { headlamp: { enabled: false } } })), []);
+  it("only lets in members of a k8s- group", () => {
+    const [rule] = authenticationFor(withHeadlamp).jwt[0].userValidationRules;
+    assert.match(rule.expression, /startsWith\('authentik:k8s-'\)/);
   });
 
-  it("doesn't, with no Authentik to trust", async () => {
-    const raw = JSON.parse(JSON.stringify((await loadFixtureConfig()).getConfig()));
+  it("also trusts the clients the configuration lists, such as one for kubectl", () => {
+    const raw = { ...withHeadlamp.getConfig(), k3s: { token: "t", signInClients: [{ application: "community-cloud-prime", clientId: "kubernetes" }] } };
+    const issuers = authenticationFor(configFrom(raw)).jwt.map((each: any) => [each.issuer.url, each.issuer.audiences]);
+    assert.deepEqual(issuers, [
+      ["https://auth.example.test/application/o/headlamp/", ["headlamp"]],
+      ["https://auth.example.test/application/o/community-cloud-prime/", ["kubernetes"]],
+    ]);
+  });
+
+  it("makes two clients of one application one issuer, which is all the API server allows", () => {
+    const raw = { ...withHeadlamp.getConfig(), k3s: { token: "t", signInClients: [{ application: "headlamp", clientId: "kubectl" }] } };
+    const { jwt } = authenticationFor(configFrom(raw));
+    assert.equal(jwt.length, 1);
+    assert.deepEqual(jwt[0].issuer.audiences, ["headlamp", "kubectl"]);
+    assert.equal(jwt[0].issuer.audienceMatchPolicy, "MatchAny");
+  });
+
+  it("trusts a listed client without Headlamp", () => {
+    const raw = { ...fixture.getConfig(), k3s: { token: "t", signInClients: [{ application: "cluster", clientId: "kubernetes" }] } };
+    assert.equal(authenticationFor(configFrom(raw)).jwt.length, 1);
+  });
+
+  it("doesn't, with nothing to trust it for", async () => {
+    assert.equal(buildAuthenticationConfig(fixture), undefined);
+    assert.deepEqual(buildApiServerAuthArgs(fixture), []);
+    assert.deepEqual(buildApiServerAuthArgs(await loadFixtureConfig({ packages: { headlamp: { enabled: false } } })), []);
+  });
+
+  it("doesn't, with no Authentik to trust", () => {
+    const raw = JSON.parse(JSON.stringify(fixture.getConfig()));
     delete raw.values.domain.auth;
     raw.packages = { headlamp: true };
-    assert.deepEqual(buildApiServerOidcArgs(configFrom(raw)), []);
+    assert.deepEqual(buildApiServerAuthArgs(configFrom(raw)), []);
+  });
+
+  it("is written on the servers before K3s is started there", () => {
+    const names = K3sCommands.map((command) => command.name);
+    assert.ok(names.indexOf("write-authentication-config") < names.indexOf("install-k3s-server"));
   });
 });
 
@@ -140,16 +190,23 @@ describe("who administers the cluster", () => {
   it("is the Authentik group, as the API server names it", async () => {
     const [binding] = await render("embed://apps/headlamp/Headlamp.rbac.yaml");
     assert.equal(binding.roleRef.name, "cluster-admin");
-    assert.deepEqual(binding.subjects.map((subject: any) => subject.name), [`${OIDC_PREFIX}authentik Admins`]);
+    assert.deepEqual(binding.subjects.map((subject: any) => subject.name), [`${AUTHENTIK_PREFIX}k8s-admins`]);
   });
 
   it("can be another group", async () => {
     const base = await loadFixtureConfig();
-    const config = await loadFixtureConfig({ values: { ...base.getConfig().values, clusterAdminGroup: "ops" } });
+    const config = await loadFixtureConfig({ values: { ...base.getConfig().values, clusterAdminGroup: "k8s-ops" } });
     const [binding] = parseAllDocuments(renderInstallerFile(config, "embed://apps/headlamp/Headlamp.rbac.yaml")).map(
       (document) => document.toJS() as any,
     );
-    assert.deepEqual(binding.subjects.map((subject: any) => subject.name), ["oidc:ops"]);
+    assert.deepEqual(binding.subjects.map((subject: any) => subject.name), ["authentik:k8s-ops"]);
+  });
+
+  it("has to be a group whose members may sign in", async () => {
+    const base = await loadFixtureConfig();
+    const raw = { ...base.getConfig(), packages: { headlamp: true }, values: { ...base.getConfig().values, clusterAdminGroup: "ops" } };
+    const problems = checkConfiguration(configFrom(raw)).map((problem) => problem.what);
+    assert.ok(problems.some((problem) => problem.includes("clusterAdminGroup")), problems.join("\n"));
   });
 });
 

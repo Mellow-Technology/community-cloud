@@ -534,6 +534,10 @@ template, a before-manifest, a CloudNativePG database, a generated secret, and a
 `requires` on another package. If it round-trips through the format with nothing
 left over, the format is adequate.
 
+It did, and Authentik has since moved back into the catalogue as the
+`authentik` package: the cluster's own sign in depends on it, which
+makes it part of Community Cloud rather than an add-on.
+
 1. **Resolver and `DirectorySource`.** `plugin://` in `readInstallerFile`,
    plugins discovered under `~/.community-cloud/plugins/` and enabled from the
    configuration. No packaging yet.

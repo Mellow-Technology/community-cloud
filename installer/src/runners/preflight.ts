@@ -16,13 +16,21 @@
  * is enforced rather than assumed.
  */
 import chalk from "chalk";
+import { isIP } from "node:net";
 
-import { FAILURE, SUCCESS } from "../util/chalk.ts";
+import { FAILURE, SUCCESS, heading } from "../util/chalk.ts";
 import { CommandBundle, CommandResult } from "../cli/commands/CommandBundle.ts";
 import { CommandPurpose } from "../cli/commands/Command.ts";
 import { PreflightCommands } from "../cli/commands/Preflight.ts";
 import { getNodeName } from "../cli/commands/K3s.ts";
 import { PLUGIN_HINT, getPackage, getPackageSelections } from "../cli/commands/packages.ts";
+import {
+  CLUSTER_GROUP_PREFIX,
+  DEFAULT_CLUSTER_ADMIN_GROUP,
+  getSignInClients,
+  signsInThroughAuthentik,
+} from "../cli/commands/ClusterSignIn.ts";
+import { getObjectStorageShape } from "../util/objectStorage.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
 import { checkSchema } from "../util/configSchema.ts";
@@ -163,6 +171,33 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     }
   }
 
+  // The addresses a node registers on go straight to K3s, which takes
+  // only an IP and says what it made of anything else in its own logs.
+  // Two nodes on one address would each be the other to Cilium.
+  const registered = new Map<string, string>();
+  for (const node of nodes) {
+    for (const key of ["nodeIp", "nodeExternalIp"]) {
+      const address = node[key];
+
+      if (address === undefined) {
+        continue;
+      }
+
+      if (typeof address !== "string" || isIP(address) === 0) {
+        say(`Node "${node.name}" has a "${key}" of ${JSON.stringify(address)}, which isn't an IP address. K3s takes an address here, not a name.`);
+        continue;
+      }
+
+      if (key === "nodeIp") {
+        const already = registered.get(address);
+        if (already !== undefined) {
+          say(`"${node.name}" and "${already}" both register on ${address}, so the rest of the cluster couldn't tell them apart.`);
+        }
+        registered.set(address, node.name);
+      }
+    }
+  }
+
   // Display names are only printed, but two nodes printed the same are
   // two nodes nobody can tell apart in a report
   const shown = new Map<string, string>();
@@ -268,6 +303,40 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     }
   }
 
+  // SeaweedFS's shape, when the configuration gives one. Volume
+  // servers are one to a storage node, so one more than there are
+  // nodes waits for a node forever, and the install with it.
+  if (raw.storage?.objectStorage !== undefined) {
+    try {
+      const { volumeServers } = getObjectStorageShape(raw);
+      const storageNodes = nodes.filter((node: any) => Array.isArray(node.roles) && node.roles.includes(NodeRole.StorageLocal)).length;
+      if (volumeServers > storageNodes) {
+        say(`"storage.objectStorage.volumeServers" is ${volumeServers}, and there are ${storageNodes} storage-local node(s). Each volume server needs a node of its own.`);
+      }
+    } catch (error: any) {
+      say(error.message);
+    }
+  }
+
+  // Signing in to the cluster through Authentik. A client the API
+  // server can't make sense of stops it starting, which is a long way
+  // from here to find out.
+  if (signsInThroughAuthentik(config)) {
+    for (const client of getSignInClients(config)) {
+      if (typeof client?.application !== "string" || !/^[a-z0-9_-]+$/.test(client.application) || typeof client?.clientId !== "string" || client.clientId === "") {
+        say(`"k3s.signInClients" has ${JSON.stringify(client)}, which needs an "application" slug and a "clientId".`);
+      }
+    }
+
+    // Only members of a k8s-* group get in, so an administrators' group
+    // named otherwise is one whose members are bound to cluster-admin
+    // and can never sign in to use it
+    const adminGroup = raw.values?.clusterAdminGroup ?? DEFAULT_CLUSTER_ADMIN_GROUP;
+    if (typeof adminGroup !== "string" || !adminGroup.startsWith(CLUSTER_GROUP_PREFIX)) {
+      say(`"values.clusterAdminGroup" is ${JSON.stringify(adminGroup)}, and only members of a group starting "${CLUSTER_GROUP_PREFIX}" may sign in to the cluster, so its members never could.`);
+    }
+  }
+
   return problems;
 }
 
@@ -348,7 +417,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
 
   // The configuration first, since nothing else matters if it doesn't
   // describe a cluster
-  console.log(`\n${chalk.bold("── the configuration ──")}`);
+  console.log(heading("The Configuration"));
   const configProblems = checkConfiguration(config);
   problems.push(...configProblems);
 
@@ -391,7 +460,7 @@ export async function preflight(configPath: string, options: PreflightOptions = 
   const displayNames = getDisplayNames(config);
 
   for (const node of nodes) {
-    console.log(`\n${chalk.bold(`── ${displayNode(displayNames, node.name)} ──`)}`);
+    console.log(heading(displayNode(displayNames, node.name)));
 
     let connection: NodeConnection;
     try {

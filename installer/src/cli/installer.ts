@@ -33,6 +33,7 @@ import { doctor } from "../runners/doctor.ts";
 import { preflight } from "../runners/preflight.ts";
 import { uninstall } from "../runners/uninstall.ts";
 import { clean } from "../runners/clean.ts";
+import { COMMAND_NAME } from "./name.ts";
 
 /**
  * The Community Cloud Command Line Installer
@@ -43,7 +44,6 @@ import { clean } from "../runners/clean.ts";
  * Example:
  *  community-cloud install cc.json
  */
-const COMMAND_NAME = "community-cloud";
 
 /**
  * The operations the can be run be the command

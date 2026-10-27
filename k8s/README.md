@@ -71,7 +71,8 @@ k8s/
 | File | What it is |
 |---|---|
 | `cilium/Cilium.values.yaml` | Cilium's Helm values. The CNI, the kube-proxy replacement, the Gateway API implementation and the load balancer IP management all come from here. |
-| `cilium/gateway/Gateway.yaml` | The cluster's Gateway, `cc-letsencrypt-web-gateway`, served by Cilium's Envoy, and its namespace. Made by the `gateway` bundle. Uses `allowedListeners` so only namespaces labelled `whereWereGoing=weDontNeedRoads` may attach listeners. |
+| `cilium/gateway/Gateway.namespace.yaml` | `community-cloud`, for what runs the cluster: the Gateway, operators without a namespace of their own, and Headlamp. Labelled so Headlamp's ListenerSet may attach. |
+| `cilium/gateway/Gateway.yaml` | The cluster's Gateway, `cc-letsencrypt-web-gateway`, served by Cilium's Envoy. Made by the `gateway` bundle, after its namespace. Uses `allowedListeners` so only namespaces labelled `whereWereGoing=weDontNeedRoads` may attach listeners. |
 | `tailscale/Tailscale.proxy.yaml` | A Tailscale ingress ProxyGroup, for reaching cluster services over a tailnet. Needs the `tailscale-operator` package, and is applied by hand. |
 
 Cilium replaces a good deal of what K3s ships with. The installer

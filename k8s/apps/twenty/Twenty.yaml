@@ -78,13 +78,31 @@ spec:
                   key: password
             - name: REDIS_URL
               value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
-            # What it signs tokens with, and encrypts what it stores
-            # with, since no separate encryption key is set
+            # What it signs tokens with. Replacing it signs everybody
+            # out and loses nothing else.
             - name: APP_SECRET
               valueFrom:
                 secretKeyRef:
                   name: twenty-crm-app-secret
                   key: password
+            # What it encrypts stored credentials with, such as a
+            # connected mailbox's. Separate from APP_SECRET, and the
+            # same for the server and the worker: each reads what the
+            # other wrote.
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-encryption-key
+                  key: password
+            # A key it decrypts with when the one above doesn't fit,
+            # re-encrypting with that one as it goes. Only for a move
+            # from an older key, so the installer never makes it.
+            - name: FALLBACK_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-fallback-encryption-key
+                  key: password
+                  optional: true
             - name: STORAGE_S3_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -198,13 +216,31 @@ spec:
                   key: password
             - name: REDIS_URL
               value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
-            # What it signs tokens with, and encrypts what it stores
-            # with, since no separate encryption key is set
+            # What it signs tokens with. Replacing it signs everybody
+            # out and loses nothing else.
             - name: APP_SECRET
               valueFrom:
                 secretKeyRef:
                   name: twenty-crm-app-secret
                   key: password
+            # What it encrypts stored credentials with, such as a
+            # connected mailbox's. Separate from APP_SECRET, and the
+            # same for the server and the worker: each reads what the
+            # other wrote.
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-encryption-key
+                  key: password
+            # A key it decrypts with when the one above doesn't fit,
+            # re-encrypting with that one as it goes. Only for a move
+            # from an older key, so the installer never makes it.
+            - name: FALLBACK_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twenty-crm-fallback-encryption-key
+                  key: password
+                  optional: true
             - name: STORAGE_S3_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

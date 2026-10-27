@@ -35,3 +35,20 @@ export function successMessage(label: string, description: string) {
 export function failureMessage(label: string, description: string) {
   log(`${FAILURE} ${chalk.red(label + ":")} ${description}`);
 }
+
+/**
+ * A heading for a section of a report, ruled across the terminal.
+ *
+ * Bold and coloured, with a rule out to the edge, so the parts of a
+ * long report can be found by scrolling back through it. Not wider
+ * than 120 columns, to match the width the report text is broken at.
+ *
+ * @param title in title case, as headings are
+ * @param width
+ * @returns
+ */
+export function heading(title: string, width = Math.min(process.stdout.columns ?? 100, 120)): string {
+  const lead = `━━ ${title} `;
+  const rule = "━".repeat(Math.max(width - lead.length, 3));
+  return `\n${chalk.bold.cyan(lead)}${chalk.cyan(rule)}`;
+}

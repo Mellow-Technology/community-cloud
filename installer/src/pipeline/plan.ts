@@ -257,7 +257,9 @@ function isWanted(command: CommandSpec, options: PlanOptions): boolean {
  * @returns
  */
 function buildPlanningContext(fleet: Fleet): Record<string, unknown> {
-  const controlPlane = fleet.members.length > 0 ? fleet.controlPlane() : undefined;
+  // A run that never talks to the cluster isn't given a server, so one
+  // aimed at agents only has to make do with the first of them
+  const controlPlane = fleet.hasControlPlane() ? fleet.controlPlane() : fleet.members[0];
 
   return {
     nodeName: controlPlane?.name,

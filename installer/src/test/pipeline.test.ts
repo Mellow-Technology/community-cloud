@@ -437,6 +437,19 @@ describe("a cluster with no server in it", () => {
 
     assert.throws(() => fleet.controlPlane(), /needs "type": "server"/);
   });
+
+  it("runs what only needs the nodes anyway", async () => {
+    // One agent asked about something on the machine itself, like its
+    // disks, isn't given a server, and shouldn't need one
+    const trace: Trace = { calls: [] };
+    const fleet = makeFleet({ two: "agent" }, trace);
+
+    await runPlan(CONFIG, makePlan([echoCommand("find-disks")], fleet), fleet, {
+      reporter: new SilentReporter(),
+    });
+
+    assert.deepEqual(trace.calls.map((call) => call.node), ["two"]);
+  });
 });
 
 describe("borrowing a control plane", () => {

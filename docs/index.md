@@ -61,7 +61,9 @@ A **command** is one step: a shell command on a node, or an HTTP call
 to an API. A **bundle** is an ordered list of them aimed at one node,
 sharing a context so that what one finds is available to the next —
 the GPU bundle detects hardware, and the labelling bundle puts the
-right role on the node because of it.
+right role on the node because of it. Run on its own, the labelling
+bundle looks for GPUs and disks itself, with the read-only commands of
+`gpu` and `lvm`, rather than labelling a node as though it had none.
 
 Every command declares two things about itself.
 
@@ -104,6 +106,7 @@ cluster in service.
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
+| `postgres`, `redis` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -154,7 +157,7 @@ drifted from the file it was built from.
 k8s/
 ├── ai/vLLM/                     # vLLM deployment and its model PVC (AMD MI300)
 ├── apps/                        # Application deployments
-│   ├── authentik/               # Authentik, installed by its plugin
+│   ├── authentik/               # Authentik, installed by the authentik package
 │   ├── documenso/               # Documenso document signing
 │   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
@@ -179,7 +182,7 @@ k8s/
 ├── networking/
 │   ├── cilium/
 │   │   ├── Cilium.values.yaml   # Cilium Helm values
-│   │   └── gateway/Gateway.yaml # cc-letsencrypt-web-gateway, made by the gateway bundle
+│   │   └── gateway/             # The community-cloud namespace and cc-letsencrypt-web-gateway, made by the gateway bundle
 │   └── tailscale/               # A Tailscale proxy, applied by hand; the operator is the tailscale-operator package
 ├── storage/                     # Storage infrastructure
 │   ├── StorageClass/            # cc-local-ssd-fast (default) and cc-local-ssd-sata
@@ -230,8 +233,9 @@ shared Redis and a SeaweedFS bucket:
 
 #### Authentik (`apps/authentik/`)
 
-Authentication provider, installed by the Authentik plugin (chart
-2026.8.5), with Postgres in cc-postgres and files in SeaweedFS:
+Authentication provider, installed by the `authentik` package (chart
+2026.5.3, pinned), with Postgres in cc-postgres and files in SeaweedFS.
+The cluster's API server trusts it too, for Headlamp and kubectl:
 
 | File | Purpose |
 |---|---|
@@ -290,7 +294,7 @@ installs it:
 
 #### Mattermost (`apps/mattermost/`)
 
-Chat, installed by the `mattermost` package through the Mattermost operator, on cc-postgres and a SeaweedFS bucket:
+Chat, installed by the `mattermost` package through the Mattermost operator (the `mattermost-operator` package, in `community-cloud`), on cc-postgres and a SeaweedFS bucket:
 
 | File | Purpose |
 |---|---|
@@ -302,7 +306,7 @@ Chat, installed by the `mattermost` package through the Mattermost operator, on 
 
 #### Headlamp (`apps/headlamp/`)
 
-Cluster web UI, installed by the `headlamp` package (chart 0.46.0).
+Cluster web UI, installed by the `headlamp` package (chart 0.46.0) into `community-cloud`.
 People sign in through Authentik over OpenID Connect, and Headlamp
 uses their token with the API server, which the installer starts
 trusting Authentik's tokens when the package is enabled (re-run the
@@ -314,7 +318,7 @@ of its own; `helm-charts` installs it:
 | `Headlamp.values.yaml` | Helm values: OpenID Connect, the plugins mounted, no permissions of its own |
 | `Headlamp.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 | `Headlamp.plugins.yaml` | Community Cloud's plugins, a ConfigMap each |
-| `Headlamp.rbac.yaml` | cluster-admin for `oidc:<clusterAdminGroup>` |
+| `Headlamp.rbac.yaml` | cluster-admin for `authentik:<clusterAdminGroup>` |
 | `Headlamp.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
 
 `headlamp/plugins/` at the top of the repository holds Community
@@ -340,7 +344,7 @@ behind an Authentik gate:
 | Layer | Technology | Details |
 |---|---|---|
 | **Local SSD** | TopoLVM | Default StorageClass `cc-local-ssd-fast`, XFS, Retain policy, WaitForFirstConsumer |
-| **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
+| **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway unless `storage.objectStorage` asks for more masters, volume servers (one per node) and copies, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
 
 TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache-vg), `hdd` (cc-hdd-vg).
 
@@ -436,7 +440,7 @@ Enabled under `packages` in the configuration: `cert-manager`,
    Gateway (the `gateway` bundle)
 4. **Charts** — the `helm-charts` bundle, dependencies first:
    cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
-   CloudNativePG and cc-postgres → Redis and RabbitMQ → Authentik (plugin) → the
+   CloudNativePG and cc-postgres → Redis and RabbitMQ → Authentik → the
    applications, each with its own ListenerSet on the cluster Gateway
 5. **DNS and record-keeping** — ExternalDNS for the routed hostnames,
    then the configuration recorded in the cluster

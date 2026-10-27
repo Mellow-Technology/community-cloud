@@ -3,7 +3,8 @@
 # Headlamp is a web interface for the cluster. People sign in to it
 # through Authentik, and it talks to the Kubernetes API as them, with
 # the token Authentik gave them: what they can see and do is what RBAC
-# gives "oidc:<email>" and their "oidc:<group>"s. See
+# gives "authentik:<username>" and their "authentik:<group>"s, and only
+# members of a "k8s-" group get in at all. See
 # Headlamp.blueprint.yaml, Headlamp.rbac.yaml and
 # installer/src/cli/commands/ClusterSignIn.ts.
 config:
@@ -39,9 +40,10 @@ env:
     value: {{ printf "https://%s/application/o/headlamp/" .Values.domain.auth | quote }}
   - name: OIDC_CALLBACK_URL
     value: {{ printf "https://%s/oidc-callback" .Values.domain.headlamp | quote }}
-  # "openid" is always asked for. "profile" carries the groups.
+  # "openid" is always asked for. "profile" carries the username and
+  # the groups, which is all the API server reads.
   - name: OIDC_SCOPES
-    value: "profile,email"
+    value: "profile"
   - name: OIDC_USE_PKCE
     value: "true"
 

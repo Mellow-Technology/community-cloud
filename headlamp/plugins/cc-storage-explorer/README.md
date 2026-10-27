@@ -62,7 +62,7 @@ explanatory banner is shown. Stats are refreshed every 30 seconds
 In a Community Cloud cluster, Headlamp talks to the API server as whoever
 signed in, so this is decided per person. The `headlamp` package binds
 `cluster-admin`, which includes `nodes/proxy`, to the members of
-`clusterAdminGroup` (`authentik Admins` by default); anyone else sees the
+`clusterAdminGroup` (`k8s-admins` by default); anyone else sees the
 fallback view unless a role granting `nodes/proxy` is bound to them.
 
 TopoLVM logical volumes are read from the cluster-scoped `LogicalVolume` custom

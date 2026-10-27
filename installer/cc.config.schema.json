@@ -57,6 +57,30 @@
           },
           "description": "Anything else to pass to K3s agents."
         },
+        "signInClients": {
+          "type": "array",
+          "description": "Clients in Authentik, besides Headlamp's, whose tokens the API server accepts, such as one made for kubectl. Only members of a k8s-* Authentik group get in.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "application",
+              "clientId"
+            ],
+            "properties": {
+              "application": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "description": "The application's slug in Authentik, which its issuer's address is made from."
+              },
+              "clientId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Its provider's client ID, which is the audience its tokens are for."
+              }
+            }
+          }
+        },
         "kubeconfig": {
           "type": "string",
           "description": "Where kubectl should look, for a cluster this didn't build. Defaults to /etc/rancher/k3s/k3s.yaml."
@@ -460,7 +484,7 @@
         },
         "clusterAdminGroup": {
           "type": "string",
-          "description": "The Authentik group whose members are cluster admins when signed in through Headlamp. Defaults to \"authentik Admins\"."
+          "description": "The Authentik group whose members are cluster admins when signed in through Headlamp or kubectl. Has to start with k8s-, since only members of a k8s-* group may sign in. Defaults to \"k8s-admins\"."
         }
       },
       "additionalProperties": true
@@ -637,6 +661,14 @@
           "type": "string",
           "description": "What to register as in the cluster, when name and address can't be DNS labels."
         },
+        "nodeIp": {
+          "type": "string",
+          "description": "The address it registers on, which every other node reaches its pods through. Defaults to its address on the Nebula mesh when the cluster uses one, otherwise K3s's choice: the address of its default route."
+        },
+        "nodeExternalIp": {
+          "type": "string",
+          "description": "The address it's reached at from outside the cluster, such as a gateway's public address, when that isn't one K3s can tell is the outside."
+        },
         "gateway": {
           "type": "boolean",
           "description": "true if the outside world can reach this node."
@@ -775,7 +807,29 @@
             "objectStorageGb": {
               "type": "integer",
               "minimum": 1,
-              "description": "SeaweedFS's volume server. Defaults to 50."
+              "description": "Each SeaweedFS volume server. Defaults to 50."
+            }
+          }
+        },
+        "objectStorage": {
+          "type": "object",
+          "description": "The shape of the cluster's SeaweedFS. Defaults to one master, one volume server and one copy of everything.",
+          "additionalProperties": false,
+          "properties": {
+            "masters": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many masters. 1, or an odd number for a majority: 3 or 5."
+            },
+            "volumeServers": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many volume servers, each on a storage-local node of its own, each with a claim of storage.allocations.objectStorageGb."
+            },
+            "copies": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many copies of each object, each on a different volume server. No more than volumeServers."
             }
           }
         }

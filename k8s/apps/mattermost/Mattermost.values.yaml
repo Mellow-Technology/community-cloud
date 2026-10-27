@@ -1,8 +1,9 @@
 # The Mattermost operator's Helm values.
 #
-# Installed by the "mattermost" package, into cc-office beside the
-# installation it runs, from the chart at https://helm.mattermost.com.
-# The installation itself is Mattermost.yaml.
+# Installed by the "mattermost-operator" package, into community-cloud
+# with the rest of what runs the cluster, from the chart at
+# https://helm.mattermost.com. It watches every namespace; the
+# installation it runs is Mattermost.yaml, in cc-office.
 mattermostOperator:
   enabled: true
   # One is plenty for the one installation

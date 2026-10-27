@@ -211,6 +211,12 @@ export interface NodeSpecification {
   // name the rest of the cluster can use.
   apiAddress?: string;
 
+  // Which addresses it registers in the cluster on: the one the other
+  // nodes reach it on, and the one the outside world does. See
+  // getNodeIp in K3s.ts for why the first matters across sites.
+  nodeIp?: string;
+  nodeExternalIp?: string;
+
   username: string;
   keyFile: string;
   port?: number;
