@@ -108,12 +108,28 @@ which the `seaweedfs` package installs into the `seaweedfs` namespace
 (chart 0.1.43, pinned), and the cluster is the `Seaweed` resource
 `seaweed` in the same namespace.
 
-It's the smallest cluster the operator makes: one master, one volume
-server, one filer and one S3 gateway, keeping one copy of everything.
-It's a single point of failure on purpose, as a starting point that's
-easy to verify before anything is spread across machines.
+By default it's the smallest cluster the operator makes: one master,
+one volume server, one filer and one S3 gateway, keeping one copy of
+everything. That's a single point of failure on purpose, as a starting
+point that's easy to verify before anything is spread across machines.
+A cluster with the nodes for more asks for it in the configuration:
 
-- **Storage**: three claims on `cc-local-ssd-fast`. The volume
+```json
+"storage": {
+  "objectStorage": { "masters": 3, "volumeServers": 3, "copies": 2 }
+}
+```
+
+| Key | Meaning | Default |
+|---|---|---|
+| `masters` | How many masters. Odd, so they can agree on a leader: 1, 3 or 5. | 1 |
+| `volumeServers` | How many volume servers. Each is on a `storage-local` node of its own, with a claim of `objectStorageGb`. | 1 |
+| `copies` | How many copies of each object, each on a different volume server, and so a different node. No more than `volumeServers`. | 1 |
+
+Preflight refuses more volume servers than there are `storage-local`
+nodes, since the extra one would wait for a node forever.
+
+- **Storage**: claims on `cc-local-ssd-fast`. Each volume
   server's holds the data and is sized from
   `storage.allocations.objectStorageGb` (see below). The master's
   (1 GiB) and the filer's (5 GiB) hold the cluster's state and the
@@ -126,11 +142,13 @@ easy to verify before anything is spread across machines.
   both from `.Values.objectStorage`.
 - **From outside**: the same S3 on `values.domain.storage`, with a
   certificate from cert-manager. It's there for links applications
-  sign and hand to browsers — Authentik's web interface loads icons
-  and backgrounds straight from its bucket. No bucket is readable
-  anonymously, so every request there needs keys, or a link signed
-  with them. Lago and Twenty send their files on themselves instead,
-  and never hand out a link to SeaweedFS.
+  hand to browsers — Authentik's web interface loads icons and
+  backgrounds straight from its bucket. Authentik's links on that
+  domain aren't signed, so its bucket allows anonymous reads of an
+  object by name (`anonymousRead`), though not listing. Every other
+  bucket needs keys, or a link signed with them. Lago and Twenty send
+  their files on themselves instead, and never hand out a link to
+  SeaweedFS.
 - **Version**: SeaweedFS itself is pinned in the resource, since the
   operator doesn't choose one.
 
@@ -200,10 +218,11 @@ rather than in each manifest:
 | Key | For | Default |
 |---|---|---|
 | `databaseGb` | The shared Postgres cluster, `cc-postgres` | 30 |
-| `objectStorageGb` | SeaweedFS's volume server | 50 |
+| `objectStorageGb` | Each of SeaweedFS's volume servers | 50 |
 
 The manifests read these back as `.Values.databaseVolumeSize` and
-`.Values.objectStorageVolumeSize`. The classes allow expansion, so a
+`.Values.objectStorageVolumeSize`. SeaweedFS claims `objectStorageGb`
+once per volume server. The classes allow expansion, so a
 size can be raised and the claim grows to match on the next install.
 A size can't be lowered. The sum has to fit on the storage nodes,
 along with the 6 GiB SeaweedFS's master and filer claim. A

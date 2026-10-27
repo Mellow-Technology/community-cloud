@@ -30,6 +30,7 @@ import {
   getSignInClients,
   signsInThroughAuthentik,
 } from "../cli/commands/ClusterSignIn.ts";
+import { getObjectStorageShape } from "../util/objectStorage.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
 import { checkSchema } from "../util/configSchema.ts";
@@ -299,6 +300,21 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
       if (!definition.mailSecurity.includes(security)) {
         say(`${name} can't send mail with "security" ${security}, which ${definition.namespace}'s mail server is set to. It can use: ${definition.mailSecurity.join(", ")}.`);
       }
+    }
+  }
+
+  // SeaweedFS's shape, when the configuration gives one. Volume
+  // servers are one to a storage node, so one more than there are
+  // nodes waits for a node forever, and the install with it.
+  if (raw.storage?.objectStorage !== undefined) {
+    try {
+      const { volumeServers } = getObjectStorageShape(raw);
+      const storageNodes = nodes.filter((node: any) => Array.isArray(node.roles) && node.roles.includes(NodeRole.StorageLocal)).length;
+      if (volumeServers > storageNodes) {
+        say(`"storage.objectStorage.volumeServers" is ${volumeServers}, and there are ${storageNodes} storage-local node(s). Each volume server needs a node of its own.`);
+      }
+    } catch (error: any) {
+      say(error.message);
     }
   }
 

@@ -688,4 +688,37 @@ export const K3sCommands: CommandSpec[] = [
     },
     output: OutputType.Raw,
   },
+
+  /**
+   * Check the node runs the K3s release the configuration pins.
+   *
+   * Asked of the cluster rather than of the binary on the node. The
+   * kubelet reports the version it's running, so a node whose binary
+   * was replaced without K3s restarting reads as what it still is.
+   * Nothing to compare when no version is pinned: a channel moves, and
+   * without either the install took whatever was current.
+   */
+  {
+    name: "verify-k3s-version",
+    purpose: CommandPurpose.Verify,
+    description: "Verify the node runs the pinned K3s release",
+    runOn: CommandTarget.ControlPlane,
+
+    // kubectl, so it runs on a server, once for each node it asks about
+    scope: CommandScope.EachNode,
+    skipWhen: (config: CloudConfig) => getK3sConfig(config).version === undefined,
+    env: buildKubeEnv,
+    command: (config: CloudConfig, context: any) => {
+      const nodeName = getClusterNodeName(context);
+      const name = quoteForShell(nodeName);
+      const version = getK3sConfig(config).version!;
+
+      return [
+        `running=$(kubectl get node ${name} -o jsonpath='{.status.nodeInfo.kubeletVersion}') || { echo "The cluster has no node called ${nodeName}" >&2; exit 1; }`,
+        `[ "$running" = ${quoteForShell(version)} ] || { echo "${nodeName} is running K3s \${running:-unknown}, not ${version}, which \\"k3s.version\\" pins. Run the k3s bundle on it again to bring it in line." >&2; exit 1; }`,
+        `echo "K3s $running"`,
+      ];
+    },
+    output: OutputType.Raw,
+  },
 ];

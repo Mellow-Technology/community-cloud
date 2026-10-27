@@ -6,7 +6,7 @@
  * and so does the listing, so a bundle can't be runnable without
  * showing up when someone asks what there is to run.
  */
-import { CommandSpec } from "./Command.ts";
+import { CommandPurpose, CommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // Command Bundles
@@ -71,6 +71,60 @@ export interface BundleDefinition {
   // to a question nobody asked. Left out of a
   // check-up of everything, and run as normal when asked for by name.
   checkedBy?: string;
+
+  // Whether running this can destroy something that's already there.
+  //
+  // For the doctor, which suggests re-running a bundle to put right
+  // what its checks found. A bundle that formats disks shouldn't be
+  // offered as something to type without looking, so it's suggested
+  // with --dry-run, to see what it would do first.
+  destructive?: boolean;
+}
+
+/**
+ * Commands that find something out, run only when nothing earlier in
+ * the run already has.
+ *
+ * For the nodeLabels bundle, whose labels for GPUs and storage come
+ * from what the gpu and lvm bundles found. In an install those have
+ * just run and their findings are in the context. Run on its own, it
+ * would know of no GPU and no disk and leave those labels off, so it
+ * looks for itself — with the read-only commands only, since labelling
+ * a node shouldn't be able to format its disks.
+ *
+ * @param commands
+ * @param key the context entry they fill in
+ * @returns
+ */
+function unlessKnown(commands: CommandSpec[], key: string): CommandSpec[] {
+  // Set by the first of them, so the rest can tell what they found
+  // from what an earlier bundle did: they run after it has filled the
+  // key in, and would otherwise take that as their cue to skip
+  const looking = `${key}:lookedForByNodeLabels`;
+  const inspecting = commands.filter((command) => command.purpose === CommandPurpose.Inspect);
+
+  return inspecting.map((command, index) => {
+    const save = command.saveToContext;
+
+    if (index === 0 && typeof save !== "function") {
+      throw new Error(`"${command.name}" has to save its findings with a function to be run by nodeLabels.`);
+    }
+
+    return {
+      ...command,
+      skipWhen: (config: CloudConfig, context: any) =>
+        (context[key] !== undefined && context[looking] !== true) ||
+        (command.skipWhen !== undefined && command.skipWhen(config, context)),
+      ...(index === 0
+        ? {
+            saveToContext: (output: any, context: any, config: CloudConfig) => ({
+              ...(save as Function)(output, context, config),
+              [looking]: true,
+            }),
+          }
+        : {}),
+    };
+  });
 }
 
 /**
@@ -80,6 +134,12 @@ export interface BundleDefinition {
  * the list without being able to take anything out of it.
  */
 const builtInBundles: BundleDefinition[] = [
+  {
+    name: "authentik",
+    description: "Install Authentik into cc-office, for single sign on",
+    commands: buildSinglePackageBundle("authentik"),
+    checkedBy: "helm-charts",
+  },
   {
     name: "base",
     description: "Install the base packages every node needs",
@@ -164,6 +224,9 @@ const builtInBundles: BundleDefinition[] = [
     name: "lvm",
     description: "Set up LVM volumes for node local storage",
     commands: LvmCommands,
+
+    // It makes physical volumes of whatever disks it finds free
+    destructive: true,
   },
   {
     name: "mattermost",
@@ -194,9 +257,21 @@ const builtInBundles: BundleDefinition[] = [
     checkedBy: "helm-charts",
   },
   {
+    name: "postgres",
+    description: "Install the CloudNativePG operator, and the Postgres cc-office shares",
+    commands: buildSinglePackageBundle("cloudnative-pg"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "preflight",
     description: "Check a node could be installed on, changing nothing",
     commands: PreflightCommands,
+  },
+  {
+    name: "redis",
+    description: "Install the Redis operator into community-cloud, and the Redis cc-office shares",
+    commands: buildSinglePackageBundle("redis-operator"),
+    checkedBy: "helm-charts",
   },
   {
     name: "registries",
@@ -222,7 +297,11 @@ const builtInBundles: BundleDefinition[] = [
   {
     name: "nodeLabels",
     description: "Label a node with its roles, its own labels, and what was detected on it",
-    commands: NodeLabelCommands,
+    commands: [
+      ...unlessKnown(GpuInfoCommands, "videoDevices"),
+      ...unlessKnown(LvmCommands, "storageClassesPresent"),
+      ...NodeLabelCommands,
+    ],
   },
   {
     name: "twenty",

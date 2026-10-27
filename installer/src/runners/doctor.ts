@@ -31,7 +31,7 @@
  */
 import chalk from "chalk";
 
-import { FAILURE, MARK_WIDTH, SUCCESS, padMark } from "../util/chalk.ts";
+import { FAILURE, MARK_WIDTH, SUCCESS, heading, padMark } from "../util/chalk.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { ALL_NODES, displayNode, getDisplayNames, resolveTarget } from "../pipeline/fleet.ts";
 import {
@@ -41,12 +41,15 @@ import {
 } from "../cli/commands/Command.ts";
 import { ConsoleReporter, StepOutcome, numberBundle } from "../pipeline/reporter.ts";
 import { ExecuteOutcome, executePipeline } from "../pipeline/execute.ts";
-import { getRunningBundles } from "../pipeline/plan.ts";
+import { Step, getRunningBundles } from "../pipeline/plan.ts";
 import {
   getBundle,
+  getBundleCommands,
   getBundleNames,
   getCheckableBundleNames,
 } from "../cli/commands/bundles.ts";
+import { COMMAND_NAME } from "../cli/name.ts";
+import { quoteForShell } from "../util/shell.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { INSTALL_PIPELINE } from "./install.ts";
 import { printConfigurationWarnings } from "./preflight.ts";
@@ -197,7 +200,28 @@ export async function doctor(configPath: string, options: DoctorOptions = {}) {
     ),
   });
 
-  report(outcome, displayNames);
+  report(outcome, displayNames, {
+    config,
+    configPath,
+    nodes: names,
+    everyNode: options.node === undefined || options.node === ALL_NODES,
+  });
+}
+
+/**
+ * What the report needs to say how to put things right.
+ *
+ * - configPath: the configuration as it was given here, which is what
+ *   a suggested command should be given too
+ * - nodes: the nodes that were asked
+ * - everyNode: whether that was all of them, so a fix needed on every
+ *   one can be suggested once, for "all"
+ */
+export interface RemedyContext {
+  config: CloudConfig;
+  configPath: string;
+  nodes: string[];
+  everyNode: boolean;
 }
 
 /**
@@ -263,8 +287,9 @@ function gather(outcomes: StepOutcome[], order: string[]): Finding[] {
  *
  * @param outcome
  * @param displayNames what to print each node as
+ * @param remedies
  */
-function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
+function report(outcome: ExecuteOutcome, displayNames: Map<string, string>, remedies: RemedyContext) {
   // A doctor run is never a dry run, so there is always a summary;
   // the check is what tells the compiler so
   const order = getRunningBundles(outcome.plan);
@@ -272,7 +297,27 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
   const problems: string[] = [];
   let asked = 0;
 
-  console.log(`\n${chalk.bold("── what was found ──")}`);
+  // Every fix suggested, with the nodes it was suggested for, to be
+  // said again together at the end
+  const fixes = new Map<string, { bundles: string[]; nodes: Set<string> }>();
+  const remedyFor = (failure: StepOutcome) => {
+    const bundles = getRemedy(findStep(outcome.plan.steps, failure), failure, remedies.config);
+
+    if (bundles !== undefined) {
+      const fix = fixes.get(bundles.join(",")) ?? { bundles, nodes: new Set<string>() };
+      fix.nodes.add(failure.node);
+      fixes.set(bundles.join(","), fix);
+    }
+
+    return bundles;
+  };
+  const suggest = (bundles: string[] | undefined, node: string, indent: string) => {
+    if (bundles !== undefined) {
+      console.log(`${indent}${chalk.dim("fix:")} ${chalk.cyan(formatRemedy(bundles, node, remedies.configPath))}`);
+    }
+  };
+
+  console.log(heading("What Was Found"));
 
   // The widest a line of the report gets before it's broken, rather
   // than left to wrap back to the edge. Wide terminals still get
@@ -317,6 +362,22 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
     }
 
     say(why, "      ");
+
+    // One fix each place it happened, said once per command. A cause
+    // whose message is the remedy, like a refused API key, has none.
+    const said = new Set<string>();
+    for (const { finding, steps } of where) {
+      for (const step of steps) {
+        const failure = finding.failures.find((one) => one.step === step);
+        const bundles = failure !== undefined ? remedyFor(failure) : undefined;
+        const command = bundles !== undefined ? formatRemedy(bundles, finding.node, remedies.configPath) : undefined;
+
+        if (command !== undefined && !said.has(command)) {
+          said.add(command);
+          suggest(bundles, finding.node, "      ");
+        }
+      }
+    }
 
     problems.push(why);
   }
@@ -370,16 +431,175 @@ function report(outcome: ExecuteOutcome, displayNames: Map<string, string>) {
       for (const step of steps) {
         console.log(`        ${chalk.yellow(step)}`);
         say(why, "            ");
+        const failure = finding.failures.find((one) => one.step === step);
+        suggest(failure !== undefined ? remedyFor(failure) : undefined, finding.node, "            ");
         problems.push(`${displayNode(displayNames, finding.node)} · ${finding.bundle} · ${step}`);
       }
     }
   }
+
+  sayFixes(fixes, order, remedies);
 
   console.log(
     problems.length === 0
       ? `\n${chalk.green(`Nothing to report. ${asked} checks, all of them happy.`)}\n`
       : `\n${chalk.red(`${problems.length} problem${problems.length === 1 ? "" : "s"}`)} out of ${asked} checks.\n`,
   );
+}
+
+/**
+ * Every fix the report suggested, together, as the commands to run.
+ *
+ * In the order an install would run them, since a lower layer being
+ * put right can be what puts the one above it right. A fix needed on
+ * every node that was asked is one command for "all" rather than one
+ * per node.
+ *
+ * @param fixes
+ * @param order
+ * @param remedies
+ */
+function sayFixes(
+  fixes: Map<string, { bundles: string[]; nodes: Set<string> }>,
+  order: string[],
+  remedies: RemedyContext,
+) {
+  if (fixes.size === 0) {
+    return;
+  }
+
+  console.log(heading("To Put It Right"));
+
+  const sorted = [...fixes.values()].sort(
+    (one, other) => order.indexOf(one.bundles.at(-1) ?? "") - order.indexOf(other.bundles.at(-1) ?? ""),
+  );
+
+  for (const { bundles, nodes } of sorted) {
+    const everywhere = remedies.everyNode && nodes.size > 1 && remedies.nodes.every((node) => nodes.has(node));
+    const targets = everywhere ? [ALL_NODES] : remedies.nodes.filter((node) => nodes.has(node));
+
+    for (const node of targets) {
+      console.log(`  ${chalk.cyan(formatRemedy(bundles, node, remedies.configPath))}`);
+    }
+  }
+
+  if (sorted.some(({ bundles }) => isDestructive(bundles))) {
+    console.log(
+      chalk.dim("  The ones with --dry-run can destroy what's there. Read what they would do, then run them without it."),
+    );
+  }
+}
+
+/**
+ * The step a failure came from.
+ *
+ * @param steps
+ * @param failure
+ * @returns
+ */
+function findStep(steps: Step[], failure: StepOutcome): Step | undefined {
+  return steps.find((step) => step.bundle === failure.bundle && step.command.name === failure.step);
+}
+
+/**
+ * The bundles that would put a failed check right, when there's
+ * something to run.
+ *
+ * The check's own "remedy" when it has one. Otherwise its own bundle,
+ * which is idempotent and exists to make true what its checks look for,
+ * but only when that bundle changes anything: re-running one that only
+ * looks would find the same thing again. Nothing when the failure is a
+ * known one the check explained, such as a refused API key, because the
+ * explanation is the remedy and no bundle will do it.
+ *
+ * @param step
+ * @param failure
+ * @param config
+ * @returns
+ */
+export function getRemedy(step: Step | undefined, failure: StepOutcome, config: CloudConfig): string[] | undefined {
+  if (step === undefined || step.command.remedy === false) {
+    return undefined;
+  }
+
+  const explained = "explainStatus" in step.command ? step.command.explainStatus : undefined;
+  if (explained !== undefined && Object.values(explained).some((text) => failure.why?.includes(text) === true)) {
+    return undefined;
+  }
+
+  if (step.command.remedy !== undefined) {
+    return step.command.remedy;
+  }
+
+  return changesAnything(failure.bundle, config) ? [failure.bundle] : undefined;
+}
+
+/**
+ * Whether a bundle has anything in it besides looking.
+ *
+ * @param name
+ * @param config
+ * @returns
+ */
+function changesAnything(name: string, config: CloudConfig): boolean {
+  const bundle = getBundle(name);
+
+  if (bundle === undefined) {
+    return false;
+  }
+
+  // A bundle built from the configuration can refuse to be built from
+  // it, which the run will already have said; it just has no fix here
+  try {
+    return getBundleCommands(bundle, config).some(
+      (command) => command.purpose === undefined || command.purpose === CommandPurpose.Apply,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether any of these bundles can destroy something that's there.
+ *
+ * @param bundles
+ * @returns
+ */
+function isDestructive(bundles: string[]): boolean {
+  return bundles.some((name) => getBundle(name)?.destructive === true);
+}
+
+/**
+ * The command that runs a fix, as somebody would type it.
+ *
+ * With --dry-run when it could destroy something, so the first thing
+ * typed shows what it would do rather than doing it.
+ *
+ * @param bundles
+ * @param node
+ * @param configPath
+ * @returns
+ */
+export function formatRemedy(bundles: string[], node: string, configPath: string): string {
+  return [
+    COMMAND_NAME,
+    bundles.length === 1 ? "run-bundle" : "run-pipeline",
+    bundles.join(","),
+    asShellWord(node),
+    asShellWord(configPath),
+    ...(isDestructive(bundles) ? ["--dry-run"] : []),
+  ].join(" ");
+}
+
+/**
+ * A word for the shell, quoted only when it has to be, so the usual
+ * case reads as it would be typed.
+ *
+ * @param word
+ * @returns
+ */
+function asShellWord(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : quoteForShell(word);
 }
 
 // What a failure says when it didn't say anything. Never treated as a

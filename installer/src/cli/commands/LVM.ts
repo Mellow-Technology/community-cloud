@@ -498,6 +498,15 @@ export function readDisks(
       continue;
     }
 
+    // Nor a device with no size at all. That's a virtual device with
+    // nothing attached, like an unused nbd, rather than a disk too
+    // small to bother with, and a machine can have dozens of them
+    // burying the disks worth reading about. One named in the
+    // configuration still says why it wasn't used.
+    if (named === undefined && device.size === 0) {
+      continue;
+    }
+
     if (named !== undefined && !named.includes(path) && !named.includes(device.kname)) {
       continue;
     }

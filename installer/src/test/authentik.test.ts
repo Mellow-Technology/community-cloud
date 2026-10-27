@@ -10,10 +10,12 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { parseAllDocuments } from "yaml";
 
 import { buildPackageCommands } from "../cli/commands/Helm.ts";
 import { getPackage, resolveInstallOrder } from "../cli/commands/packages.ts";
 import { AUTHENTIK_NAMESPACE } from "../cli/commands/Authentik.ts";
+import { renderInstallerFile } from "../util/template.ts";
 import { configFrom } from "./helpers.ts";
 
 const AUTHENTIK = getPackage("authentik")!;
@@ -44,7 +46,18 @@ describe("the authentik package", () => {
     }
   });
 
-  it("needs its secret key from the configuration, so it's never replaced", () => {
+  it("lets browsers fetch its icons by URL, since Authentik doesn't sign them", async () => {
+    const config = configFrom({ values: { domain: { storage: "s3.example.test" } } });
+    const bucket = parseAllDocuments(renderInstallerFile(config, "embed://apps/authentik/Authentik.storage.yaml"))
+      .map((document) => document.toJS())
+      .find((document) => document?.kind === "Bucket");
+    assert.equal(bucket.spec.anonymousRead, true);
+
+    // Read by name only: nobody without keys lists what's there
+    assert.ok(!bucket.spec.access.some((grant: any) => grant.user === "anonymous"));
+  });
+
+    it("needs its secret key from the configuration, so it's never replaced", () => {
     assert.ok(AUTHENTIK.values?.includes("authentik.secretKey"));
   });
 });

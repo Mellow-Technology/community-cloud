@@ -63,7 +63,10 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["application", "clientId"],
+            "required": [
+              "application",
+              "clientId"
+            ],
             "properties": {
               "application": {
                 "type": "string",
@@ -804,7 +807,29 @@
             "objectStorageGb": {
               "type": "integer",
               "minimum": 1,
-              "description": "SeaweedFS's volume server. Defaults to 50."
+              "description": "Each SeaweedFS volume server. Defaults to 50."
+            }
+          }
+        },
+        "objectStorage": {
+          "type": "object",
+          "description": "The shape of the cluster's SeaweedFS. Defaults to one master, one volume server and one copy of everything.",
+          "additionalProperties": false,
+          "properties": {
+            "masters": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many masters. 1, or an odd number for a majority: 3 or 5."
+            },
+            "volumeServers": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many volume servers, each on a storage-local node of its own, each with a claim of storage.allocations.objectStorageGb."
+            },
+            "copies": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "How many copies of each object, each on a different volume server. No more than volumeServers."
             }
           }
         }

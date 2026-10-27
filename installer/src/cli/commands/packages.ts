@@ -205,6 +205,10 @@ const builtInPackages: PackageDefinition[] = [
     name: "cloudnative-pg",
     description: "The Postgres operator every database in the cluster runs on",
     chart: { repo: "https://cloudnative-pg.github.io/charts", name: "cloudnative-pg" },
+    // Pinned. Upgrading the operator restarts every Postgres it runs,
+    // so it should be an upgrade somebody chose. 0.29 is operator 1.30,
+    // the first with the DatabaseRole that Office.roles.yaml uses.
+    version: "0.29.1",
     namespace: "cnpg-system",
 
     // The shared cluster asks for "cc-local-ssd-fast", so the storage
@@ -428,6 +432,9 @@ const builtInPackages: PackageDefinition[] = [
     name: "redis-operator",
     description: "The Redis operator, and the one Redis the applications in cc-office share",
     chart: { repo: "https://ot-container-kit.github.io/helm-charts/", name: "redis-operator" },
+    // Pinned, so installing an application that needs Redis doesn't
+    // also upgrade the operator under every Redis in the cluster
+    version: "0.24.0",
     namespace: CLUSTER_NAMESPACE,
 
     // The Redis asks for "cc-local-ssd-fast", as the databases do
@@ -577,11 +584,21 @@ const builtInPackages: PackageDefinition[] = [
     },
 
     secrets: [
-      // What it signs tokens with, and, with no separate key set, what
-      // it encrypts stored credentials with. Losing it loses those.
+      // What it signs tokens with. Replacing it signs everybody out.
       {
         name: "twenty-crm-app-secret",
-        description: "the key Twenty signs and encrypts with",
+        description: "the key Twenty signs sessions with",
+        keyBytes: 32,
+      },
+
+      // What it encrypts stored credentials with. Losing it loses
+      // those, which is why it's apart from the one above. A cluster
+      // moving from an older key can add it as
+      // twenty-crm-fallback-encryption-key, which Twenty reads when
+      // this one doesn't fit; see Twenty.yaml.
+      {
+        name: "twenty-crm-encryption-key",
+        description: "the key Twenty encrypts stored credentials with",
         keyBytes: 32,
       },
     ],

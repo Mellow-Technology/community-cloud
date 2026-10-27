@@ -160,6 +160,26 @@ describe("which disks are eligible", () => {
   it("never treats the root partition as a candidate of its own", () => {
     assert.ok(disks.every((disk) => disk.name !== "sda2"));
   });
+
+  it("doesn't mention a device with no size at all", () => {
+    const empty = [device({ KNAME: "nbd0", TRAN: "", SIZE: "0" }), device({ KNAME: "nbd1", TRAN: "", SIZE: "0" })];
+    const read = readDisks(commandOutput([...DEVICES, ...empty]), makeConfig(), { node: {} });
+
+    assert.ok(read.every((disk) => !disk.name.startsWith("nbd")));
+
+    // Too small is still worth saying
+    assert.ok(read.some((disk) => disk.name === "sdf"));
+  });
+
+  it("still says why, when the configuration names one", () => {
+    const read = readDisks(
+      commandOutput([...DEVICES, device({ KNAME: "nbd0", TRAN: "", SIZE: "0" })]),
+      makeConfig({ storage: { disks: ["/dev/nbd0"] } }),
+      { node: {} },
+    );
+
+    assert.ok(read.find((disk) => disk.name === "nbd0")?.unusableBecause?.includes("only"));
+  });
 });
 
 describe("what class a disk lands in", () => {

@@ -103,11 +103,11 @@ global:
       value: "path"
     - name: AUTHENTIK_STORAGE__S3__BUCKET_NAME
       value: "authentik"
-    # Browsers fetch icons and backgrounds straight from S3, through
-    # links Authentik signs. SeaweedFS's own address is inside the
-    # cluster, so the links are for the public one, with the bucket in
-    # the path; Authentik signs the link it hands out rather than the
-    # address it uses itself.
+    # Browsers fetch icons and backgrounds straight from S3. SeaweedFS's
+    # own address is inside the cluster, so the links are for the
+    # public one, with the bucket in the path. Links on a custom domain
+    # aren't signed, so the bucket allows anonymous reads; see
+    # Authentik.storage.yaml.
     - name: AUTHENTIK_STORAGE__S3__CUSTOM_DOMAIN
       value: {{ printf "%s/authentik" .Values.domain.storage | quote }}
     - name: AUTHENTIK_STORAGE__S3__SECURE_URLS

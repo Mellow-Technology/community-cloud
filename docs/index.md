@@ -56,7 +56,9 @@ A **command** is one step: a shell command on a node, or an HTTP call
 to an API. A **bundle** is an ordered list of them aimed at one node,
 sharing a context so that what one finds is available to the next —
 the GPU bundle detects hardware, and the labelling bundle puts the
-right role on the node because of it.
+right role on the node because of it. Run on its own, the labelling
+bundle looks for GPUs and disks itself, with the read-only commands of
+`gpu` and `lvm`, rather than labelling a node as though it had none.
 
 Every command declares two things about itself.
 
@@ -99,6 +101,7 @@ cluster in service.
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
+| `postgres`, `redis` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -327,7 +330,7 @@ behind an Authentik gate:
 | Layer | Technology | Details |
 |---|---|---|
 | **Local SSD** | TopoLVM | Default StorageClass `cc-local-ssd-fast`, XFS, Retain policy, WaitForFirstConsumer |
-| **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
+| **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway unless `storage.objectStorage` asks for more masters, volume servers (one per node) and copies, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
 
 TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache), `hdd` (cc-hdd-vg).
 
