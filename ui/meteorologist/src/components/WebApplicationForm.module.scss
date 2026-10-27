@@ -1,0 +1,95 @@
+@use "gui-mellow/styles/mixins" as gm;
+
+.form {
+  display: grid;
+  gap: var(--gm-space-7);
+  max-width: 860px;
+}
+
+.fields {
+  display: grid;
+  gap: var(--gm-space-4);
+  margin-block-start: var(--gm-space-3);
+}
+
+// Two fields side by side, stacking on narrow screens
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--gm-space-4);
+}
+
+// Fields that belong to the switch above them
+.indented {
+  margin-inline-start: var(--gm-space-6);
+  padding-inline-start: var(--gm-space-4);
+  border-inline-start: var(--gm-border-width) solid var(--gm-color-border-subtle);
+
+  @include gm.below(sm) {
+    margin-inline-start: 0;
+  }
+}
+
+.note {
+  margin: 0;
+  color: var(--gm-color-text-muted);
+  font-size: var(--gm-text-sm);
+}
+
+.badge {
+  margin-inline-end: var(--gm-space-2);
+}
+
+.list {
+  display: grid;
+  gap: var(--gm-space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  @include gm.label;
+  margin-block-end: var(--gm-space-2);
+  padding: 0;
+  color: var(--gm-color-text-muted);
+}
+
+.listRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--gm-space-3);
+}
+
+.grow {
+  flex: 1 1 200px;
+}
+
+.preserved {
+  margin: var(--gm-space-2) 0 0;
+  padding-inline-start: var(--gm-space-5);
+  font-size: var(--gm-text-sm);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--gm-text-sm);
+  color: var(--gm-color-danger);
+}
+
+.footer {
+  display: grid;
+  gap: var(--gm-space-4);
+  position: sticky;
+  bottom: 0;
+  padding-block: var(--gm-space-4);
+  background: var(--gm-color-bg);
+  border-block-start: var(--gm-border-width) solid var(--gm-color-border-subtle);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gm-space-3);
+}

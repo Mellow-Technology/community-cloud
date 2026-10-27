@@ -1,0 +1,11 @@
+.viewer {
+  display: flex;
+  align-items: center;
+  gap: var(--gm-space-2);
+}
+
+.name {
+  font-family: var(--gm-font-mono);
+  font-size: var(--gm-text-sm);
+  color: var(--gm-color-text-muted);
+}

@@ -1,0 +1,58 @@
+@use "gui-mellow/styles/mixins" as gm;
+
+.stats {
+  margin-block-end: var(--gm-space-7);
+}
+
+.section {
+  margin-block-start: var(--gm-space-8);
+}
+
+.heading {
+  margin: 0 0 var(--gm-space-4);
+  font-size: var(--gm-text-xl);
+}
+
+.healthRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gm-space-3) var(--gm-space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: baseline;
+    gap: var(--gm-space-2);
+  }
+}
+
+.count {
+  font-family: var(--gm-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--gm-color-heading);
+}
+
+.mono {
+  font-family: var(--gm-font-mono);
+  font-size: var(--gm-text-sm);
+}
+
+.code {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--gm-text-sm);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--gm-space-3);
+  margin-block-end: var(--gm-space-5);
+}
+
+.empty {
+  color: var(--gm-color-text-muted);
+}

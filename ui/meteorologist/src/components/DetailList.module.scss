@@ -1,0 +1,35 @@
+@use "gui-mellow/styles/mixins" as gm;
+
+.list {
+  display: grid;
+  margin: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) 1fr;
+  gap: var(--gm-space-4);
+  padding-block: var(--gm-space-3);
+  border-block-end: var(--gm-border-width) solid var(--gm-color-border-subtle);
+
+  &:last-child {
+    border-block-end: 0;
+  }
+
+  @include gm.below(sm) {
+    grid-template-columns: 1fr;
+    gap: var(--gm-space-1);
+  }
+}
+
+.label {
+  @include gm.label;
+  color: var(--gm-color-text-muted);
+  padding-block-start: 0.2em;
+}
+
+.value {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
