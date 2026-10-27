@@ -21,6 +21,7 @@ process.on("unhandledRejection", (reason: any) => {
 
   process.exit(1);
 });
+import packageJson from "../../package.json" with { type: "json" };
 import { addNode } from "../runners/addNode.ts";
 import { runTemplate } from "../runners/runTemplate.ts";
 import { listBundles } from "../runners/listBundles.ts";
@@ -88,7 +89,9 @@ enum CliOperation {
 
 // Set command line options and parse them
 program
-  .version("0.1.0")
+  // From package.json, which a release build sets from its tag, so
+  // what a binary says it is matches what it was published as
+  .version(packageJson.version)
   .name(COMMAND_NAME)
   .description("Community Cloud Installer CLI utility.")
   .showHelpAfterError()

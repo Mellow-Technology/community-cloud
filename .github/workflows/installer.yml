@@ -1,0 +1,237 @@
+# Builds the Community Cloud installer for every platform it ships for,
+# checks each executable runs on its own operating system, and
+# publishes them as a GitHub release when a tag is pushed.
+#
+# - Pull requests and pushes to main: test, build, smoke test. The
+#   executables are kept as workflow artifacts for a week.
+# - A tag "installer-v<version>", e.g. installer-v0.2.0: the same, then
+#   a release with every executable and a SHA256SUMS file. The version
+#   in the tag is what the executables report with --version.
+#
+# Every target cross-compiles from Linux (see installer/scripts/
+# build.ts); the smoke tests are what prove a binary actually starts on
+# the system it's for, embedded manifests and all.
+name: Installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["installer-v*"]
+  pull_request:
+    paths:
+      - "installer/**"
+      - "k8s/**"
+      - "headlamp/plugins/**"
+      - ".github/workflows/installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUN_VERSION: "1.4.2"
+  # The Headlamp plugins' build scripts run on Node. Their own CLI
+  # doesn't run on recent releases, so this stays on an LTS.
+  NODE_VERSION: "22"
+
+jobs:
+  # What the executables will say they are: the tag's version for a
+  # release, and package.json's with the commit on it otherwise
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/installer-v* ]]; then
+            version="${GITHUB_REF#refs/tags/installer-v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::The tag's version, \"$version\", isn't semver: installer-v1.2.3 or installer-v1.2.3-rc.1"
+              exit 1
+            fi
+          else
+            version="$(jq -r .version installer/package.json)-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+  # Typecheck and the test suite, against the embedded manifests and
+  # plugins exactly as a build would carry them
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: installer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: headlamp/plugins/*/package-lock.json
+      - run: bun install --frozen-lockfile
+      - run: bun run build:plugins
+      - run: bun run build:embedded
+      - run: bun run typecheck
+      - run: bun run test
+
+  # One job per target, cross-compiled on Linux
+  build:
+    needs: [version, check]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - linux-x64
+          - linux-arm64
+          - linux-x64-musl
+          - linux-arm64-musl
+          - macos-arm64
+          - macos-x64
+          - windows-x64
+          - windows-arm64
+    defaults:
+      run:
+        working-directory: installer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: headlamp/plugins/*/package-lock.json
+      - name: Set the version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: jq --arg version "$VERSION" '.version = $version' package.json > package.json.new && mv package.json.new package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run build:plugins
+      # Regenerates the embedded manifests itself, then compiles
+      - run: bun run build ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: community-cloud-${{ matrix.target }}
+          path: installer/build/community-cloud-${{ matrix.target }}*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each executable, run on the system it's for
+  smoke:
+    needs: [version, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, runner: ubuntu-latest }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+          - { target: linux-x64-musl, runner: ubuntu-latest, alpine: true }
+          - { target: linux-arm64-musl, runner: ubuntu-24.04-arm, alpine: true }
+          - { target: macos-arm64, runner: macos-latest }
+          - { target: macos-x64, runner: macos-15-intel }
+          - { target: windows-x64, runner: windows-latest, exe: .exe }
+          - { target: windows-arm64, runner: windows-11-arm, exe: .exe }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: community-cloud-${{ matrix.target }}
+      - name: Smoke test
+        env:
+          BINARY: ./community-cloud-${{ matrix.target }}${{ matrix.exe }}
+          EXPECTED: ${{ needs.version.outputs.version }}
+          ALPINE: ${{ matrix.alpine }}
+        run: |
+          chmod +x "$BINARY"
+
+          # The smallest configuration a template renders against
+          cat > smoke-test.json <<'JSON'
+          {"values": {"adminEmail": "admin@example.test", "domain": {"main": "example.test", "storage": "s3.example.test"}}}
+          JSON
+
+          cat > smoke.sh <<'SCRIPT'
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+
+          version=$("$BINARY" --version)
+          [ "$version" = "$EXPECTED" ] || fail "--version says \"$version\", expected \"$EXPECTED\""
+
+          # The embedded database opens, and carries the plugins
+          "$BINARY" list-embedded > embedded.txt
+          grep -q "embed://storage/SeaweedFS/SeaweedFS.yaml" embedded.txt || fail "the embedded manifests are missing"
+          "$BINARY" list-embedded headlamp-plugins | grep -q "main.js" || fail "the Headlamp plugins are missing"
+
+          # A template renders without kubectl
+          "$BINARY" run-template --dry-run embed://storage/SeaweedFS/SeaweedFS.namespace.yaml smoke-test.json > rendered.yaml
+          grep -q "kind: Namespace" rendered.yaml || fail "the template didn't render"
+
+          "$BINARY" list-bundles > /dev/null || fail "list-bundles failed"
+          echo "$BINARY $version starts, and its embedded manifests render"
+          SCRIPT
+
+          if [ "$ALPINE" = "true" ]; then
+            docker run --rm -v "$PWD:/work" -w /work -e BINARY -e EXPECTED alpine:3.22 sh -c "apk add --no-cache bash libstdc++ libgcc > /dev/null && bash smoke.sh"
+          else
+            bash smoke.sh
+          fi
+
+  # Only for a tag: every executable and their checksums, as a release
+  release:
+    if: startsWith(github.ref, 'refs/tags/installer-v')
+    needs: [version, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: community-cloud-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum community-cloud-* | tee SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          prerelease=""
+          [[ "$VERSION" == *-* ]] && prerelease="--prerelease"
+          cat > notes.md <<NOTES
+          The Community Cloud installer, $VERSION, as a single executable for each platform. Nothing else needs installing: the manifests it applies are inside it.
+
+          Download the one for your machine, make it executable, and run it:
+
+          \`\`\`bash
+          chmod +x community-cloud-linux-x64
+          ./community-cloud-linux-x64 --help
+          \`\`\`
+
+          The \`-musl\` builds are for Alpine, which needs \`apk add libstdc++ libgcc\` first.
+
+          The macOS builds aren't notarized, so macOS refuses to open one downloaded through a browser. Clear the flag first with \`xattr -d com.apple.quarantine community-cloud-macos-arm64\`.
+
+          Check a download against \`SHA256SUMS\` with \`sha256sum -c SHA256SUMS --ignore-missing\`.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Installer $VERSION" \
+            --notes-file notes.md \
+            --generate-notes \
+            $prerelease

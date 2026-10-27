@@ -105,7 +105,7 @@ const PAGE_WASHES = [
 /**
  * Frosted glass, for the surfaces laid over all that.
  *
- * 12px is past the point where the hexagons stop being separately
+ * 8px is past the point where the hexagons stop being separately
  * visible, and far short of where the pools of light start to smear
  * into each other. The inset highlight along the top edge is the part
  * that reads as a pane catching the light rather than a patch of fog.

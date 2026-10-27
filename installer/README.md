@@ -6,9 +6,9 @@ The Community Cloud Installer is a command-line interface (CLI) tool designed to
 
 - **Multi-Node, Multi-Site Deployment**: Seamlessly configure K3s across multiple nodes and sites with minimal manual intervention.
 - **Automatic Storage Configuration**: The installer automatically sets up and configures storage solutions using [TopoLVM](https://github.com/topolvm/topolvm), providing dynamic volume provisioning and snapshot capabilities tailored to your cluster's needs.
-- **Database Support**: Built-in support for PostgreSQL and MySQL databases via MariaDB, enabling easy deployment of database services within your cluster.
-- **Tailscale Integration**: Enable secure cross-site communication with automatic Tailscale configuration, allowing nodes in different networks to communicate as if they were on the same local network.
-- **Zero-Trust Networking**: Leverage Tailscale's built-in security features to maintain a secure and isolated cluster environment without additional configuration.
+- **Database Support**: PostgreSQL through CloudNativePG, as one shared `cc-postgres` cluster the applications each get a role and a database in.
+- **Cross-Site Networking**: Nodes on different networks reach each other over a [Nebula](https://github.com/slackhq/nebula) mesh, managed through Defined Networking, so a cluster can span several sites.
+- **Tailscale**: Optionally, the Tailscale operator exposes cluster services on a tailnet.
 - **Scalable Architecture**: Easily scale your cluster by adding more nodes or sites as your requirements grow.
 
 ## Use Cases
@@ -48,10 +48,12 @@ arguments walks through building one, and can edit an existing file:
 ```bash
 community-cloud                      # build or edit a configuration
 community-cloud configure --section nodes
+community-cloud configure --all      # every section in turn, not the menu
 ```
 
 **The file holds secrets** — the cluster token, registry passwords, a
-Nebula API key — so it's gitignored here as `*.config.json`. What the
+Nebula API key, mail passwords, DNS provider credentials — so it's
+gitignored here as `*.config.json`. What the
 installer records *in* the cluster has those stripped out; see
 [Secrets in commands](#secrets-in-commands).
 
@@ -59,9 +61,10 @@ What the file can hold is described by a JSON Schema,
 [`cc.config.schema.json`](cc.config.schema.json). Point the file at it
 with `"$schema"`, as the example below does, and an editor will
 complete keys, explain them, and flag mistakes as you type. The path is
-relative to the configuration file. Preflight, `install`,
-`add-node` and the doctor check against the same schema, so nothing
-depends on the editor (see [Checking a configuration](#checking-a-configuration)).
+relative to the configuration file. Preflight, `install` and
+`add-node` refuse what the schema rules out, and they and the doctor
+warn about keys it doesn't know, so nothing depends on the editor (see
+[Checking a configuration](#checking-a-configuration)).
 
 ### A small complete example
 
@@ -264,7 +267,9 @@ lowered. See
 
 ### `packages`
 
-Which Helm charts to install. `true` is shorthand for enabled.
+Which packages to install: Helm charts, or applications made of
+manifests alone. `true` is shorthand for enabled, and
+`"enabled": false` turns one off while keeping its settings.
 
 ```jsonc
 "packages": {
@@ -279,7 +284,9 @@ In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
 `lago`, `documenso`, `mattermost`, `picoclaw`, `plane`. Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
-enabling it enables that too.
+enabling it enables that too. `cloudnative-pg`, `redis-operator` and
+`seaweedfs` each need TopoLVM, so enabling any of them brings TopoLVM
+and cert-manager; `rabbitmq-operator` needs both directly.
 
 Applications go in `cc-office`, along with the Postgres, Redis and
 RabbitMQ they share. What runs the cluster goes in `community-cloud`:
@@ -327,7 +334,7 @@ its first administrator with `values.adminEmail` and the password in
 the `plane-admin` Secret, before anyone else can claim its admin
 pages.
 
-`twenty`, `lago`, `documenso`, `mattermost` and `picoclaw` are
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw` and `plane` are
 applications in `cc-office`, each with a ListenerSet of its own on the
 cluster Gateway. Any of them can be installed on its own, into a
 cluster that already has the rest:
@@ -392,9 +399,15 @@ with an Authentik account can.
 Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
 through Authentik too, and then talks to the Kubernetes API as
 whoever signed in; see [signing in to the cluster](#signing-in-to-the-cluster).
-Headlamp's own account has no permissions. It carries Community
-Cloud's plugins from `headlamp/plugins/`, built into the installer with
-`bun run build:plugins` then `bun run build:embedded`.
+Like Documenso, it waits for Authentik. Headlamp's own account has no
+permissions. It carries Community Cloud's plugins from
+`headlamp/plugins/`, built into the installer with
+`bun run build:plugins` then `bun run build:embedded` (see
+[Embedded manifests](#embedded-manifests)) and mounted from a
+ConfigMap applied before the chart; see
+`installer/src/util/headlampPlugins.ts`. Headlamp has no bundle of its
+own, so on an existing cluster it's installed or updated with
+`run-bundle helm-charts`.
 
 #### Signing in to the cluster
 
@@ -430,7 +443,7 @@ the one that does.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
-the working directory) and `requires`.
+the working directory), `requires`, `enabled` and `description`.
 
 Applications can also come from plugins rather than the catalogue —
 see [`plugins`](#plugins) below.
@@ -494,11 +507,13 @@ is available as `.Values.<path>`. The rest of the configuration is laid
 underneath, so `.Values.nodes` is the node list. That works key for key
 and doesn't flatten sections: `config.adminEmail` would be
 `.Values.config.adminEmail`, which nothing reads. Older configurations
-used a `config` section like that, and preflight warns about one.
+used a `config` section like that, and preflight warns about one, as it
+does about the other deprecated keys: a top-level `domains`, and a
+node's `sshHost`.
 
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
-`domain.billing`, `domain.billingApi`, `domain.signing`,
+`domain.billing`, `domain.billingApi`, `domain.signing`, `domain.plane`,
 `domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
 `authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
 members are cluster admins through Headlamp or kubectl, `k8s-admins`
@@ -519,6 +534,11 @@ would have been worked out:
 | `networkDevices` | The shared interface list. |
 | `storageControllerReplicas` | How many TopoLVM controllers run: one per `storage-local` node, at least 1 and at most 2. They insist on separate nodes, so a replica with no node of its own never schedules and the install waits for it forever. Set it to run more on a larger cluster. |
 | `mail` | [`smtp`](#smtp), for the namespace being rendered. |
+| `databaseVolumeSize`, `objectStorageVolumeSize` | `storage.allocations`: `databaseGb` (30 by default) and `objectStorageGb` (50). |
+| `objectStorage` | The cluster's S3 gateway: `endpoint`, `host` (`seaweed-s3.seaweedfs.svc:8333`) and `region`. |
+| `clusterAdminGroup` | `k8s-admins`, unless `values.clusterAdminGroup` names another `k8s-` group. |
+| `headlampPlugins`, `headlampPluginsRevision` | The Headlamp plugins built into the installer, and a revision that changes with them so Headlamp restarts for a new build. |
+| `lvmdBaseSelector`, `lvmdAdditionalConfigs` | The storage node shapes found, one lvmd configuration for each. |
 
 ### `smtp`
 
@@ -576,14 +596,16 @@ Each application is told about its own namespace's server in its own
 terms: manifests read it as `.Values.mail`, rendered for the namespace
 of the package being installed (`run-template --namespace` says which
 for a manifest applied by hand). The username and password go into a
-`cc-smtp` Secret in that namespace rather than into any manifest, and
-are applied on every install, so a changed password lands by changing
-the file and running the install again. Applications restart for a new
+`cc-smtp` Secret in that namespace rather than into any manifest. It's
+applied, or removed, on every install, in the namespace of each enabled
+package that sends mail — so a changed password lands by changing the
+file and running the install again, and a namespace with nothing in it
+that sends mail gets no Secret even when it's listed. Applications restart for a new
 server on their own; for a new password alone, restart them with
 `kubectl rollout restart`.
 
-A namespace without mail keeps it to itself — Lago and Documenso send
-nothing. `community-cloud configure --section mail`
+A namespace without mail keeps it to itself — Twenty, Lago,
+Documenso and Plane send nothing. `community-cloud configure --section mail`
 asks for all of this, and the doctor checks each namespace's server
 can be reached from the cluster.
 
@@ -684,6 +706,8 @@ type, or a node type, role or region that isn't one of those allowed:
 ```bash
 community-cloud preflight cc.config.json
 community-cloud preflight cc.config.json --config-only   # the file alone, no SSH
+community-cloud preflight cc.config.json -n phoenix      # one node
+community-cloud preflight cc.config.json --timeout 20    # wait longer for slow nodes (default 8s)
 ```
 
 Without `--config-only` it goes on to connect to every node. That's
@@ -705,7 +729,15 @@ community-cloud doctor cc.config.json                  # everything, every node
 community-cloud doctor cc.config.json --verifications  # only what asserts
 community-cloud doctor cc.config.json -n phoenix       # one node
 community-cloud doctor cc.config.json -b lvm           # one bundle
+community-cloud doctor cc.config.json --wait           # and the checks that wait
 ```
+
+Some checks exist to wait for something to settle after an install,
+and other checks give what they ask about a moment to catch up. On a
+healthy cluster that costs nothing; when anything is wrong each one
+waits out its whole timeout before saying so, which turns a report
+into a long wait. So by default the waiting checks are skipped and the
+others answer with what is true now. `--wait` puts both back.
 
 Every command in every bundle says what it's for, and `doctor` runs
 only the purposes that change nothing. That is what makes it safe to
@@ -776,8 +808,24 @@ warnings, since either can be intended.
 ```bash
 community-cloud install cc.config.json            # every node
 community-cloud install cc.config.json --dry-run  # every step, nothing run
-community-cloud install cc.config.json -n node-4  # one node, to add a machine
+community-cloud install cc.config.json -n node-4  # one node only
 ```
+
+To add a machine to a cluster that's already running, use
+[`add-node`](#adding-a-node) rather than `-n`.
+
+These flags work the same on `install`, `add-node`, `uninstall`,
+`clean`, `run-bundle` and `run-pipeline`:
+
+| Flag | |
+|---|---|
+| `--dry-run` | Work out every step and print it, changing nothing. |
+| `--keep-going` | Carry on past a failed step rather than stopping there. |
+| `--timeout <seconds>` | How long to give a node to answer when connecting. |
+| `--verbose` | Print each command's output as well as the report. Not on `install`. |
+
+Set `CC_DEBUG` in the environment to have a failure print its stack
+trace as well as its message.
 
 Everything happens in lock step: **every node finishes a step before any
 node starts the next.** Within a step the nodes work at once, so
@@ -821,7 +869,15 @@ community-cloud run-pipeline base,network all cc.config.json
 community-cloud run-pipeline lvm phoenix cc.config.json
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle k3s phoenix cc.config.json --dry-run
+community-cloud run-pipeline new-node node-4 cc.config.json   # one named in "pipelines"
+community-cloud list-bundles                                  # every bundle there is
+community-cloud list-bundles k3s -c cc.config.json            # the commands in one
 ```
+
+A pipeline is a comma-separated list of bundles, or the name of one
+defined under [`pipelines`](#pipelines). `list-bundles` is where the
+names come from; given a bundle, it lists that bundle's commands, which
+needs the configuration for bundles whose commands are built from it.
 
 `all` is every node in the configuration; a name is one node. A single
 node is a cluster of one rather than a separate code path — the
@@ -972,6 +1028,10 @@ token all live on it, nothing here can put them back, and every agent
 loses its control plane at once. It is the one operation in this tool
 that no other command can undo.
 
+`--server` on an agent is refused too: it agrees to destroying the
+cluster, which uninstalling an agent isn't going to do, so it's more
+likely a mistake about which node this is.
+
 With the flag, the pipeline is just `k3s-uninstall`. There is nothing
 to drain to — draining a control plane means evicting the pods that
 would carry out the eviction — and nothing to be removed from.
@@ -996,8 +1056,8 @@ community-cloud run-bundle k3s-uninstall node-4 cc.config.json
 ```bash
 community-cloud clean node-4 cc.config.json
 community-cloud clean all cc.config.json
-community-cloud clean node-4 cc.config.json --full          # says what it would destroy
-community-cloud clean node-4 cc.config.json --full --yes    # destroys it
+community-cloud clean node-4 cc.config.json --full          # cleans, then lists the volume groups
+community-cloud clean node-4 cc.config.json --full --yes    # and destroys them
 ```
 
 The other half of the decision: removing what the uninstall kept. Two
@@ -1011,8 +1071,9 @@ installing again.
 `--full` also destroys the volume groups this installer created, which
 is where the data is: TopoLVM carves every persistent volume out of
 them, so this is the contents of every database and every upload on
-the node. Nothing here can put that back, so `--full` on its own
-prints what it would destroy and stops:
+the node. Nothing here can put that back, so `--full` on its own does
+the default clean — the K3s directories still go — then lists the
+volume groups it would destroy and stops there:
 
 ```
 cc-ssd-vg           931GB  4 logical volumes
@@ -1039,7 +1100,8 @@ straight past it.
 ### Why it won't clean a running node
 
 Cleaning refuses while K3s is running, and refuses while anything is
-still mounted under `/var/lib/kubelet` or `/run/k3s`. The second is
+still mounted under `/var/lib/kubelet`, `/var/lib/rancher` or
+`/run/k3s`. The second is
 the one worth the trouble: `rm -rf /var/lib/kubelet` with a volume
 still mounted underneath descends through the mount point and deletes
 what is *in* the volume, which is exactly the data every other
@@ -1110,6 +1172,7 @@ cd installer
 bun install
 bun run build            # every platform
 bun run build linux      # or a filter: linux, macos, windows, arm64, musl
+bun run build linux-x64  # or one target by its exact name
 ```
 
 Executables land in `installer/build/`:
@@ -1128,6 +1191,27 @@ Executables land in `installer/build/`:
 Every target cross-compiles from whatever machine you build on, so a
 release can be cut from a laptop.
 
+### Releases
+
+`.github/workflows/installer.yml` builds every target on each pull
+request and push to `main`, after the tests. It then runs each
+executable on its own operating system: `--version`, the embedded
+manifests and Headlamp plugins, and a template rendered with
+`--dry-run`. The executables are kept as workflow artifacts for a week.
+
+Pushing a tag `installer-v<version>` does the same and then publishes a
+GitHub release with every executable and a `SHA256SUMS` file:
+
+```bash
+git tag installer-v0.2.0
+git push origin installer-v0.2.0
+```
+
+The tag's version is what the executables report with `--version`.
+Builds that aren't releases report `package.json`'s version with the
+commit on it, e.g. `0.1.0-dev.dcf704b`. A version with a hyphen in it,
+like `0.2.0-rc.1`, is published as a pre-release.
+
 ### Embedded manifests
 
 The manifests and values files under `k8s/` are compiled into the
@@ -1138,11 +1222,19 @@ They're referred to with an `embed://` URL, and the paths have no
 `k8s/` prefix:
 
 ```bash
+community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json --dry-run
 community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json
-community-cloud run-template ./ops/my-template.yaml cc.config.json
+community-cloud run-template ./ops/my-template.yaml cc.config.json -o delete
 community-cloud list-embedded              # everything it carries
 community-cloud list-embedded authentik    # filtered
 ```
+
+**`run-template` applies what it renders** with `kubectl apply`, using
+whatever kubeconfig this machine has, unless it's given `--dry-run`,
+which prints the rendered manifest and stops. `-o delete` deletes
+instead, `-n <node>` runs kubectl on that node over SSH, and
+`--namespace` scopes the operation and says which namespace's
+`.Values.mail` to render.
 
 `bun run build` rebuilds `src/generated/embedded.sqlite` before
 compiling, so anything added under `k8s/` is picked up automatically.
@@ -1152,14 +1244,25 @@ Rebuild it on its own with:
 bun run build:embedded
 ```
 
+The Headlamp plugins in `headlamp/plugins/` go into the same database,
+built: each one's `dist/main.js` and `package.json`, stored as
+`headlamp-plugins/<name>/`. Neither `build` nor `build:embedded` builds
+them, and a plugin with no build is left out with only a warning, so
+after changing one, build it first:
+
+```bash
+bun run build:plugins     # npm ci where needed, then npm run build, in each plugin
+bun run build:embedded
+```
+
 The database has one table, `files`, with `path` and `contents`
 columns and a unique index on `path`. It's built from scratch each
 time and the rows go in sorted, so the same tree always produces the
 same bytes and a rebuild only shows up in a diff when something under
 `k8s/` actually changed.
 
-Only `.yaml` and `.yml` files are embedded — the READMEs under `k8s/`
-are for people reading the repository, and nothing reads them at
+From `k8s/`, only `.yaml` and `.yml` files are embedded — the READMEs
+there are for people reading the repository, and nothing reads them at
 runtime.
 
 ### Other scripts
@@ -1167,6 +1270,8 @@ runtime.
 ```bash
 bun run cc <args>        # run from source without building
 bun run typecheck        # tsc --noEmit
+bun run build:linux      # one platform's executables (also :macos, :windows)
+bun run build:plugins    # the Headlamp plugins, for build:embedded
 ```
 
 ## Writing commands
@@ -1281,15 +1386,31 @@ refer to them:
 }
 ```
 
-Each becomes a `kubernetes.io/basic-auth` Secret with a three-word
-username and a five-word password, hyphen separated, drawn from a word
-list seeded out of `node:crypto` — five words is about fifty-five bits,
-and a phrase survives being read down a telephone in a way a string of
-punctuation doesn't. `username` is only needed where something
-downstream insists on a particular one; left out, it's generated too.
-CloudNativePG is why it's set on all three database roles: a
-`DatabaseRole`'s Secret has to carry the role's own Postgres name,
-underscores and all, and the role is refused outright if it doesn't.
+By default each becomes a `kubernetes.io/basic-auth` Secret with a
+three-word username and a five-word password, hyphen separated, drawn
+from a word list seeded out of `node:crypto` — five words is about
+fifty-five bits, and a phrase survives being read down a telephone in a
+way a string of punctuation doesn't. `username` is only needed where
+something downstream insists on a particular one; left out, it's
+generated too. CloudNativePG is why it's set on every database role,
+those in `Office.roles.yaml` and the ones Lago, Documenso and Plane
+bring: a
+role's Secret has to carry the role's own Postgres name, underscores
+and all, and the role is refused outright if it doesn't.
+
+Not everything a package needs is a login, so a definition can ask for
+something else instead (see `SecretDefinition` in
+`src/cli/commands/Secrets.ts`):
+
+| Field | Makes |
+|---|---|
+| `keyBytes` | A random key of that many bytes, in hex, for the encryption keys that refuse a phrase for being the wrong length. |
+| `certificate` | A self-signed certificate, as a PKCS#12 bundle and the passphrase sealing it — Documenso signs documents with one. |
+| `privateKey` | An RSA private key in PEM — Lago signs its sessions with one. |
+| `connectionString` | A URL for cc-postgres built from a role's credentials, for something that wants one string — Mattermost's operator. |
+
+`type` sets a different Secret type, and `labels` adds labels some
+operators find their Secrets by.
 
 **A password is created once and never rewritten.** The command looks
 first and does nothing if the Secret is there, so running an install

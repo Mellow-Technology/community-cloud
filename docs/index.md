@@ -35,19 +35,24 @@ Full configuration reference: [installer/README.md](../installer/README.md#confi
 
 ```
 installer/
+├── cc.config.schema.json      # What a configuration file can hold
 ├── scripts/
 │   ├── build.ts               # Cross-compiles for eight targets
-│   └── generateEmbedded.ts    # Compiles k8s/ into a SQLite database
+│   ├── generateEmbedded.ts    # Compiles k8s/ and the built Headlamp plugins into a SQLite database
+│   └── buildHeadlampPlugins.ts # Builds headlamp/plugins/ for embedding
 └── src/
     ├── cli/
     │   ├── installer.ts       # Entry point, commander definitions
     │   ├── commands/          # What can be done to a node or cluster
     │   └── configure/         # The interactive configuration builder
     ├── runners/               # What drives the commands
+    ├── pipeline/              # Planning and running bundles across the fleet
+    ├── plugins/               # Loading, checking and approving plugins
     ├── remote/                # SSH, and ~/.ssh/config resolution
     ├── topology/              # The fixed region list
     ├── util/                  # Config, templating, shell, redaction
-    └── generated/             # The embedded manifest database
+    ├── generated/             # The embedded manifest database
+    └── test/
 ```
 
 ### Commands and bundles
@@ -165,20 +170,20 @@ k8s/
 ├── certs/
 │   ├── CertManager.values.yaml  # cert-manager Helm values
 │   └── ClusterIssuer.yaml       # cc-lets-encrypt, applied by the cert-manager package
-├── crd/                         # Custom Resource Definitions
+├── crd/                         # Custom Resource Definitions, not applied by anything yet
 │   ├── webapps.crd.yaml         # Webapp lifecycle CRD
-│   └── sites.crd.yaml           # Multi-site config CRD
+│   └── sites.crd.yaml           # Meant for sites; currently a copy of the Webapp CRD
 ├── database/Postgres/
-│   └── PostGISCluster.yaml      # PostGIS cluster (30Gi)
-├── k3s-config/README.md         # K3s node config notes
+│   └── PostGISCluster.yaml      # PostGIS cluster (30Gi), applied by hand
+├── k3s-config/README.md         # Placeholder: the installer generates K3s's configuration
 ├── mq/
 │   ├── RabbitMQ/                # The RabbitMQ operators, vendored at pinned versions
-│   └── nats/README.md           # NATS (prepared)
+│   └── nats/README.md           # Placeholder for NATS: nothing deployed
 ├── networking/
 │   ├── cilium/
 │   │   ├── Cilium.values.yaml   # Cilium Helm values
 │   │   └── gateway/             # The community-cloud namespace and cc-letsencrypt-web-gateway, made by the gateway bundle
-│   └── tailscale/               # Tailscale cross-site (prepared)
+│   └── tailscale/               # A Tailscale proxy, applied by hand; the operator is the tailscale-operator package
 ├── storage/                     # Storage infrastructure
 │   ├── StorageClass/            # cc-local-ssd-fast (default) and cc-local-ssd-sata
 │   ├── TopoLVM/
@@ -196,9 +201,14 @@ k8s/
 | CRD | Scope | Purpose |
 |---|---|---|
 | `Webapp` | Namespace | Declarative webapp lifecycle — auto-generates deployment, service, PVC, database, Gateway API route, TLS cert |
-| `Site` | Cluster | Multi-site configuration management |
+Nothing installs the CRD yet. `sites.crd.yaml` is meant to define a
+cluster-scoped `Site` for multi-site configuration, but is currently a
+copy of the Webapp CRD.
 
-The `WebappController` (`installer/src/controller/WebappController.ts`) generates manifests from a Webapp spec, handling:
+A sketch of a `WebappController`, in
+`installer/src/runners/scratch/controller/WebappController.ts`,
+generates manifests from a Webapp spec. Nothing imports it — see that
+directory's README. It handles:
 - Deployment with configurable replicas, resources, env vars
 - Service on port 80
 - PVC with configurable size/mount path
@@ -298,20 +308,24 @@ Chat, installed by the `mattermost` package through the Mattermost operator (the
 
 Cluster web UI, installed by the `headlamp` package (chart 0.46.0) into `community-cloud`.
 People sign in through Authentik over OpenID Connect, and Headlamp
-uses their token with the API server, which the package has trust
-Authentik:
+uses their token with the API server, which the installer starts
+trusting Authentik's tokens when the package is enabled (re-run the
+`k3s` bundle on an existing cluster's servers). Headlamp has no bundle
+of its own; `helm-charts` installs it:
 
 | File | Purpose |
 |---|---|
 | `Headlamp.values.yaml` | Helm values: OpenID Connect, the plugins mounted, no permissions of its own |
 | `Headlamp.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 | `Headlamp.plugins.yaml` | Community Cloud's plugins, a ConfigMap each |
-| `Headlamp.rbac.yaml` | cluster-admin for `oidc:<clusterAdminGroup>` |
+| `Headlamp.rbac.yaml` | cluster-admin for `authentik:<clusterAdminGroup>` |
 | `Headlamp.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
 
 `headlamp/plugins/` at the top of the repository holds Community
 Cloud's own Headlamp plugins, `cc-cumulus-theme` and
-`cc-storage-explorer`, built and carried inside the installer.
+`cc-storage-explorer`. `bun run build:plugins` builds them and
+`bun run build:embedded` carries them inside the installer, under
+`headlamp-plugins/<name>/`.
 
 #### Picoclaw (`apps/picoclaw/`)
 
@@ -332,15 +346,16 @@ behind an Authentik gate:
 | **Local SSD** | TopoLVM | Default StorageClass `cc-local-ssd-fast`, XFS, Retain policy, WaitForFirstConsumer |
 | **Object** | SeaweedFS | S3-compatible, run by the SeaweedFS operator: one master, volume server, filer and S3 gateway unless `storage.objectStorage` asks for more masters, volume servers (one per node) and copies, `seaweed-s3:8333` inside the cluster and `values.domain.storage` outside, for signed links; data volume sized from `storage.allocations.objectStorageGb`; buckets and keys per application |
 
-TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache), `hdd` (cc-hdd-vg).
+TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cache` (cc-ssd-cache-vg), `hdd` (cc-hdd-vg).
 
 ### Database Services
 
 | Service | Technology | Namespace | Storage |
 |---|---|---|---|
 | cc-postgres | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | cc-office | `storage.allocations.databaseGb` (30Gi by default) on cc-local-ssd-fast |
-| postgis | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | default | 30Gi cc-local-ssd-fast |
+| postgis | CloudNative-PG (PostgreSQL 18 + PostGIS 3.6) | default | 30Gi cc-local-ssd-fast — applied by hand, no package installs it |
 | Redis | Opstree Operator (v7.0.15) | cc-office | 5Gi cc-local-ssd-fast |
+| RabbitMQ | RabbitMQ Cluster Operator (2.23.1) | cc-office | 5Gi cc-local-ssd-fast |
 
 ---
 
@@ -349,18 +364,18 @@ TopoLVM device classes: `ssd` (cc-ssd-vg), `ssd-sata` (cc-ssd-sata-vg), `ssd-cac
 ### The configuration file
 
 A cluster is described by one JSON file, conventionally
-`cc.config.json` — nodes, networking, storage, packages, registries.
-It holds secrets (the cluster token, registry passwords, a Nebula API
-key) and is gitignored as `*.config.json`.
+`cc.config.json` — nodes, networking, storage, packages, plugins,
+registries, template values, mail, DNS and pipelines. It holds secrets
+(the cluster token, registry passwords, a Nebula API key, mail
+passwords, DNS credentials) and is gitignored as `*.config.json`.
 
 **The full reference is in [installer/README.md](../installer/README.md#configuration)**,
 which documents every key the installer reads. A sketch:
 
 ```jsonc
 {
-  "config": { "adminEmail": "you@example.com" },
   "k3s": { "token": "a-long-shared-secret" },
-  "values": { "domain": { "main": "example.com" } },
+  "values": { "adminEmail": "you@example.com", "domain": { "main": "example.com" } },
   "network": {
     "gateway": { "mode": "port-forward", "addresses": ["192.168.1.240-192.168.1.250"] }
   },
@@ -388,10 +403,19 @@ Build one with `community-cloud` and no arguments, and check it with
 | Role | Purpose |
 |---|---|
 | `gateway` | Public ingress nodes with stable IPs |
+| `lighthouse` | Nebula lighthouses, which nodes on other networks find each other through |
 | `worker` | General-purpose workload nodes |
 | `worker-gpu` | GPU-equipped AI/ML inference nodes |
 | `storage-local` | TopoLVM CSI node/lvmd nodes |
-| `storage-distributed` | Distributed storage nodes |
+| `storage-distributed`, `storage` | Distributed storage nodes |
+
+### Packages
+
+Enabled under `packages` in the configuration: `cert-manager`,
+`cloudnative-pg`, `topolvm`, `seaweedfs`, `redis-operator`, `headlamp`,
+`rabbitmq-operator`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
+`mattermost`, `picoclaw`, `plane`. Authentik comes from a plugin rather than this list. See
+[`packages`](../installer/README.md#packages).
 
 ### AI Inference
 
@@ -399,28 +423,35 @@ Build one with `community-cloud` and no arguments, and check it with
 - Mistral-7B model, ROCm image, host network/IPC, 8Gi shared memory
 - Hugging Face Hub token via secret (`hf-token-secret`)
 - ClusterIP service on port 80 → container port 8888
+- No package installs it; apply it by hand
 
 ---
 
 ## Deployment Order
 
-1. **Provision nodes** — `community-cloud preflight`, then the `k3s` bundle
-2. **Networking** — Cilium → Gateway API → the cluster Gateway (the
-   `gateway` bundle)
-3. **Charts** — the `helm-charts` bundle, dependencies first:
+`community-cloud install` runs all of it, as one pipeline: `preflight`,
+`base`, `network`, `gpu`, `registries`, `lvm`, `k3s`, `nodeLabels`,
+`cilium`, `gateway`, `helm`, `helm-charts`, `dns`, `cluster`. In stages:
+
+1. **Prepare nodes** — preflight checks, packages, kernel networking,
+   GPU detection, registry credentials, volume groups
+2. **K3s** — the servers, then the agents, then each node's labels
+3. **Networking** — the Gateway API resources → Cilium → the cluster
+   Gateway (the `gateway` bundle)
+4. **Charts** — the `helm-charts` bundle, dependencies first:
    cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
-   CloudNativePG and cc-postgres → Redis → Authentik → the
+   CloudNativePG and cc-postgres → Redis and RabbitMQ → Authentik → the
    applications, each with its own ListenerSet on the cluster Gateway
+5. **DNS and record-keeping** — ExternalDNS for the routed hostnames,
+   then the configuration recorded in the cluster
 
 ---
 
 ## Design documents
 
-Proposals, not descriptions of what exists. Each says so at the top.
-
 | Document | What it covers |
 |---|---|
-| [Plugins](plugins.md) | Packaging commands, manifests and charts as loadable plugins — the seams in the installer, single-file distribution, and the trust model. **Draft, nothing built.** |
+| [Plugins](plugins.md) | Packaging commands, manifests and charts as loadable plugins — the seams in the installer, single-file distribution, and the trust model. Mostly built; it says at the top what isn't. |
 
 ---
 
@@ -430,13 +461,11 @@ Proposals, not descriptions of what exists. Each says so at the top.
 |---|---|
 | **Runtime** | Bun (installer), K3s (Kubernetes) |
 | **Language** | TypeScript, YAML |
-| **CLI** | Ink (React), Commander.js, Inquirer |
-| **State Machine** | XState (command bundle) |
-| **SSH** | node-ssh, ssh2 |
-| **K8s Client** | @kubernetes/client-node |
+| **CLI** | Commander.js, Inquirer |
+| **SSH** | node-ssh |
 | **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
-| **Databases** | CloudNative-PG, Redis (Opstree) |
+| **Databases and queues** | CloudNative-PG, Redis (Opstree), RabbitMQ |
 | **AI** | vLLM (ROCm/AMD GPU) |
-| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Headlamp, Picoclaw |
+| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |
