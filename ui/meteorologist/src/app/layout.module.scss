@@ -1,0 +1,13 @@
+// The frame around every page
+
+.brand {
+  font-family: var(--gm-font-display);
+  font-weight: var(--gm-weight-heading);
+  font-size: var(--gm-text-lg);
+  color: var(--gm-color-heading);
+  text-decoration: none;
+}
+
+.main {
+  padding-block: var(--gm-space-7) var(--gm-space-9);
+}

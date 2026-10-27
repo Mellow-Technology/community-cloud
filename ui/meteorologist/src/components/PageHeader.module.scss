@@ -1,0 +1,50 @@
+@use "gui-mellow/styles/mixins" as gm;
+
+.header {
+  display: grid;
+  gap: var(--gm-space-3);
+  margin-block-end: var(--gm-space-7);
+}
+
+.back {
+  @include gm.label;
+  color: var(--gm-color-text-muted);
+  text-decoration: none;
+  cursor: var(--gm-cursor-pointer);
+
+  &:hover {
+    color: var(--gm-color-link-hover);
+  }
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gm-space-4);
+}
+
+.text {
+  display: grid;
+  gap: var(--gm-space-2);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--gm-text-3xl);
+  overflow-wrap: anywhere;
+}
+
+.description {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--gm-color-text-muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gm-space-2);
+}

@@ -1,0 +1,9 @@
+# Next's output, and the types it writes for itself
+.next
+next-env.d.ts
+*.tsbuildinfo
+
+node_modules
+
+# Local settings, which may hold an OIDC client secret
+.env*.local

@@ -1,0 +1,334 @@
+/**
+ * @file
+ * A pretend cluster, held in memory, for working on Meteorologist
+ * without one.
+ *
+ * It holds a few namespaces and applications chosen to show every
+ * state the pages have to draw: an application that's healthy, one
+ * mid-migration, one blocked because its namespace can't have buckets,
+ * one Cirrus hasn't looked at yet. Changes made through the pages
+ * stick until the server restarts, so the forms can be tried end to
+ * end. Nothing here ever reaches a real API server.
+ *
+ * The store hangs off globalThis so it survives Next reloading this
+ * module in development.
+ */
+import { getCapability } from "../capabilities";
+import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
+import { KubeError, type KubeClient } from "./client";
+import type { Namespace } from "./types";
+
+interface FixtureStore {
+  namespaces: Map<string, Namespace>;
+  webapps: Map<string, WebApplication>;
+  secrets: Set<string>;
+  version: number;
+}
+
+// When the fixtures were "made", so ages on the page look plausible
+const CREATED = "2026-10-01T09:00:00Z";
+
+/**
+ * A namespace with the given labels.
+ *
+ * @param name
+ * @param labels
+ * @returns
+ */
+function namespace(name: string, labels: Record<string, string> = {}): Namespace {
+  return {
+    metadata: { name, labels: { "kubernetes.io/metadata.name": name, ...labels }, creationTimestamp: CREATED },
+    status: { phase: "Active" },
+  };
+}
+
+/**
+ * The labels that turn a capability on.
+ *
+ * @param ids
+ * @returns
+ */
+function capabilityLabels(...ids: Array<"gateway" | "buckets">): Record<string, string> {
+  return Object.fromEntries(ids.map((id) => [getCapability(id).label, getCapability(id).value]));
+}
+
+/**
+ * The cluster as it starts.
+ *
+ * @returns
+ */
+function seed(): FixtureStore {
+  const namespaces = [
+    namespace("cc-office", {
+      ...capabilityLabels("gateway", "buckets"),
+      "app.kubernetes.io/managed-by": "community-cloud",
+    }),
+    namespace("team-shop", capabilityLabels("gateway")),
+    namespace("sandbox"),
+    namespace("kube-system"),
+  ];
+
+  const condition = (type: string, ok: boolean, reason: string, message = "") => ({
+    type,
+    status: ok ? ("True" as const) : ("False" as const),
+    reason,
+    message,
+    observedGeneration: 1,
+    lastTransitionTime: "2026-10-27T08:00:00Z",
+  });
+
+  const webapps: WebApplication[] = [
+    {
+      apiVersion: API_VERSION,
+      kind: KIND,
+      metadata: { name: "shop", namespace: "team-shop", generation: 1, creationTimestamp: CREATED, uid: "fixture-1" },
+      spec: {
+        image: { repository: "registry.gitlab.com/acme/shop", tag: "main" },
+        replicas: 2,
+        port: 3000,
+        healthCheck: { path: "/healthz" },
+        hostnames: ["shop.example.org"],
+        postgres: {},
+        env: [
+          { name: "NODE_ENV", value: "production" },
+          { name: "STRIPE_KEY", valueFrom: { secretKeyRef: { name: "shop-stripe", key: "key" } } },
+        ],
+        resources: { requests: { cpu: "100m", memory: "256Mi" }, limits: { memory: "512Mi" } },
+        migrations: { command: ["npm", "run", "migrate"], timeoutSeconds: 600 },
+        source: {
+          gitlab: {
+            url: "https://gitlab.com",
+            project: "acme/shop",
+            ref: "main",
+            tokenSecret: { name: "shop-gitlab-token", key: "token" },
+            imageTag: "{commit_sha}",
+          },
+        },
+      },
+      status: {
+        observedGeneration: 1,
+        conditions: [
+          condition("Provisioned", true, "Provisioned"),
+          condition("WebhookRegistered", true, "Registered"),
+          condition("RolledOut", true, "RolledOut"),
+          condition("Ready", true, "Ready"),
+        ],
+        release: {
+          commit: "9f2c1e4b7a",
+          tag: "9f2c1e4b7a",
+          digest: "sha256:4be2a1c0de",
+          repository: "registry.gitlab.com/acme/shop",
+        },
+        deployedImage: "registry.gitlab.com/acme/shop@sha256:4be2a1c0de",
+        url: "https://shop.example.org",
+        webhook: { hookId: 4242, url: "https://cirrus.example.org/hooks/gitlab/team-shop/shop" },
+        lastChecked: "2026-10-27T08:55:00Z",
+      },
+    },
+    {
+      apiVersion: API_VERSION,
+      kind: KIND,
+      metadata: { name: "plane", namespace: "cc-office", generation: 1, creationTimestamp: CREATED, uid: "fixture-2" },
+      spec: {
+        image: { repository: "makeplane/plane-backend", tag: "v1.2.0" },
+        port: 8000,
+        hostnames: ["plane.example.org"],
+        postgres: {},
+        bucket: { quota: "20Gi" },
+        rabbitmq: {},
+        migrations: { command: ["./bin/docker-entrypoint-migrator.sh"] },
+      },
+      status: {
+        observedGeneration: 1,
+        conditions: [
+          condition("Provisioned", true, "Provisioned"),
+          condition("RolledOut", false, "Migrating", "running plane-migrate-7c1d for makeplane/plane-backend:v1.2.0"),
+          condition("Ready", false, "NotReady"),
+        ],
+        deployedImage: "makeplane/plane-backend:v1.1.4",
+        migrationJob: "plane-migrate-7c1d",
+        url: "https://plane.example.org",
+      },
+    },
+    {
+      apiVersion: API_VERSION,
+      kind: KIND,
+      metadata: { name: "files", namespace: "team-shop", generation: 1, creationTimestamp: CREATED, uid: "fixture-3" },
+      spec: {
+        image: { repository: "ghcr.io/acme/files", tag: "latest" },
+        bucket: {},
+      },
+      status: {
+        observedGeneration: 1,
+        conditions: [
+          condition(
+            "Provisioned",
+            false,
+            "Blocked",
+            "namespace team-shop isn't labelled storage.community-cloud.technology/buckets=true, so it can't have buckets",
+          ),
+          condition("RolledOut", false, "WaitingForDependencies"),
+          condition("Ready", false, "NotReady"),
+        ],
+      },
+    },
+    {
+      apiVersion: API_VERSION,
+      kind: KIND,
+      metadata: { name: "notes", namespace: "sandbox", generation: 1, creationTimestamp: CREATED, uid: "fixture-4" },
+      spec: { image: { repository: "ghcr.io/acme/notes", tag: "0.1.0" } },
+    },
+  ];
+
+  return {
+    namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
+    webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
+    secrets: new Set(["team-shop/shop-gitlab-token"]),
+    version: 100,
+  };
+}
+
+/**
+ * How an application is filed in the store.
+ *
+ * @param namespace
+ * @param name
+ * @returns
+ */
+function key(namespace: string, name: string): string {
+  return `${namespace}/${name}`;
+}
+
+/**
+ * The store, made on first use.
+ *
+ * @returns
+ */
+function store(): FixtureStore {
+  const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
+  holder.__meteorologistFixtures ??= seed();
+  return holder.__meteorologistFixtures;
+}
+
+/**
+ * A copy, so callers can't change the store by changing what they got.
+ *
+ * @param value
+ * @returns
+ */
+function copy<T>(value: T): T {
+  return structuredClone(value);
+}
+
+/**
+ * A namespace from the store, or the 404 the API server would give.
+ *
+ * @param name
+ * @returns
+ */
+function requireNamespace(name: string): Namespace {
+  const found = store().namespaces.get(name);
+  if (found === undefined) {
+    throw new KubeError(404, `namespaces "${name}" not found`, "NotFound");
+  }
+  return found;
+}
+
+/**
+ * The in-memory client.
+ *
+ * @returns
+ */
+export function fixtureClient(): KubeClient {
+  return {
+    listNamespaces: async () => copy([...store().namespaces.values()]),
+
+    getNamespace: async (name) => copy(requireNamespace(name)),
+
+    patchNamespaceLabels: async (name, patch) => {
+      const ns = requireNamespace(name);
+      const labels = { ...ns.metadata.labels };
+      for (const [label, value] of Object.entries(patch)) {
+        if (value === null) {
+          delete labels[label];
+        } else {
+          labels[label] = value;
+        }
+      }
+      ns.metadata.labels = labels;
+      return copy(ns);
+    },
+
+    listWebApplications: async (namespace) =>
+      copy(
+        [...store().webapps.values()].filter((app) => namespace === undefined || app.metadata.namespace === namespace),
+      ),
+
+    getWebApplication: async (namespace, name) => {
+      const found = store().webapps.get(key(namespace, name));
+      if (found === undefined) {
+        throw new KubeError(404, `webapplications "${name}" not found`, "NotFound");
+      }
+      return copy(found);
+    },
+
+    createWebApplication: async (app) => {
+      const namespace = app.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      const id = key(namespace, app.metadata.name);
+      if (store().webapps.has(id)) {
+        throw new KubeError(409, `webapplications "${app.metadata.name}" already exists`, "AlreadyExists");
+      }
+      const created: WebApplication = copy({
+        ...app,
+        metadata: {
+          ...app.metadata,
+          generation: 1,
+          uid: `fixture-${store().version}`,
+          resourceVersion: String((store().version += 1)),
+          creationTimestamp: new Date().toISOString(),
+        },
+      });
+      delete created.status;
+      store().webapps.set(id, created);
+      return copy(created);
+    },
+
+    replaceWebApplication: async (app) => {
+      const id = key(app.metadata.namespace ?? "", app.metadata.name);
+      const existing = store().webapps.get(id);
+      if (existing === undefined) {
+        throw new KubeError(404, `webapplications "${app.metadata.name}" not found`, "NotFound");
+      }
+      if (
+        app.metadata.resourceVersion !== undefined &&
+        existing.metadata.resourceVersion !== undefined &&
+        app.metadata.resourceVersion !== existing.metadata.resourceVersion
+      ) {
+        throw new KubeError(409, "the object has been modified", "Conflict");
+      }
+      const replaced: WebApplication = copy({
+        ...app,
+        metadata: {
+          ...existing.metadata,
+          labels: app.metadata.labels,
+          annotations: app.metadata.annotations,
+          generation: (existing.metadata.generation ?? 1) + 1,
+          resourceVersion: String((store().version += 1)),
+        },
+        status: existing.status,
+      });
+      store().webapps.set(id, replaced);
+      return copy(replaced);
+    },
+
+    createSecret: async (namespace, name) => {
+      requireNamespace(namespace);
+      const id = key(namespace, name);
+      if (store().secrets.has(id)) {
+        throw new KubeError(409, `secrets "${name}" already exists`, "AlreadyExists");
+      }
+      store().secrets.add(id);
+    },
+  };
+}
