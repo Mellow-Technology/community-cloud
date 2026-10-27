@@ -168,7 +168,7 @@ names the installer uses.
 | `CIRRUS_SERVICES_NAMESPACE` | `cc-office`, where the shared RabbitMQ is |
 | `CIRRUS_POSTGRES_CLUSTER` | `cirrus-postgres`, the name of each namespace's Postgres |
 | `CIRRUS_POSTGRES_INSTANCES` | `1` |
-| `CIRRUS_POSTGRES_STORAGE_SIZE` | `10Gi` |
+| `CIRRUS_POSTGRES_STORAGE_SIZE` | `20Gi` |
 | `CIRRUS_POSTGRES_STORAGE_CLASS` | `cc-local-ssd-fast` |
 | `CIRRUS_POSTGRES_IMAGE` | unset: CloudNativePG's default |
 | `CIRRUS_RABBITMQ_CLUSTER` | `rabbitmq` |

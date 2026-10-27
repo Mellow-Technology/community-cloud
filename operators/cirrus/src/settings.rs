@@ -53,7 +53,7 @@ impl Default for Settings {
             // As cc-postgres: one instance until the cluster has the
             // nodes for more
             postgres_instances: 1,
-            postgres_storage_size: "10Gi".to_string(),
+            postgres_storage_size: "20Gi".to_string(),
             postgres_storage_class: "cc-local-ssd-fast".to_string(),
             postgres_image: None,
             seaweed_name: "seaweed".to_string(),
