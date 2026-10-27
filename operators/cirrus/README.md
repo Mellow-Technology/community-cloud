@@ -8,7 +8,7 @@ services the cluster already runs:
 |---|---|---|
 | always | a Deployment and a Service | Kubernetes |
 | `hostnames` | a ListenerSet on `cc-letsencrypt-web-gateway`, a route, an HTTP→HTTPS redirect, and a certificate | the Gateway API, cert-manager |
-| `postgres: {}` | a role and a database in `cc-postgres` | CloudNativePG |
+| `postgres: {}` | a role and a database in the namespace's own Postgres, `cirrus-postgres` | CloudNativePG |
 | `bucket: {}` | a bucket, an S3 user limited to it, and its keys | the SeaweedFS operator |
 | `rabbitmq: {}` | a vhost, and a user limited to it | RabbitMQ's topology operator |
 | `migrations` | a Job, run with each new image before the rollout | Kubernetes |
@@ -70,8 +70,8 @@ on.
 
 - **Postgres:** the Secret `<app>-postgres`, loaded whole, with
   `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and
-  `PGPASSWORD`. The role and the database are both called
-  `<namespace>_<app>`.
+  `PGPASSWORD`. The role and the database are both called `<app>`,
+  with any `-` as `_`.
 - **Bucket:** `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
   `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and the `AWS_*`
   equivalents AWS's SDKs read on their own. The bucket is called
@@ -81,6 +81,26 @@ on.
   and `_VHOST`.
 
 Anything in `spec.env` comes after these, so it wins.
+
+### Postgres
+
+Each namespace has a Postgres of its own rather than a share of
+`cc-postgres`: a CloudNativePG Cluster, `cirrus-postgres`, that Cirrus
+makes when the first application in the namespace asks for a database
+and that every later one shares. Keeping it in the namespace keeps it
+with the application. A namespace given a region under the installer's
+`placement` has every pod in it, Postgres's included, pinned there,
+so an application never queries a database in another region.
+
+Cirrus makes the Cluster once, from the `CIRRUS_POSTGRES_*` settings
+below, and after that leaves it alone. Grow its volume, add instances
+or set up backups on it as on any CloudNativePG Cluster, and Cirrus
+won't put them back. It isn't owned by any application, so it and its
+data outlive the last one; delete it by hand when the namespace is
+done with it.
+
+A namespace already placed elsewhere when its Postgres was made keeps
+it where it is until it's restarted, as for any pod.
 
 ### The namespace
 
@@ -126,11 +146,12 @@ webhook and read its registry.
 ## Deleting
 
 Everything in the application's namespace is owned by the
-WebApplication and is removed with it. What's in `cc-office` (the
-Postgres role and Database resources, the vhost, the user and the
-permission) and the GitLab webhook are removed by Cirrus's finalizer.
-**Data is kept:** CloudNativePG keeps the database, and SeaweedFS
-keeps the bucket. Removing a `postgres`, `bucket` or `rabbitmq` block
+WebApplication and is removed with it, its Postgres role and
+Database resources included. What's in `cc-office` (the vhost, the
+user and the permission) and the GitLab webhook are removed by
+Cirrus's finalizer. **Data is kept:** CloudNativePG keeps the
+database, the namespace's Postgres stays, and SeaweedFS keeps the
+bucket. Removing a `postgres`, `bucket` or `rabbitmq` block
 from a live WebApplication stops Cirrus maintaining those resources but
 doesn't delete them. They're removed when the WebApplication is
 deleted.
@@ -144,8 +165,12 @@ names the installer uses.
 |---|---|
 | `CIRRUS_WEBHOOK_BASE_URL` | unset: no webhooks, polling only. The installer sets `https://{values.domain.cirrus}` |
 | `CIRRUS_LISTEN_ADDRESS` | `0.0.0.0:8080` |
-| `CIRRUS_SERVICES_NAMESPACE` | `cc-office` |
-| `CIRRUS_POSTGRES_CLUSTER` | `cc-postgres` |
+| `CIRRUS_SERVICES_NAMESPACE` | `cc-office`, where the shared RabbitMQ is |
+| `CIRRUS_POSTGRES_CLUSTER` | `cirrus-postgres`, the name of each namespace's Postgres |
+| `CIRRUS_POSTGRES_INSTANCES` | `1` |
+| `CIRRUS_POSTGRES_STORAGE_SIZE` | `10Gi` |
+| `CIRRUS_POSTGRES_STORAGE_CLASS` | `cc-local-ssd-fast` |
+| `CIRRUS_POSTGRES_IMAGE` | unset: CloudNativePG's default |
 | `CIRRUS_RABBITMQ_CLUSTER` | `rabbitmq` |
 | `CIRRUS_SEAWEED_NAME`, `CIRRUS_SEAWEED_NAMESPACE` | `seaweed`, `seaweedfs` |
 | `CIRRUS_S3_ENDPOINT` | `http://seaweed-s3.seaweedfs.svc:8333` |

@@ -17,11 +17,19 @@ pub struct Settings {
     pub webhook_base_url: Option<String>,
     pub listen_address: String,
 
-    /// Where the shared Postgres and RabbitMQ live. Their resources
-    /// have to be made beside them.
+    /// Where the shared RabbitMQ lives. Its resources have to be made
+    /// beside it.
     pub services_namespace: String,
-    pub postgres_cluster: String,
     pub rabbitmq_cluster: String,
+
+    /// The Postgres each namespace gets, as first made. Only a new one
+    /// is made from these; an existing one is left as it is.
+    pub postgres_cluster: String,
+    pub postgres_instances: u32,
+    pub postgres_storage_size: String,
+    pub postgres_storage_class: String,
+    /// CloudNativePG's own default when unset
+    pub postgres_image: Option<String>,
 
     pub seaweed_name: String,
     pub seaweed_namespace: String,
@@ -38,8 +46,16 @@ impl Default for Settings {
             webhook_base_url: None,
             listen_address: "0.0.0.0:8080".to_string(),
             services_namespace: "cc-office".to_string(),
-            postgres_cluster: "cc-postgres".to_string(),
             rabbitmq_cluster: "rabbitmq".to_string(),
+            // Named for its maker, so it can't be mistaken for, or take
+            // over, a Cluster someone made in the namespace themselves
+            postgres_cluster: "cirrus-postgres".to_string(),
+            // As cc-postgres: one instance until the cluster has the
+            // nodes for more
+            postgres_instances: 1,
+            postgres_storage_size: "10Gi".to_string(),
+            postgres_storage_class: "cc-local-ssd-fast".to_string(),
+            postgres_image: None,
             seaweed_name: "seaweed".to_string(),
             seaweed_namespace: "seaweedfs".to_string(),
             s3_endpoint: "http://seaweed-s3.seaweedfs.svc:8333".to_string(),
@@ -61,8 +77,15 @@ impl Settings {
                 .map(|v| v.trim_end_matches('/').to_string()),
             listen_address: read("CIRRUS_LISTEN_ADDRESS", defaults.listen_address),
             services_namespace: read("CIRRUS_SERVICES_NAMESPACE", defaults.services_namespace),
-            postgres_cluster: read("CIRRUS_POSTGRES_CLUSTER", defaults.postgres_cluster),
             rabbitmq_cluster: read("CIRRUS_RABBITMQ_CLUSTER", defaults.rabbitmq_cluster),
+            postgres_cluster: read("CIRRUS_POSTGRES_CLUSTER", defaults.postgres_cluster),
+            postgres_instances: env::var("CIRRUS_POSTGRES_INSTANCES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.postgres_instances),
+            postgres_storage_size: read("CIRRUS_POSTGRES_STORAGE_SIZE", defaults.postgres_storage_size),
+            postgres_storage_class: read("CIRRUS_POSTGRES_STORAGE_CLASS", defaults.postgres_storage_class),
+            postgres_image: env::var("CIRRUS_POSTGRES_IMAGE").ok().filter(|v| !v.is_empty()),
             seaweed_name: read("CIRRUS_SEAWEED_NAME", defaults.seaweed_name),
             seaweed_namespace: read("CIRRUS_SEAWEED_NAMESPACE", defaults.seaweed_namespace),
             s3_endpoint: read("CIRRUS_S3_ENDPOINT", defaults.s3_endpoint),
@@ -72,9 +95,9 @@ impl Settings {
         }
     }
 
-    pub fn postgres_host(&self) -> String {
+    pub fn postgres_host(&self, namespace: &str) -> String {
         // CloudNativePG's read-write Service
-        format!("{}-rw.{}.svc", self.postgres_cluster, self.services_namespace)
+        format!("{}-rw.{namespace}.svc", self.postgres_cluster)
     }
 
     pub fn rabbitmq_host(&self) -> String {

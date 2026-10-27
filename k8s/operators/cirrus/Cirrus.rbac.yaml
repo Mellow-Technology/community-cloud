@@ -5,7 +5,8 @@
 # the Secrets it writes credentials into and reads tokens from, and
 # the namespace labels that say whether a namespace may have routes
 # and buckets. Beyond that, only the kinds it asks the cluster's other
-# operators for — CloudNativePG, SeaweedFS, RabbitMQ's topology
+# operators for — CloudNativePG (each namespace's Postgres Cluster, and
+# the databases and roles in it), SeaweedFS, RabbitMQ's topology
 # operator — and the Gateway API's listeners and routes.
 #
 # Reading every Secret is the broadest of these, and is what an
@@ -47,7 +48,7 @@ rules:
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
   - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["databases", "databaseroles"]
+    resources: ["clusters", "databases", "databaseroles"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
   - apiGroups: ["seaweed.seaweedfs.com"]
     resources: ["buckets", "s3identities", "s3credentials"]

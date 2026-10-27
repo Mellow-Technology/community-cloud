@@ -4,7 +4,7 @@
 //!
 //! Before Cirrus, an application here was a handful of hand-written
 //! manifests that had to agree with each other — a role and database
-//! in cc-postgres, a bucket and keys in SeaweedFS, a vhost in the
+//! in Postgres, a bucket and keys in SeaweedFS, a vhost in the
 //! shared RabbitMQ, a ListenerSet and routes on the cluster Gateway,
 //! and a Deployment wired to all of it (k8s/apps/plane is the fullest
 //! example). Every one of those was copied from the last application
@@ -80,7 +80,8 @@ pub struct WebApplicationSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hostnames: Vec<String>,
 
-    /// A database of its own in the cluster's shared Postgres.
+    /// A database of its own in the namespace's Postgres, which
+    /// Cirrus makes for the first application asking for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub postgres: Option<PostgresSpec>,
 

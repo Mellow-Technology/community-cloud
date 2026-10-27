@@ -202,7 +202,7 @@ k8s/
 
 | CRD | Scope | Purpose |
 |---|---|---|
-| `WebApplication` (`webapp`) | Namespace | An application and what it needs — Deployment, Service, a cc-postgres database, a SeaweedFS bucket, a RabbitMQ vhost, routes on the cluster Gateway, migrations — rolled out from GitLab pipelines |
+| `WebApplication` (`webapp`) | Namespace | An application and what it needs — Deployment, Service, a database in the namespace's own Postgres, a SeaweedFS bucket, a RabbitMQ vhost, routes on the cluster Gateway, migrations — rolled out from GitLab pipelines |
 
 `WebApplication` is run by Cirrus, in `operators/cirrus`, and installed
 by the `cirrus` package; its CRD is generated from Cirrus's Rust types

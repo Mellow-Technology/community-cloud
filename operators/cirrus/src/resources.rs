@@ -15,7 +15,7 @@
 //! another controller can add others without a fight.
 
 use kube::Client;
-use kube::api::{Api, DeleteParams, DynamicObject, Patch, PatchParams};
+use kube::api::{Api, DeleteParams, DynamicObject, Patch, PatchParams, PostParams};
 use kube::core::{ApiResource, GroupVersionKind};
 use serde::Serialize;
 use serde_json::Value;
@@ -50,6 +50,13 @@ impl Kind {
     }
 }
 
+pub const POSTGRES_CLUSTER: Kind = Kind {
+    group: "postgresql.cnpg.io",
+    version: "v1",
+    kind: "Cluster",
+    plural: "clusters",
+    service: "CloudNativePG",
+};
 pub const DATABASE: Kind = Kind {
     group: "postgresql.cnpg.io",
     version: "v1",
@@ -134,6 +141,26 @@ pub async fn apply_dynamic(client: &Client, kind: &Kind, object: Value) -> Resul
     )
     .await
     .map_err(|error| missing_kind(kind, error))
+}
+
+/// Create a dynamic object unless one by its name is already there,
+/// and return whichever is. For what Cirrus starts off and a person
+/// then looks after, where applying over their changes would undo
+/// them.
+pub async fn create_dynamic_if_missing(client: &Client, kind: &Kind, object: Value) -> Result<DynamicObject> {
+    let name = object["metadata"]["name"].as_str().unwrap_or_default().to_string();
+    let namespace = object["metadata"]["namespace"].as_str().unwrap_or_default().to_string();
+    let api = kind.api(client, &namespace);
+    if let Some(existing) = api.get_opt(&name).await.map_err(|error| missing_kind(kind, error))? {
+        return Ok(existing);
+    }
+    let created: DynamicObject = serde_json::from_value(object).map_err(|error| Error::Config(error.to_string()))?;
+    match api.create(&PostParams::default(), &created).await {
+        Ok(made) => Ok(made),
+        // Another application in the namespace got there first
+        Err(kube::Error::Api(response)) if response.code == 409 => Ok(api.get(&name).await?),
+        Err(error) => Err(missing_kind(kind, error)),
+    }
 }
 
 /// Apply a typed object.

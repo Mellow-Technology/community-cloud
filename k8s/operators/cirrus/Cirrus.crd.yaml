@@ -215,7 +215,9 @@ spec:
                 format: int32
                 type: integer
               postgres:
-                description: A database of its own in the cluster's shared Postgres.
+                description: |-
+                  A database of its own in the namespace's Postgres, which
+                  Cirrus makes for the first application asking for one.
                 nullable: true
                 type: object
               rabbitmq:

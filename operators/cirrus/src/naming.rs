@@ -2,10 +2,11 @@
 //! Names for what Cirrus makes in the shared services.
 //!
 //! An application's own resources sit in its own namespace and can
-//! take its name. What it gets in cc-postgres, RabbitMQ and SeaweedFS
-//! can't: there's one of each for the whole cluster, so two
+//! take its name, and so can its Postgres database, since each
+//! namespace has its own Postgres. What it gets in RabbitMQ and
+//! SeaweedFS can't: there's one of each for the whole cluster, so two
 //! applications called "shop" in different namespaces would otherwise
-//! be handed the same database. Those names carry the namespace too.
+//! be handed the same vhost. Those names carry the namespace too.
 //!
 //! Kubernetes names are at most 63 characters, and so are Postgres
 //! identifiers. A name that would be longer is cut and given a hash
@@ -44,8 +45,8 @@ pub fn shared_name(namespace: &str, name: &str) -> String {
 
 /// The Postgres role and database name. Hyphens would have to be
 /// quoted everywhere they're used, so they become underscores.
-pub fn postgres_identifier(namespace: &str, name: &str) -> String {
-    fit(format!("{namespace}_{name}").replace('-', "_"), '_')
+pub fn postgres_identifier(name: &str) -> String {
+    fit(name.replace('-', "_"), '_')
 }
 
 #[cfg(test)]
@@ -55,7 +56,7 @@ mod tests {
     #[test]
     fn short_names_pass_through() {
         assert_eq!(shared_name("shop", "web"), "shop-web");
-        assert_eq!(postgres_identifier("my-team", "web-app"), "my_team_web_app");
+        assert_eq!(postgres_identifier("web-app"), "web_app");
     }
 
     #[test]
@@ -64,6 +65,6 @@ mod tests {
         let b = shared_name(&"a".repeat(40), &format!("{}2", "b".repeat(30)));
         assert!(a.len() <= MAX_NAME);
         assert_ne!(a, b);
-        assert!(postgres_identifier(&"n".repeat(50), &"x".repeat(50)).len() <= MAX_NAME);
+        assert!(postgres_identifier(&"x".repeat(100)).len() <= MAX_NAME);
     }
 }
