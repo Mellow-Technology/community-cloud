@@ -18,6 +18,29 @@ know about:
   They're listed once, in `src/lib/capabilities.ts`. Adding a
   capability means adding one entry there.
 
+  A namespace can be created from here, and each one has a page for
+  its settings, all made the way Kubernetes itself does them so they
+  hold for everything in the namespace, not just what Cirrus makes:
+  - **Region**: the `scheduler.alpha.kubernetes.io/node-selector`
+    annotation that the installer's `placement` also sets. It pins
+    every pod in the namespace, Postgres included, to the region's
+    nodes.
+  - **Limits**: a ResourceQuota (`requests.cpu`, `limits.memory`,
+    `requests.storage`) for the namespace's totals. There's also a
+    LimitRange with each container's defaults, which a quota needs:
+    without them, Kubernetes refuses every pod that doesn't state its
+    own. Both are named `community-cloud`, and quotas made by hand are
+    left alone.
+  - **Private registries**: `kubernetes.io/dockerconfigjson` Secrets,
+    named on the namespace's `default` ServiceAccount, so every pod
+    pulls with them unless it names its own.
+
+  The page also shows the namespace's Postgres: the CloudNativePG
+  Cluster `cirrus-postgres`, which Cirrus starts for the first
+  application there that asks for a database. The forms warn when a
+  storage quota has no room for its 20Gi volume. That size mirrors
+  Cirrus's default in `src/lib/postgres.ts`.
+
 - **Applications**: list, view, create and edit `WebApplication`
   resources (`community-cloud.technology/v1alpha1`), which the Cirrus
   operator turns into a Deployment, its database, bucket, queue, routes
@@ -186,6 +209,8 @@ src/
     config.ts               settings, from the environment
     auth/                   OIDC and the session cookie
     kube/                   the KubeClient interface and its implementations
+    namespace/              namespace settings: the form, and the resources it becomes
+    postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
     webapp/                 WebApplication types, form conversion, warnings, health
 ```
 

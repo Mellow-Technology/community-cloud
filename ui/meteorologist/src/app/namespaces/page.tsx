@@ -8,6 +8,7 @@
  */
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Button } from "gui-mellow/Button";
 import { Card } from "gui-mellow/Card";
 import { Grid } from "gui-mellow/Grid";
 import { Table } from "gui-mellow/Table";
@@ -46,6 +47,7 @@ export default async function NamespacesPage() {
         eyebrow="Cluster"
         title="Namespaces"
         description="What each namespace may use. Capabilities are labels on the namespace that the cluster's shared services look for."
+        actions={<Button href="/namespaces/new">New namespace</Button>}
       />
 
       <Grid min="280px" gap={4}>
@@ -76,7 +78,14 @@ export default async function NamespacesPage() {
                 const name = ns.metadata.name;
                 const count = appCounts.get(name) ?? 0;
                 return [
-                  { value: name, display: <span className={styles.mono}>{name}</span> },
+                  {
+                    value: name,
+                    display: (
+                      <Link href={`/namespaces/${encodeURIComponent(name)}`} className={styles.mono}>
+                        {name}
+                      </Link>
+                    ),
+                  },
                   ...CAPABILITIES.map((capability) => ({
                     value: hasCapability(ns.metadata.labels, capability) ? 1 : 0,
                     display: (

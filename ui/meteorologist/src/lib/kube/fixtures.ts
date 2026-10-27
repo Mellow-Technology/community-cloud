@@ -6,7 +6,9 @@
  * It holds a few namespaces and applications chosen to show every
  * state the pages have to draw: an application that's healthy, one
  * mid-migration, one blocked because its namespace can't have buckets,
- * one Cirrus hasn't looked at yet. Changes made through the pages
+ * one Cirrus hasn't looked at yet. A namespace has a Postgres that's
+ * up, another one still starting, and a third a quota too small for
+ * one. Changes made through the pages
  * stick until the server restarts, so the forms can be tried end to
  * end. Nothing here ever reaches a real API server.
  *
@@ -16,12 +18,18 @@
 import { getCapability } from "../capabilities";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
-import type { Namespace } from "./types";
+import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, ServiceAccount } from "./types";
 
 interface FixtureStore {
   namespaces: Map<string, Namespace>;
   webapps: Map<string, WebApplication>;
-  secrets: Set<string>;
+  // By namespace/name, each Secret's type
+  secrets: Map<string, string>;
+  quotas: Map<string, ResourceQuota>;
+  limitRanges: Map<string, LimitRange>;
+  serviceAccounts: Map<string, ServiceAccount>;
+  postgres: Map<string, PostgresCluster>;
+  regions: string[];
   version: number;
 }
 
@@ -35,10 +43,35 @@ const CREATED = "2026-10-01T09:00:00Z";
  * @param labels
  * @returns
  */
-function namespace(name: string, labels: Record<string, string> = {}): Namespace {
+function namespace(
+  name: string,
+  labels: Record<string, string> = {},
+  annotations: Record<string, string> = {},
+): Namespace {
   return {
-    metadata: { name, labels: { "kubernetes.io/metadata.name": name, ...labels }, creationTimestamp: CREATED },
+    metadata: {
+      name,
+      labels: { "kubernetes.io/metadata.name": name, ...labels },
+      annotations,
+      creationTimestamp: CREATED,
+    },
     status: { phase: "Active" },
+  };
+}
+
+/**
+ * The Postgres Cirrus would have made in a namespace.
+ *
+ * @param namespaceName
+ * @param phase
+ * @param ready
+ * @returns
+ */
+function postgres(namespaceName: string, phase: string, ready: number): PostgresCluster {
+  return {
+    metadata: { name: "cirrus-postgres", namespace: namespaceName, creationTimestamp: CREATED },
+    spec: { instances: 1, storage: { size: "20Gi", storageClass: "cc-local-ssd-fast" } },
+    status: { phase, instances: 1, readyInstances: ready },
   };
 }
 
@@ -63,7 +96,9 @@ function seed(): FixtureStore {
       ...capabilityLabels("gateway", "buckets"),
       "app.kubernetes.io/managed-by": "community-cloud",
     }),
-    namespace("team-shop", capabilityLabels("gateway")),
+    namespace("team-shop", capabilityLabels("gateway"), {
+      "scheduler.alpha.kubernetes.io/node-selector": "topology.kubernetes.io/region=sea",
+    }),
     namespace("sandbox"),
     namespace("kube-system"),
   ];
@@ -183,7 +218,54 @@ function seed(): FixtureStore {
   return {
     namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
     webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
-    secrets: new Set(["team-shop/shop-gitlab-token"]),
+    secrets: new Map([
+      ["team-shop/shop-gitlab-token", "Opaque"],
+      ["team-shop/pull-registry-gitlab-com", "kubernetes.io/dockerconfigjson"],
+    ]),
+    quotas: new Map([
+      [
+        "sandbox/community-cloud",
+        {
+          metadata: { name: "community-cloud", namespace: "sandbox" },
+          spec: { hard: { "requests.cpu": "1", "limits.memory": "2Gi", "requests.storage": "10Gi" } },
+          status: {
+            hard: { "requests.cpu": "1", "limits.memory": "2Gi", "requests.storage": "10Gi" },
+            used: { "requests.cpu": "100m", "limits.memory": "256Mi", "requests.storage": "0" },
+          },
+        },
+      ],
+    ]),
+    limitRanges: new Map([
+      [
+        "sandbox/community-cloud",
+        {
+          metadata: { name: "community-cloud", namespace: "sandbox" },
+          spec: {
+            limits: [
+              {
+                type: "Container",
+                default: { memory: "512Mi" },
+                defaultRequest: { cpu: "100m", memory: "128Mi" },
+              },
+            ],
+          },
+        },
+      ],
+    ]),
+    serviceAccounts: new Map(
+      namespaces.map((ns) => [
+        key(ns.metadata.name, "default"),
+        {
+          metadata: { name: "default", namespace: ns.metadata.name },
+          ...(ns.metadata.name === "team-shop" ? { imagePullSecrets: [{ name: "pull-registry-gitlab-com" }] } : {}),
+        },
+      ]),
+    ),
+    postgres: new Map([
+      ["team-shop/cirrus-postgres", postgres("team-shop", "Cluster in healthy state", 1)],
+      ["cc-office/cirrus-postgres", postgres("cc-office", "Setting up primary", 0)],
+    ]),
+    regions: ["fra", "sea"],
     version: 100,
   };
 }
@@ -200,13 +282,50 @@ function key(namespace: string, name: string): string {
 }
 
 /**
+ * Labels or annotations with a merge patch applied: null removes.
+ *
+ * @param current
+ * @param patch
+ * @returns
+ */
+function merged(
+  current: Record<string, string> | undefined,
+  patch: Record<string, string | null>,
+): Record<string, string> {
+  const result = { ...current };
+  for (const [name, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete result[name];
+    } else {
+      result[name] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * What's in one namespace of a store map, or in all of them.
+ *
+ * @param map
+ * @param namespace
+ * @returns
+ */
+function inNamespace<T extends { metadata: { namespace?: string } }>(map: Map<string, T>, namespace?: string): T[] {
+  return [...map.values()].filter((item) => namespace === undefined || item.metadata.namespace === namespace);
+}
+
+/**
  * The store, made on first use.
  *
  * @returns
  */
 function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
-  holder.__meteorologistFixtures ??= seed();
+  // A store from before this module last changed shape is started
+  // again rather than read half-formed
+  if (holder.__meteorologistFixtures?.postgres === undefined) {
+    holder.__meteorologistFixtures = seed();
+  }
   return holder.__meteorologistFixtures;
 }
 
@@ -247,15 +366,7 @@ export function fixtureClient(): KubeClient {
 
     patchNamespaceLabels: async (name, patch) => {
       const ns = requireNamespace(name);
-      const labels = { ...ns.metadata.labels };
-      for (const [label, value] of Object.entries(patch)) {
-        if (value === null) {
-          delete labels[label];
-        } else {
-          labels[label] = value;
-        }
-      }
-      ns.metadata.labels = labels;
+      ns.metadata.labels = merged(ns.metadata.labels, patch);
       return copy(ns);
     },
 
@@ -322,13 +433,76 @@ export function fixtureClient(): KubeClient {
       return copy(replaced);
     },
 
-    createSecret: async (namespace, name) => {
+    createSecret: async (namespace, name, _data, _labels, type = "Opaque") => {
       requireNamespace(namespace);
       const id = key(namespace, name);
       if (store().secrets.has(id)) {
         throw new KubeError(409, `secrets "${name}" already exists`, "AlreadyExists");
       }
-      store().secrets.add(id);
+      store().secrets.set(id, type);
     },
+
+    patchNamespaceAnnotations: async (name, patch) => {
+      const ns = requireNamespace(name);
+      ns.metadata.annotations = merged(ns.metadata.annotations, patch);
+      return copy(ns);
+    },
+
+    createNamespace: async (name, labels, annotations) => {
+      if (store().namespaces.has(name)) {
+        throw new KubeError(409, `namespaces "${name}" already exists`, "AlreadyExists");
+      }
+      const created = namespace(name, labels, annotations);
+      created.metadata.creationTimestamp = new Date().toISOString();
+      store().namespaces.set(name, created);
+      // What Kubernetes makes in every namespace, moments later
+      store().serviceAccounts.set(key(name, "default"), { metadata: { name: "default", namespace: name } });
+      return copy(created);
+    },
+
+    listRegions: async () => [...store().regions],
+
+    listResourceQuotas: async (namespace) => copy(inNamespace(store().quotas, namespace)),
+
+    applyResourceQuota: async (quota) => {
+      const namespace = quota.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      const id = key(namespace, quota.metadata.name);
+      const used = store().quotas.get(id)?.status?.used ?? {};
+      store().quotas.set(id, copy({ ...quota, status: { hard: quota.spec?.hard, used } }));
+    },
+
+    deleteResourceQuota: async (namespace, name) => {
+      store().quotas.delete(key(namespace, name));
+    },
+
+    getLimitRange: async (namespace, name) => copy(store().limitRanges.get(key(namespace, name))),
+
+    applyLimitRange: async (limitRange) => {
+      const namespace = limitRange.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      store().limitRanges.set(key(namespace, limitRange.metadata.name), copy(limitRange));
+    },
+
+    deleteLimitRange: async (namespace, name) => {
+      store().limitRanges.delete(key(namespace, name));
+    },
+
+    getServiceAccount: async (namespace, name) => copy(store().serviceAccounts.get(key(namespace, name))),
+
+    setImagePullSecrets: async (namespace, name, secrets) => {
+      requireNamespace(namespace);
+      store().serviceAccounts.set(key(namespace, name), {
+        metadata: { name, namespace },
+        imagePullSecrets: secrets.map((secret) => ({ name: secret })),
+      });
+    },
+
+    listSecrets: async (namespace) =>
+      [...store().secrets.entries()]
+        .filter(([id]) => id.startsWith(`${namespace}/`))
+        .map(([id, type]) => ({ name: id.slice(namespace.length + 1), type })),
+
+    listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
   };
 }

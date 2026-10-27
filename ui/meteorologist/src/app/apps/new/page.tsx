@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { WebApplicationForm } from "@/components/WebApplicationForm";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
+import { namespaceChoices } from "@/lib/namespace/choices";
 import { emptyForm } from "@/lib/webapp/form";
 
 export const metadata: Metadata = { title: "New application" };
@@ -22,6 +23,7 @@ export default async function NewAppPage({ searchParams }: { searchParams: Promi
   const { namespace } = await searchParams;
   const kube = await getKube();
   const namespaces = await settle(() => kube.listNamespaces());
+  const choices = namespaces.ok ? await namespaceChoices(kube, namespaces.value) : [];
 
   return (
     <>
@@ -32,16 +34,7 @@ export default async function NewAppPage({ searchParams }: { searchParams: Promi
         back={{ href: "/apps", label: "Applications" }}
       />
       {!namespaces.ok && <ErrorNotice error={namespaces.error} title="Couldn't list namespaces" />}
-      <WebApplicationForm
-        initial={emptyForm(namespace ?? "")}
-        namespaces={
-          namespaces.ok
-            ? namespaces.value
-                .map((ns) => ({ name: ns.metadata.name, labels: ns.metadata.labels ?? {} }))
-                .toSorted((a, b) => a.name.localeCompare(b.name))
-            : []
-        }
-      />
+      <WebApplicationForm initial={emptyForm(namespace ?? "")} namespaces={choices} />
     </>
   );
 }

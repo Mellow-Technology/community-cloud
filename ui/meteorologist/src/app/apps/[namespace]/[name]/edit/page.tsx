@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { WebApplicationForm } from "@/components/WebApplicationForm";
 import { getKube } from "@/lib/kube";
 import { isNotFound, settle } from "@/lib/kube/client";
+import { namespaceChoices } from "@/lib/namespace/choices";
 import { toForm } from "@/lib/webapp/form";
 
 export const metadata: Metadata = { title: "Edit application" };
@@ -26,6 +27,7 @@ export default async function EditAppPage({ params }: { params: Promise<{ namesp
     settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
     settle(() => kube.getNamespace(decodeURIComponent(namespace))),
   ]);
+  const choices = ns.ok ? await namespaceChoices(kube, [ns.value], ns.value.metadata.name) : [];
   const back = { href: `/apps/${namespace}/${name}`, label: decodeURIComponent(name) };
 
   if (!found.ok) {
@@ -51,7 +53,7 @@ export default async function EditAppPage({ params }: { params: Promise<{ namesp
       <WebApplicationForm
         initial={toForm(found.value)}
         resourceVersion={found.value.metadata.resourceVersion ?? ""}
-        namespaces={ns.ok ? [{ name: ns.value.metadata.name, labels: ns.value.metadata.labels ?? {} }] : []}
+        namespaces={choices}
       />
     </>
   );

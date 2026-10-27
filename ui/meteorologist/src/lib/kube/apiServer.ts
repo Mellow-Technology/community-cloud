@@ -26,8 +26,18 @@ import "server-only";
 
 import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
-import { KubeError, type KubeClient } from "./client";
-import type { Namespace } from "./types";
+import { KubeError, isNotFound, type KubeClient } from "./client";
+import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
+
+// Who server-side applies are made as, so Meteorologist owns only the
+// fields it sets
+const FIELD_MANAGER = "meteorologist";
+
+// CloudNativePG's Cluster kind
+const POSTGRES = { group: "postgresql.cnpg.io", version: "v1", plural: "clusters" };
+
+// The node label a region is read from
+const REGION_LABEL = "topology.kubernetes.io/region";
 
 // The name the cluster entry is given inside the KubeConfig built for
 // each request. It only has to be the same in both places it's used.
@@ -145,6 +155,24 @@ async function attempt<T>(call: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * A read that's undefined, rather than an error, when the thing isn't
+ * there.
+ *
+ * @param call
+ * @returns
+ */
+async function optional<T>(call: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await attempt(call);
+  } catch (error) {
+    if (isNotFound(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/**
  * The client for one KubeConfig.
  *
  * @param config
@@ -154,6 +182,8 @@ function clientFor(config: KubeConfig): KubeClient {
   const core = config.makeApiClient(CoreV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
+  const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
+  const apply = setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply);
 
   return {
     listNamespaces: () => attempt(async () => (await core.listNamespace()).items as Namespace[]),
@@ -161,13 +191,108 @@ function clientFor(config: KubeConfig): KubeClient {
     getNamespace: (name) => attempt(async () => (await core.readNamespace({ name })) as Namespace),
 
     patchNamespaceLabels: (name, labels) =>
+      attempt(async () => (await core.patchNamespace({ name, body: { metadata: { labels } } }, merge)) as Namespace),
+
+    patchNamespaceAnnotations: (name, annotations) =>
       attempt(
-        async () =>
-          (await core.patchNamespace(
-            { name, body: { metadata: { labels } } },
-            setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-          )) as Namespace,
+        async () => (await core.patchNamespace({ name, body: { metadata: { annotations } } }, merge)) as Namespace,
       ),
+
+    createNamespace: (name, labels, annotations) =>
+      attempt(
+        async () => (await core.createNamespace({ body: { metadata: { name, labels, annotations } } })) as Namespace,
+      ),
+
+    listRegions: () =>
+      attempt(async () => {
+        const nodes = await core.listNode({ labelSelector: REGION_LABEL });
+        const regions = nodes.items.map((node) => node.metadata?.labels?.[REGION_LABEL] ?? "");
+        return [...new Set(regions.filter((region) => region !== ""))].toSorted();
+      }),
+
+    listResourceQuotas: (namespace) =>
+      attempt(async () => {
+        const list =
+          namespace === undefined
+            ? await core.listResourceQuotaForAllNamespaces()
+            : await core.listNamespacedResourceQuota({ namespace });
+        return list.items as ResourceQuota[];
+      }),
+
+    applyResourceQuota: (quota) =>
+      attempt(async () => {
+        await core.patchNamespacedResourceQuota(
+          {
+            name: quota.metadata.name,
+            namespace: quota.metadata.namespace ?? "",
+            body: { apiVersion: "v1", kind: "ResourceQuota", ...quota },
+            fieldManager: FIELD_MANAGER,
+            force: true,
+          },
+          apply,
+        );
+      }),
+
+    deleteResourceQuota: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => core.deleteNamespacedResourceQuota({ name, namespace }));
+      }),
+
+    getLimitRange: (namespace, name) =>
+      optional(async () => (await core.readNamespacedLimitRange({ name, namespace })) as LimitRange),
+
+    applyLimitRange: (limitRange) =>
+      attempt(async () => {
+        await core.patchNamespacedLimitRange(
+          {
+            name: limitRange.metadata.name,
+            namespace: limitRange.metadata.namespace ?? "",
+            body: { apiVersion: "v1", kind: "LimitRange", ...limitRange },
+            fieldManager: FIELD_MANAGER,
+            force: true,
+          },
+          apply,
+        );
+      }),
+
+    deleteLimitRange: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => core.deleteNamespacedLimitRange({ name, namespace }));
+      }),
+
+    getServiceAccount: (namespace, name) =>
+      optional(async () => (await core.readNamespacedServiceAccount({ name, namespace })) as ServiceAccount),
+
+    setImagePullSecrets: (namespace, name, secrets) =>
+      attempt(async () => {
+        const imagePullSecrets = secrets.map((secret) => ({ name: secret }));
+        // A merge patch replaces the list whole, which is the point:
+        // a Secret left off is no longer a default
+        const patched = await optional(() =>
+          core.patchNamespacedServiceAccount({ name, namespace, body: { imagePullSecrets } }, merge),
+        );
+        if (patched === undefined) {
+          await core.createNamespacedServiceAccount({ namespace, body: { metadata: { name }, imagePullSecrets } });
+        }
+      }),
+
+    listSecrets: (namespace) =>
+      attempt(async () =>
+        (await core.listNamespacedSecret({ namespace })).items.map((secret): SecretSummary => ({
+          name: secret.metadata?.name ?? "",
+          type: secret.type ?? "Opaque",
+        })),
+      ),
+
+    listPostgresClusters: async (namespace) =>
+      // A 404 means CloudNativePG isn't installed, so there are none
+      (await optional(async () => {
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(POSTGRES)
+            : await custom.listNamespacedCustomObject({ ...POSTGRES, namespace });
+        return (list as { items: PostgresCluster[] }).items;
+      })) ?? [],
 
     listWebApplications: (namespace) =>
       attempt(async () => {
@@ -204,11 +329,11 @@ function clientFor(config: KubeConfig): KubeClient {
         })) as WebApplication;
       }),
 
-    createSecret: (namespace, name, data, labels) =>
+    createSecret: (namespace, name, data, labels, type = "Opaque") =>
       attempt(async () => {
         await core.createNamespacedSecret({
           namespace,
-          body: { metadata: { name, namespace, labels }, type: "Opaque", stringData: data },
+          body: { metadata: { name, namespace, labels }, type, stringData: data },
         });
       }),
   };

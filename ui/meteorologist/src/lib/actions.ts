@@ -19,7 +19,22 @@ import { unstable_rethrow } from "next/navigation";
 
 import { CAPABILITIES, capabilityLabelPatch, type CapabilityId } from "./capabilities";
 import { getKube } from "./kube";
-import { describeError } from "./kube/client";
+import { describeError, type KubeClient } from "./kube/client";
+import {
+  CREATED_BY,
+  DEFAULT_SERVICE_ACCOUNT,
+  PULL_SECRET_TYPE,
+  SETTINGS_NAME,
+  defaultPullSecrets,
+  dockerConfigJson,
+  initialLabels,
+  placementPatch,
+  pullSecretName,
+  toLimitRange,
+  toResourceQuota,
+  validateNamespaceForm,
+  type NamespaceForm,
+} from "./namespace/settings";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
 
 /**
@@ -148,4 +163,106 @@ export async function createTokenSecret(
     );
     return undefined;
   });
+}
+
+/**
+ * Puts a namespace's quota, container defaults and pull Secrets in
+ * place. Each is made, replaced or removed to match the form, so
+ * clearing a section removes what it made.
+ *
+ * The defaults go in before the quota: a quota with nothing to state
+ * requests for pods that don't would refuse them in the moment
+ * between.
+ *
+ * @param kube
+ * @param form
+ */
+async function applyNamespaceSettings(kube: KubeClient, form: NamespaceForm): Promise<void> {
+  const namespace = form.name.trim();
+
+  const limitRange = toLimitRange(form);
+  if (limitRange !== undefined) {
+    await kube.applyLimitRange(limitRange);
+  }
+  const quota = toResourceQuota(form);
+  if (quota !== undefined) {
+    await kube.applyResourceQuota(quota);
+  } else {
+    await kube.deleteResourceQuota(namespace, SETTINGS_NAME);
+  }
+  if (limitRange === undefined) {
+    await kube.deleteLimitRange(namespace, SETTINGS_NAME);
+  }
+
+  // Credentials go straight from the form to the API server; nothing
+  // here keeps or logs them
+  for (const registry of form.registries) {
+    await kube.createSecret(
+      namespace,
+      pullSecretName(registry.server),
+      { ".dockerconfigjson": dockerConfigJson(registry) },
+      CREATED_BY,
+      PULL_SECRET_TYPE,
+    );
+  }
+  await kube.setImagePullSecrets(namespace, DEFAULT_SERVICE_ACCOUNT, defaultPullSecrets(form));
+}
+
+/**
+ * Makes a namespace, with its capabilities, region and settings.
+ *
+ * The namespace comes first and the rest after, so a failure part way
+ * leaves a namespace that exists; that's said, so the rest can be
+ * finished from its page rather than tried again from scratch.
+ *
+ * @param form
+ * @returns the new namespace's name
+ */
+export async function createNamespace(form: NamespaceForm): Promise<ActionResult<{ name: string }>> {
+  const first = Object.values(validateNamespaceForm(form, true))[0];
+  if (first !== undefined) {
+    return { ok: false, error: first };
+  }
+  const name = form.name.trim();
+  const kube = await getKube();
+
+  const created = await run(() =>
+    kube.createNamespace(name, initialLabels(form), placementPatch(form, undefined) as Record<string, string>),
+  );
+  if (!created.ok) {
+    return created;
+  }
+  const settled = await run(() => applyNamespaceSettings(kube, form));
+  revalidatePath("/", "layout");
+  return settled.ok
+    ? { ok: true, value: { name } }
+    : {
+        ok: false,
+        error: `${name} was made, but its settings weren't all saved: ${settled.error} Finish them on its page.`,
+      };
+}
+
+/**
+ * Saves an existing namespace's region and settings.
+ *
+ * @param form
+ * @returns
+ */
+export async function saveNamespaceSettings(form: NamespaceForm): Promise<ActionResult> {
+  const first = Object.values(validateNamespaceForm(form, false))[0];
+  if (first !== undefined) {
+    return { ok: false, error: first };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const namespace = await kube.getNamespace(form.name.trim());
+    const placement = placementPatch(form, namespace.metadata.annotations);
+    if (Object.keys(placement).length > 0) {
+      await kube.patchNamespaceAnnotations(namespace.metadata.name, placement);
+    }
+    await applyNamespaceSettings(kube, form);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
 }

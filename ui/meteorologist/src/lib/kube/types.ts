@@ -67,3 +67,57 @@ export interface Namespace {
   metadata: ObjectMeta;
   status?: { phase?: string };
 }
+
+/**
+ * A ResourceQuota: the most a namespace may use in total.
+ */
+export interface ResourceQuota {
+  metadata: ObjectMeta;
+  spec?: { hard?: Record<string, string> };
+  status?: { hard?: Record<string, string>; used?: Record<string, string> };
+}
+
+/**
+ * One rule in a LimitRange. Only the Container kind is written here.
+ */
+export interface LimitRangeItem {
+  type: string;
+  default?: Record<string, string>;
+  defaultRequest?: Record<string, string>;
+  max?: Record<string, string>;
+  min?: Record<string, string>;
+}
+
+/**
+ * A LimitRange: what each container gets when it doesn't say.
+ */
+export interface LimitRange {
+  metadata: ObjectMeta;
+  spec: { limits: LimitRangeItem[] };
+}
+
+/**
+ * A ServiceAccount, as far as its pull secrets.
+ */
+export interface ServiceAccount {
+  metadata: ObjectMeta;
+  imagePullSecrets?: Array<{ name: string }>;
+}
+
+/**
+ * A Secret's name and type, and never its contents: nothing here needs
+ * to read one.
+ */
+export interface SecretSummary {
+  name: string;
+  type: string;
+}
+
+/**
+ * A CloudNativePG Cluster, as far as the pages describe one.
+ */
+export interface PostgresCluster {
+  metadata: ObjectMeta;
+  spec?: { instances?: number; storage?: { size?: string; storageClass?: string }; imageName?: string };
+  status?: { phase?: string; readyInstances?: number; instances?: number };
+}

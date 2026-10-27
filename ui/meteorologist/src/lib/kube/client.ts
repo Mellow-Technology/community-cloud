@@ -13,7 +13,7 @@
  * HTTP status the API server gave, so a page can tell "you may not"
  * from "there's no such thing" without knowing about either client.
  */
-import type { Namespace } from "./types";
+import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -44,6 +44,122 @@ export interface KubeClient {
    * @returns the namespace as it is afterwards
    */
   patchNamespaceLabels(name: string, labels: Record<string, string | null>): Promise<Namespace>;
+
+  /**
+   * Sets or removes annotations on a namespace, as for labels.
+   *
+   * @param name
+   * @param annotations
+   * @returns the namespace as it is afterwards
+   */
+  patchNamespaceAnnotations(name: string, annotations: Record<string, string | null>): Promise<Namespace>;
+
+  /**
+   * Makes a namespace.
+   *
+   * @param name
+   * @param labels
+   * @param annotations
+   * @returns
+   */
+  createNamespace(
+    name: string,
+    labels: Record<string, string>,
+    annotations: Record<string, string>,
+  ): Promise<Namespace>;
+
+  /**
+   * The regions the cluster's nodes are in, from their
+   * topology.kubernetes.io/region labels.
+   *
+   * @returns
+   */
+  listRegions(): Promise<string[]>;
+
+  /**
+   * ResourceQuotas, in one namespace or in all of them.
+   *
+   * @param namespace
+   * @returns
+   */
+  listResourceQuotas(namespace?: string): Promise<ResourceQuota[]>;
+
+  /**
+   * Makes or replaces a ResourceQuota, as Meteorologist's own.
+   *
+   * @param quota
+   */
+  applyResourceQuota(quota: ResourceQuota): Promise<void>;
+
+  /**
+   * Removes a ResourceQuota, if it's there.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteResourceQuota(namespace: string, name: string): Promise<void>;
+
+  /**
+   * One LimitRange, or undefined when there's no such thing.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getLimitRange(namespace: string, name: string): Promise<LimitRange | undefined>;
+
+  /**
+   * Makes or replaces a LimitRange, as Meteorologist's own.
+   *
+   * @param limitRange
+   */
+  applyLimitRange(limitRange: LimitRange): Promise<void>;
+
+  /**
+   * Removes a LimitRange, if it's there.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteLimitRange(namespace: string, name: string): Promise<void>;
+
+  /**
+   * One ServiceAccount, or undefined when it isn't there (yet).
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getServiceAccount(namespace: string, name: string): Promise<ServiceAccount | undefined>;
+
+  /**
+   * Sets which pull Secrets a ServiceAccount names, making it if
+   * Kubernetes hasn't yet. A namespace's default one is made moments
+   * after the namespace, so straight after creating one it may not
+   * be there.
+   *
+   * @param namespace
+   * @param name
+   * @param secrets
+   */
+  setImagePullSecrets(namespace: string, name: string, secrets: string[]): Promise<void>;
+
+  /**
+   * The Secrets in a namespace, by name and type only.
+   *
+   * @param namespace
+   * @returns
+   */
+  listSecrets(namespace: string): Promise<SecretSummary[]>;
+
+  /**
+   * CloudNativePG Clusters, in one namespace or in all of them. Empty
+   * when CloudNativePG isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listPostgresClusters(namespace?: string): Promise<PostgresCluster[]>;
 
   /**
    * WebApplications, in one namespace or in all of them.
@@ -80,18 +196,20 @@ export interface KubeClient {
   replaceWebApplication(app: WebApplication): Promise<WebApplication>;
 
   /**
-   * Makes an Opaque Secret from plain strings.
+   * Makes a Secret from plain strings.
    *
    * @param namespace
    * @param name
    * @param data
    * @param labels
+   * @param type Opaque unless said
    */
   createSecret(
     namespace: string,
     name: string,
     data: Record<string, string>,
     labels?: Record<string, string>,
+    type?: string,
   ): Promise<void>;
 }
 

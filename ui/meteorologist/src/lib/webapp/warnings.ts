@@ -13,6 +13,7 @@
  * the application is saved, and Cirrus will pick it up when it is.
  */
 import { getCapability, hasCapability, type Capability } from "../capabilities";
+import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresStorageProblem } from "../postgres";
 import type { WebApplicationForm } from "./form";
 
 /**
@@ -77,4 +78,36 @@ export function capabilityWarnings(
     return [];
   }
   return requiredCapabilities(form).filter((warning) => !hasCapability(labels, warning.capability));
+}
+
+/**
+ * What asking for a database means in a namespace: sharing the
+ * Postgres already there, or starting one — and whether its quota
+ * leaves room to.
+ *
+ * @param namespace what's known about the namespace
+ * @returns nothing when whether it has a Postgres couldn't be found out
+ */
+export function postgresNote(namespace: {
+  name: string;
+  hasPostgres?: boolean;
+  storageQuota?: string;
+  storageUsed?: string;
+}): { tone: "neutral" | "warning"; message: string } | undefined {
+  if (namespace.hasPostgres === undefined) {
+    return undefined;
+  }
+  if (namespace.hasPostgres) {
+    return { tone: "neutral", message: `It joins the other databases in ${namespace.name}'s ${POSTGRES_CLUSTER}.` };
+  }
+  const problem = postgresStorageProblem(namespace.storageQuota, namespace.storageUsed);
+  if (problem !== undefined) {
+    return { tone: "warning", message: problem };
+  }
+  return {
+    tone: "neutral",
+    message:
+      `${namespace.name} has no Postgres yet, so this starts one: ${POSTGRES_CLUSTER}, with a ${POSTGRES_STORAGE} ` +
+      "volume, shared by every application here that asks for a database after it. It stays if the applications go.",
+  };
 }

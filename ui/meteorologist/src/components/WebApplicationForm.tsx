@@ -34,7 +34,8 @@ import { createTokenSecret, saveWebApplication, setNamespaceCapability } from "@
 import { enabledCapabilities, type Capability } from "@/lib/capabilities";
 import { validateForm, type EnvRow, type WebApplicationForm as FormModel } from "@/lib/webapp/form";
 import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_IMAGE_TAG, DEFAULT_TOKEN_KEY } from "@/lib/webapp/types";
-import { capabilityWarnings, type CapabilityWarning } from "@/lib/webapp/warnings";
+import { POSTGRES_CLUSTER } from "@/lib/postgres";
+import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
 import styles from "./WebApplicationForm.module.scss";
 
 /**
@@ -44,6 +45,10 @@ import styles from "./WebApplicationForm.module.scss";
 export interface NamespaceChoice {
   name: string;
   labels: Record<string, string>;
+  // Undefined wherever it couldn't be found out
+  hasPostgres?: boolean;
+  storageQuota?: string;
+  storageUsed?: string;
 }
 
 export interface WebApplicationFormProps {
@@ -74,6 +79,7 @@ export function WebApplicationForm({
   const shownErrors = attempted ? errors : {};
   const namespace = namespaces.find((choice) => choice.name === form.namespace);
   const warnings = capabilityWarnings(form, namespace?.labels);
+  const postgres = namespace && postgresNote(namespace);
 
   const set = <K extends keyof FormModel>(key: K, value: FormModel[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -178,7 +184,7 @@ export function WebApplicationForm({
           <TextField
             label="Pull secrets"
             placeholder="registry-credentials"
-            hint="Secrets in this namespace with credentials for a private registry, separated by commas."
+            hint="Usually empty: the namespace's own registry credentials are used. Name Secrets here, separated by commas, only to use these instead."
             {...text("imagePullSecrets")}
           />
         </div>
@@ -242,13 +248,18 @@ export function WebApplicationForm({
             onChange={(event) => set("postgres", event.target.checked)}
             description={
               <>
-                Its own database and role in the cluster&apos;s shared Postgres. The connection details arrive as
-                environment variables from the <code>{form.name || "<app>"}-postgres</code> Secret:{" "}
-                <code>DATABASE_URL</code>, <code>PGHOST</code>, <code>PGPORT</code>, <code>PGDATABASE</code>,{" "}
-                <code>PGUSER</code> and <code>PGPASSWORD</code>.
+                Its own database and role in the namespace&apos;s Postgres, <code>{POSTGRES_CLUSTER}</code>, which runs
+                beside it, in its region. The connection details arrive as environment variables from the{" "}
+                <code>{form.name || "<app>"}-postgres</code> Secret: <code>DATABASE_URL</code>, <code>PGHOST</code>,{" "}
+                <code>PGPORT</code>, <code>PGDATABASE</code>, <code>PGUSER</code> and <code>PGPASSWORD</code>.
               </>
             }
           />
+          {form.postgres && postgres && (
+            <Alert tone={postgres.tone} className={styles.indented}>
+              {postgres.message}
+            </Alert>
+          )}
           <Switch
             label="An S3 bucket"
             checked={form.bucket}
