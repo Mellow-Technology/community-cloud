@@ -32,9 +32,9 @@ import { Switch } from "gui-mellow/Switch";
 
 import { createTokenSecret, saveWebApplication, setNamespaceCapability } from "@/lib/actions";
 import { enabledCapabilities, type Capability } from "@/lib/capabilities";
-import { validateForm, type EnvRow, type WebApplicationForm as FormModel } from "@/lib/webapp/form";
+import { gitlabTokenPage, validateForm, type EnvRow, type WebApplicationForm as FormModel } from "@/lib/webapp/form";
 import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_IMAGE_TAG, DEFAULT_TOKEN_KEY } from "@/lib/webapp/types";
-import { POSTGRES_CLUSTER } from "@/lib/postgres";
+import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
 import styles from "./WebApplicationForm.module.scss";
 
@@ -248,8 +248,9 @@ export function WebApplicationForm({
             onChange={(event) => set("postgres", event.target.checked)}
             description={
               <>
-                Its own database and role in the namespace&apos;s Postgres, <code>{POSTGRES_CLUSTER}</code>, which runs
-                beside it, in its region. The connection details arrive as environment variables from the{" "}
+                A database of its own, <code>{form.name ? postgresDatabase(form.name) : "<app>"}</code>, with a login of
+                its own, on the Postgres server every application in the namespace shares. The server runs beside it, in
+                its region. The connection details arrive as environment variables from the{" "}
                 <code>{form.name || "<app>"}-postgres</code> Secret: <code>DATABASE_URL</code>, <code>PGHOST</code>,{" "}
                 <code>PGPORT</code>, <code>PGDATABASE</code>, <code>PGUSER</code> and <code>PGPASSWORD</code>.
               </>
@@ -333,7 +334,7 @@ export function WebApplicationForm({
                     label="Token Secret"
                     required
                     placeholder={`${form.name || "app"}-gitlab-token`}
-                    hint="A Secret in this namespace with a project access token: api scope, Maintainer role."
+                    hint="A Secret in this namespace holding a GitLab token, made below or by hand."
                     {...text("gitlabTokenSecretName")}
                   />
                   <TextField
@@ -341,6 +342,35 @@ export function WebApplicationForm({
                     placeholder={DEFAULT_TOKEN_KEY}
                     {...text("gitlabTokenSecretKey")}
                   />
+                </div>
+                <div className={`${styles.note} ${styles.noteBlock}`}>
+                  <p>
+                    Cirrus uses the token to keep its webhook on the project, and to look up pipelines and image
+                    digests. Either kind works:
+                  </p>
+                  <ul>
+                    <li>
+                      A{" "}
+                      <a href={gitlabTokenPage(form, "project")} target="_blank" rel="noreferrer">
+                        project access token
+                      </a>{" "}
+                      with the <code>api</code> scope and the Maintainer role. It belongs to the project, so it keeps
+                      working whoever leaves.
+                    </li>
+                    <li>
+                      A{" "}
+                      <a href={gitlabTokenPage(form, "personal")} target="_blank" rel="noreferrer">
+                        fine-grained personal token
+                      </a>{" "}
+                      limited to this project, with Webhook: read, create, update and delete; Pipeline: read; and
+                      Container Repository: read. Whoever makes it has to be a Maintainer of the project, since GitLab
+                      also checks what they may do, and it stops working if they lose that.
+                    </li>
+                  </ul>
+                  <p>
+                    Pulling the image is separate: that uses the namespace&apos;s registry credentials, which only need{" "}
+                    <code>read_registry</code>.
+                  </p>
                 </div>
                 <TokenSecretCreator
                   namespace={form.namespace}

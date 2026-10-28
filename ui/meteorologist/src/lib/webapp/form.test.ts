@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { emptyForm, fromForm, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
+import { emptyForm, fromForm, gitlabTokenPage, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
 import type { WebApplication } from "./types";
 
 /**
@@ -249,4 +249,11 @@ describe("validation", () => {
 
 test("splitList takes commas and spaces", () => {
   expect(splitList(" a,b  c,, ")).toEqual(["a", "b", "c"]);
+});
+
+test("where a GitLab token is made", () => {
+  const form = { gitlabUrl: "https://gitlab.example.test/", gitlabProject: "group/app" };
+  expect(gitlabTokenPage(form, "project")).toBe("https://gitlab.example.test/group/app/-/settings/access_tokens");
+  expect(gitlabTokenPage(form, "personal")).toBe("https://gitlab.example.test/-/user_settings/personal_access_tokens");
+  expect(gitlabTokenPage({ gitlabUrl: "", gitlabProject: "" }, "project")).toBe("https://gitlab.com");
 });
