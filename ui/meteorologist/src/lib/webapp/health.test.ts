@@ -52,6 +52,17 @@ describe("application health", () => {
     expect(health).toMatchObject({ state: "degraded", message: "401 from GitLab" });
   });
 
+  test("is degraded when ready but GitLab couldn't be asked for the newest release", () => {
+    const health = appHealth(
+      app([
+        ["Ready", true, "Ready"],
+        ["WebhookRegistered", true, "Registered"],
+        ["ReleaseChecked", false, "CheckFailed", "404 from GitLab"],
+      ]),
+    );
+    expect(health).toMatchObject({ state: "degraded", message: "404 from GitLab" });
+  });
+
   test("is failing when blocked", () => {
     const health = appHealth(
       app([

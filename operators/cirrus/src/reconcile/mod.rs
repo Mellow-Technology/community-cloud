@@ -48,7 +48,7 @@ use kube::runtime::watcher;
 use kube::{Client, Resource, ResourceExt};
 use serde_json::json;
 
-use crate::conditions::{self, PROVISIONED, READY, ROLLED_OUT, WEBHOOK};
+use crate::conditions::{self, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
 use crate::crd::WebApplication;
 use crate::error::{Error, Result};
 use crate::resources;
@@ -243,6 +243,16 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     }
     if let Some(problem) = &found.problem {
         tracing::warn!(%namespace, %name, %problem, "couldn't check the forge");
+        conditions::set(
+            &mut conditions,
+            RELEASE_CHECKED,
+            false,
+            "CheckFailed",
+            format!("couldn't check GitLab for the newest release, so it's tried again shortly: {problem}"),
+            generation,
+        );
+    } else if found.checked_at.is_some() {
+        conditions::set(&mut conditions, RELEASE_CHECKED, true, "Checked", "", generation);
     }
     let release = found.release.clone().or(previous.release.clone());
     let mut current = app.clone();
@@ -359,7 +369,10 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     )
     .await?;
 
-    Ok(if !problems.is_empty() {
+    // A failed forge check is tried again within minutes, not at the
+    // settled pace, since the rollout may be on a stale tag until it
+    // works
+    Ok(if !problems.is_empty() || found.problem.is_some() {
         Action::requeue(BLOCKED_REQUEUE)
     } else if !ready {
         Action::requeue(PENDING_REQUEUE)
