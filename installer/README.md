@@ -1247,12 +1247,20 @@ manifests and Headlamp plugins, and a template rendered with
 `--dry-run`. The executables are kept as workflow artifacts for a week.
 
 Pushing a tag `installer-v<version>` does the same and then publishes a
-GitHub release with every executable and a `SHA256SUMS` file:
+GitHub release with every executable and a `SHA256SUMS` file. The
+release script pushes it, from the repository's root:
 
 ```bash
-git tag installer-v0.2.0
-git push origin installer-v0.2.0
+bun scripts/release/installer.ts set 0.2.0   # package.json's version; commit and merge it
+bun scripts/release/installer.ts --dry-run   # the checks alone
+bun scripts/release/installer.ts             # the checks, then the tag, pushed
 ```
+
+It tags only what's on `origin/main`, with nothing uncommitted, and
+only a version newer than the last one released. The installer carries
+manifests that pin images of ours, so it also refuses while one of
+them names a release that isn't out yet: after Cirrus's version is set,
+release Cirrus before the installer.
 
 The tag's version is what the executables report with `--version`.
 Builds that aren't releases report `package.json`'s version with the

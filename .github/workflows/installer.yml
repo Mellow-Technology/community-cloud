@@ -7,6 +7,8 @@
 # - A tag "installer-v<version>", e.g. installer-v0.2.0: the same, then
 #   a release with every executable and a SHA256SUMS file. The version
 #   in the tag is what the executables report with --version.
+#   scripts/release/installer.ts checks package.json agrees and pushes
+#   it.
 #
 # Every target cross-compiles from Linux (see installer/scripts/
 # build.ts); the smoke tests are what prove a binary actually starts on
@@ -22,6 +24,7 @@ on:
       - "installer/**"
       - "k8s/**"
       - "headlamp/plugins/**"
+      - "scripts/release/**"
       - ".github/workflows/installer.yml"
   workflow_dispatch:
 
@@ -83,6 +86,8 @@ jobs:
       - run: bun run build:embedded
       - run: bun run typecheck
       - run: bun run test
+      # The release scripts, which every component's release goes through
+      - run: bun test ../scripts/release
 
   # One job per target, cross-compiled on Linux
   build:

@@ -196,6 +196,28 @@ docker build -t meteorologist ui/meteorologist
 docker run -p 3000:3000 -e METEOROLOGIST_KUBE_MODE=fixtures meteorologist
 ```
 
+## Releasing
+
+`.github/workflows/meteorologist.yml` checks Meteorologist (typecheck,
+lint, formatting, tests) and builds the image for amd64 and arm64 on
+every pull request. Pushes to `main` publish
+`ghcr.io/mellow-technology/meteorologist:main` and `:sha-<commit>`. A
+tag `meteorologist-v<version>` publishes `:<version>` and `:latest`; a
+version with a hyphen, like `0.2.0-rc.1`, leaves `:latest` alone.
+
+The version is `package.json`'s, and the release script pushes the tag
+for it, from the repository's root:
+
+```bash
+bun scripts/release/meteorologist.ts set minor   # or set 0.2.0; commit and merge it
+bun scripts/release/meteorologist.ts --dry-run   # the checks alone
+bun scripts/release/meteorologist.ts             # the checks, then the tag, pushed
+```
+
+It tags only what's on `origin/main`, with nothing uncommitted, and
+only a version newer than the last released. The workflow checks the
+tag against `package.json` too.
+
 ## Layout
 
 ```text

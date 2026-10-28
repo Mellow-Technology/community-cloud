@@ -204,9 +204,26 @@ cluster, not a real one.
 `.github/workflows/cirrus.yml` builds the image for amd64 and arm64 on
 every pull request. Pushes to `main` publish
 `ghcr.io/mellow-technology/cirrus:main` and `:sha-<commit>`. A tag
-`cirrus-v<version>` publishes `:<version>` and `:latest`. After
-releasing, bump the pinned image in
-`k8s/operators/cirrus/Cirrus.yaml`.
+`cirrus-v<version>` publishes `:<version>` and `:latest`; a version
+with a hyphen, like `0.2.0-rc.1`, leaves `:latest` alone.
+
+The version is written in three places that move together: `Cargo.toml`,
+`Cargo.lock`, and the image `k8s/operators/cirrus/Cirrus.yaml` pins,
+which is what the installer applies. The release script sets them all
+and pushes the tag, from the repository's root:
+
+```bash
+bun scripts/release/cirrus.ts set minor     # or set 0.2.0; commit and merge it
+bun scripts/release/cirrus.ts --dry-run     # the checks alone
+bun scripts/release/cirrus.ts               # the checks, then the tag, pushed
+```
+
+It tags only what's on `origin/main`, only when every place agrees,
+and only a version newer than the last released. The workflow checks
+the tag against `Cargo.toml` too. Until the tag's image is published,
+`Cirrus.yaml` on main names an image that isn't there yet, so release
+Cirrus soon after the version change merges; the installer's release
+script won't go out before it.
 
 ## Not yet
 
