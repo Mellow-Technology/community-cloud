@@ -75,9 +75,14 @@ To change how the API is reached, you only touch those files.
    `installer/src/cli/commands/ClusterSignIn.ts`), so each request is
    made as `authentik:<username>`, with that person's
    `authentik:<group>` groups, and ordinary RBAC decides what they may
-   do. Only members of a `k8s-*` group get in at all. Headlamp works
-   the same way.
-4. `src/proxy.ts` refreshes the ID token shortly before it expires.
+   do. Headlamp works the same way.
+4. Only members of a `k8s-*` group get in at all. Authentik turns
+   everyone else away before they reach Meteorologist (a policy in
+   `k8s/apps/meteorologist/Meteorologist.blueprint.yaml`), and the
+   callback asks the API server who the person is before making a
+   session (`src/lib/auth/access.ts`). Someone it refuses gets no
+   session and lands on `/auth/no-access`, which says who to ask.
+5. `src/proxy.ts` refreshes the ID token shortly before it expires.
 
 Meteorologist itself needs no RBAC. Its pod's service account token is
 never used; the pod only provides the API server's address and CA.

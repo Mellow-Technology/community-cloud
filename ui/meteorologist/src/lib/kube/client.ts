@@ -21,6 +21,15 @@ import type { WebApplication } from "../webapp/types";
  */
 export interface KubeClient {
   /**
+   * Who the API server takes the person to be. Anyone it accepts may
+   * ask, whatever RBAC grants them, so a 401 here means the API server
+   * doesn't accept them at all.
+   *
+   * @returns
+   */
+  whoAmI(): Promise<{ username: string; groups: string[] }>;
+
+  /**
    * Every namespace the person may list.
    *
    * @returns

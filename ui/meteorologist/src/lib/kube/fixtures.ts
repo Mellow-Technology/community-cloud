@@ -460,6 +460,8 @@ export function fixtureClient(): KubeClient {
       return copy(created);
     },
 
+    whoAmI: async () => ({ username: "fixtures", groups: [] }),
+
     listRegions: async () => [...store().regions],
 
     listResourceQuotas: async (namespace) => copy(inNamespace(store().quotas, namespace)),

@@ -15,6 +15,7 @@
  */
 import {
   ApiException,
+  AuthenticationV1Api,
   CoreV1Api,
   CustomObjectsApi,
   KubeConfig,
@@ -181,11 +182,21 @@ async function optional<T>(call: () => Promise<T>): Promise<T | undefined> {
 function clientFor(config: KubeConfig): KubeClient {
   const core = config.makeApiClient(CoreV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
+  const authentication = config.makeApiClient(AuthenticationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
   const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
   const apply = setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply);
 
   return {
+    whoAmI: () =>
+      attempt(async () => {
+        const review = await authentication.createSelfSubjectReview({
+          body: { apiVersion: "authentication.k8s.io/v1", kind: "SelfSubjectReview" },
+        });
+        const user = review.status?.userInfo;
+        return { username: user?.username ?? "", groups: user?.groups ?? [] };
+      }),
+
     listNamespaces: () => attempt(async () => (await core.listNamespace()).items as Namespace[]),
 
     getNamespace: (name) => attempt(async () => (await core.readNamespace({ name })) as Namespace),

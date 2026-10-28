@@ -6,9 +6,13 @@
  * rather than taken from the request. Behind the Gateway the request
  * arrives as plain HTTP on the pod's own address, and the token
  * exchange has to quote the redirect URI exactly as it was sent.
+ *
+ * Someone the API server refuses gets no session, and is sent to
+ * /auth/no-access instead; see lib/auth/access.ts.
  */
 import { NextResponse, type NextRequest } from "next/server";
 
+import { refusedByApiServer } from "@/lib/auth/access";
 import { callbackUrl, completeLogin } from "@/lib/auth/oidc";
 import {
   LOGIN_COOKIE,
@@ -19,6 +23,7 @@ import {
   unsealLogin,
 } from "@/lib/auth/session";
 import { getOidcSettings } from "@/lib/config";
+import { apiServerClientForToken } from "@/lib/kube/apiServer";
 
 /**
  * @param request
@@ -36,6 +41,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const session = await completeLogin(callback, login);
+    if (await refusedByApiServer(apiServerClientForToken(session.idToken))) {
+      // No session, since every page would only be the API server
+      // saying no
+      const response = NextResponse.redirect(new URL("/auth/no-access", getOidcSettings().publicUrl));
+      response.cookies.delete(LOGIN_COOKIE);
+      return response;
+    }
     const response = NextResponse.redirect(new URL(login.returnTo, getOidcSettings().publicUrl));
     response.cookies.set(SESSION_COOKIE, await sealSession(session), cookieOptions(SESSION_MAX_AGE_SECONDS));
     response.cookies.delete(LOGIN_COOKIE);
