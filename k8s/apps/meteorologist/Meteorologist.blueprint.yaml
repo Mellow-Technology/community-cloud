@@ -54,6 +54,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-offline_access]]
 
   - model: authentik_core.application
+    id: application
     identifiers:
       slug: meteorologist
     attrs:
@@ -62,3 +63,23 @@ entries:
       meta_launch_url: {{ printf "https://%s/" .Values.domain.meteorologist | quote }}
       meta_description: Community Cloud's web interface
       policy_engine_mode: any
+
+  # Only someone the API server will let in gets as far as Meteorologist.
+  # It turns away anyone in no "k8s-" group (see ClusterSignIn.ts), so
+  # without this they'd sign in to a page of errors. The groups are the
+  # ones the "profile" scope puts in the token: the person's own, not
+  # their parents'.
+  - model: authentik_policies_expression.expressionpolicy
+    id: cluster-access
+    identifiers:
+      name: Meteorologist - in a k8s- group
+    attrs:
+      expression: |
+        return request.user.groups.filter(name__startswith="k8s-").exists()
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      policy: !KeyOf cluster-access
+    attrs:
+      order: 0

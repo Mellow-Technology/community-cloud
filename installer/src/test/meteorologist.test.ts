@@ -22,6 +22,7 @@ import { buildPackageCommands } from "../cli/commands/Helm.ts";
 import { getPackage } from "../cli/commands/packages.ts";
 import {
   AUTHENTICATION_CONFIG_PATH,
+  CLUSTER_GROUP_PREFIX,
   METEOROLOGIST_CLIENT_ID,
   buildAuthenticationConfig,
   getClusterIssuer,
@@ -94,6 +95,27 @@ describe("installing Meteorologist", () => {
       { matching_mode: "strict", url: `${env.METEOROLOGIST_URL}/auth/callback` },
     ]);
     assert.equal(env.METEOROLOGIST_URL, "https://meteorologist.example.test");
+  });
+
+  it("lets in, at Authentik, only those the API server will", async () => {
+    const config = await loadFixtureConfig({ packages: { meteorologist: true } });
+    const { entries } = parse(
+      renderInstallerFile(config, "embed://apps/meteorologist/Meteorologist.blueprint.yaml", {
+        templateNamespace: "community-cloud",
+      }).replace(/!(Context|Find|KeyOf)/g, ""),
+    );
+    const application = entries.find((entry: any) => entry.model === "authentik_core.application");
+    const policy = entries.find((entry: any) => entry.model === "authentik_policies_expression.expressionpolicy");
+    const binding = entries.find((entry: any) => entry.model === "authentik_policies.policybinding");
+
+    assert.deepEqual(binding.identifiers, { target: application.id, policy: policy.id });
+    assert.equal(
+      policy.attrs.expression.trim(),
+      `return request.user.groups.filter(name__startswith="${CLUSTER_GROUP_PREFIX}").exists()`,
+    );
+    // The API server's rule is that prefix too, after Authentik's own
+    const { jwt } = parse(buildAuthenticationConfig(config)!);
+    assert.match(jwt[0].userValidationRules[0].expression, new RegExp(`'authentik:${CLUSTER_GROUP_PREFIX}'`));
   });
 
   it("is trusted by the API server once it's enabled", async () => {
