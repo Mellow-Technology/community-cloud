@@ -27,7 +27,15 @@ import "server-only";
 import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  SecretSummary,
+  ServiceAccount,
+} from "./types";
 
 // Who server-side applies are made as, so Meteorologist owns only the
 // fields it sets
@@ -35,6 +43,7 @@ const FIELD_MANAGER = "meteorologist";
 
 // CloudNativePG's Cluster kind
 const POSTGRES = { group: "postgresql.cnpg.io", version: "v1", plural: "clusters" };
+const CERTIFICATES = { group: "cert-manager.io", version: "v1", plural: "certificates" };
 
 // The node label a region is read from
 const REGION_LABEL = "topology.kubernetes.io/region";
@@ -292,6 +301,16 @@ function clientFor(config: KubeConfig): KubeClient {
             ? await custom.listClusterCustomObject(POSTGRES)
             : await custom.listNamespacedCustomObject({ ...POSTGRES, namespace });
         return (list as { items: PostgresCluster[] }).items;
+      })) ?? [],
+
+    listCertificates: async (namespace) =>
+      // A 404 means cert-manager isn't installed, so there are none
+      (await optional(async () => {
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(CERTIFICATES)
+            : await custom.listNamespacedCustomObject({ ...CERTIFICATES, namespace });
+        return (list as { items: Certificate[] }).items;
       })) ?? [],
 
     listWebApplications: (namespace) =>

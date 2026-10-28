@@ -18,7 +18,15 @@
 import { getCapability } from "../capabilities";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  Condition,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  ServiceAccount,
+} from "./types";
 
 interface FixtureStore {
   namespaces: Map<string, Namespace>;
@@ -29,6 +37,7 @@ interface FixtureStore {
   limitRanges: Map<string, LimitRange>;
   serviceAccounts: Map<string, ServiceAccount>;
   postgres: Map<string, PostgresCluster>;
+  certificates: Map<string, Certificate>;
   regions: string[];
   version: number;
 }
@@ -72,6 +81,25 @@ function postgres(namespaceName: string, phase: string, ready: number): Postgres
     metadata: { name: "cirrus-postgres", namespace: namespaceName, creationTimestamp: CREATED },
     spec: { instances: 1, storage: { size: "20Gi", storageClass: "cc-local-ssd-fast" } },
     status: { phase, instances: 1, readyInstances: ready },
+  };
+}
+
+/**
+ * The Certificate cert-manager would have made for an application.
+ *
+ * @param namespaceName
+ * @param app
+ * @param condition how it's going
+ * @returns
+ */
+function certificate(namespaceName: string, app: string, condition: Condition): Certificate {
+  return {
+    metadata: { name: `${app}-tls`, namespace: namespaceName, creationTimestamp: CREATED },
+    spec: { secretName: `${app}-tls`, issuerRef: { kind: "ClusterIssuer", name: "cc-lets-encrypt" } },
+    status: {
+      conditions: [condition],
+      ...(condition.type === "Ready" ? { notAfter: "2099-01-01T00:00:00Z", renewalTime: "2098-12-02T00:00:00Z" } : {}),
+    },
   };
 }
 
@@ -264,6 +292,19 @@ function seed(): FixtureStore {
     postgres: new Map([
       ["team-shop/cirrus-postgres", postgres("team-shop", "Cluster in healthy state", 1)],
       ["cc-office/cirrus-postgres", postgres("cc-office", "Setting up primary", 0)],
+    ]),
+    certificates: new Map([
+      ["team-shop/shop-tls", certificate("team-shop", "shop", { type: "Ready", status: "True", reason: "Ready" })],
+      [
+        "cc-office/plane-tls",
+        certificate("cc-office", "plane", {
+          type: "Issuing",
+          status: "False",
+          reason: "Failed",
+          message:
+            'The certificate request has failed to complete and will be retried: Failed to wait for order resource "plane-tls-1-1" to become ready: order is in "invalid" state',
+        }),
+      ],
     ]),
     regions: ["fra", "sea"],
     version: 100,
@@ -504,5 +545,7 @@ export function fixtureClient(): KubeClient {
         .map(([id, type]) => ({ name: id.slice(namespace.length + 1), type })),
 
     listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
+
+    listCertificates: async (namespace) => copy(inNamespace(store().certificates, namespace)),
   };
 }

@@ -121,3 +121,12 @@ export interface PostgresCluster {
   spec?: { instances?: number; storage?: { size?: string; storageClass?: string }; imageName?: string };
   status?: { phase?: string; readyInstances?: number; instances?: number };
 }
+
+/**
+ * A cert-manager Certificate, as far as the pages describe one.
+ */
+export interface Certificate {
+  metadata: ObjectMeta;
+  spec?: { secretName?: string; dnsNames?: string[]; issuerRef?: { name?: string; kind?: string } };
+  status?: { conditions?: Condition[]; notAfter?: string; renewalTime?: string };
+}

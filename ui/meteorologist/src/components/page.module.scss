@@ -16,8 +16,8 @@
 .healthRow {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--gm-space-3) var(--gm-space-6);
-  margin: 0;
+  gap: var(--gm-space-3);
+  margin: 0 0 var(--gm-space-5);
   padding: 0;
   list-style: none;
 
@@ -55,4 +55,12 @@
 
 .empty {
   color: var(--gm-color-text-muted);
+}
+
+// A sentence after a badge, explaining it
+.detail {
+  display: block;
+  margin-block-start: var(--gm-space-1);
+  color: var(--gm-color-text-muted);
+  font-size: var(--gm-text-sm);
 }
