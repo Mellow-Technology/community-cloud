@@ -1,0 +1,165 @@
+# Checks Meteorologist and builds its image for amd64 and arm64,
+# publishing it to ghcr.io/mellow-technology/meteorologist.
+#
+# - Pull requests: typecheck, lint, formatting and tests, and both
+#   images built but not pushed. The image build is what runs
+#   `next build`, so it isn't run twice.
+# - Pushes to main: the same, then :main and :sha-<commit>.
+# - A tag "meteorologist-v<version>", e.g. meteorologist-v0.2.0:
+#   :<version> and :latest as well. The tag has to match
+#   ui/meteorologist/package.json; scripts/release/meteorologist.ts
+#   checks that and pushes it.
+#
+# Each architecture builds on a runner of its own kind rather than
+# under QEMU, which makes a Next build several times slower. Each pushes
+# by digest alone, and the merge job ties the two into one
+# multi-architecture tag.
+name: Meteorologist
+
+on:
+  push:
+    branches: [main]
+    tags: ["meteorologist-v*"]
+    paths:
+      - "ui/meteorologist/**"
+      - ".github/workflows/meteorologist.yml"
+  pull_request:
+    paths:
+      - "ui/meteorologist/**"
+      - ".github/workflows/meteorologist.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meteorologist-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/mellow-technology/meteorologist
+  # The same Bun the Dockerfile builds with
+  BUN_VERSION: "1.4.2"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui/meteorologist
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun run test
+
+  # Only for a tag: the version it names, checked against package.json
+  # before anything is built
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/meteorologist-v* ]]; then
+            version="${GITHUB_REF#refs/tags/meteorologist-v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::The tag's version, \"$version\", isn't semver: meteorologist-v1.2.3 or meteorologist-v1.2.3-rc.1"
+              exit 1
+            fi
+            written="$(jq -r .version ui/meteorologist/package.json)"
+            if [[ "$version" != "$written" ]]; then
+              echo "::error::The tag says $version, but ui/meteorologist/package.json says $written. Release with scripts/release/meteorologist.ts."
+              exit 1
+            fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: [check, version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest, arch: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ui/meteorologist
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=meteorologist-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=meteorologist-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # Pull requests only prove the image builds
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
+      - if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteorologist-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    if: github.event_name != 'pull_request'
+    needs: [image, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: meteorologist-digest-*
+          merge-multiple: true
+          path: /tmp/digests
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-architecture image
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags+=(-t "$IMAGE:main")
+          fi
+          if [[ -n "$VERSION" ]]; then
+            tags+=(-t "$IMAGE:$VERSION")
+            # A prerelease doesn't move "latest"
+            [[ "$VERSION" == *-* ]] || tags+=(-t "$IMAGE:latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:sha-${GITHUB_SHA::7}"

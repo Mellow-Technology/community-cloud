@@ -6,8 +6,9 @@
 #   built but not pushed.
 # - Pushes to main: the same, then :main and :sha-<commit>.
 # - A tag "cirrus-v<version>", e.g. cirrus-v0.2.0: :<version> and
-#   :latest as well. Bump the image pinned in
-#   k8s/operators/cirrus/Cirrus.yaml to match.
+#   :latest as well. The tag has to match Cargo.toml, and so the image
+#   Cirrus.yaml pins; scripts/release/cirrus.ts checks every place and
+#   pushes it.
 #
 # Each architecture builds on a runner of its own kind rather than
 # under QEMU, where a Rust release build takes many times as long.
@@ -62,19 +63,25 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
-  # Only for a tag: the version it names, checked before anything is
-  # built
+  # Only for a tag: the version it names, checked against Cargo.toml
+  # before anything is built
   version:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v5
       - id: version
         run: |
           if [[ "$GITHUB_REF" == refs/tags/cirrus-v* ]]; then
             version="${GITHUB_REF#refs/tags/cirrus-v}"
             if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::The tag's version, \"$version\", isn't semver: cirrus-v1.2.3 or cirrus-v1.2.3-rc.1"
+              exit 1
+            fi
+            written="$(sed -n 's/^version = "\(.*\)"$/\1/p' operators/cirrus/Cargo.toml | head -1)"
+            if [[ "$version" != "$written" ]]; then
+              echo "::error::The tag says $version, but operators/cirrus/Cargo.toml says $written. Release with scripts/release/cirrus.ts."
               exit 1
             fi
             echo "version=$version" >> "$GITHUB_OUTPUT"
