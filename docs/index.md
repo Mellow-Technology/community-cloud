@@ -108,6 +108,8 @@ cluster in service.
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
 | `cirrus` | Cirrus, the operator that runs WebApplications |
+| `meteorologist` | Meteorologist, the web interface, signed into through Authentik |
+| `cluster-sign-in` | The API server's sign in settings on each server, without reinstalling K3s |
 | `postgres`, `redis`, `rabbitmq` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
@@ -164,6 +166,7 @@ k8s/
 │   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
+│   ├── meteorologist/           # Meteorologist, the web interface, signed into through Authentik
 │   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis and RabbitMQ
 │   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
 │   ├── plane/                   # Plane projects, on cc-postgres, Redis, RabbitMQ and SeaweedFS
@@ -324,6 +327,20 @@ Cloud's own Headlamp plugins, `cc-cumulus-theme` and
 `cc-storage-explorer`. `bun run build:plugins` builds them and
 `bun run build:embedded` carries them inside the installer, under
 `headlamp-plugins/<name>/`.
+
+#### Meteorologist (`apps/meteorologist/`)
+
+Community Cloud's own web interface, from `ui/meteorologist`, installed
+by the `meteorologist` package into `community-cloud`. Like Headlamp,
+people sign in through Authentik and it uses their token with the API
+server, which trusts its client, `meteorologist`, once the package is
+enabled and the `cluster-sign-in` bundle has run:
+
+| File | Purpose |
+|---|---|
+| `Meteorologist.yaml` | Deployment and Service, with no ServiceAccount token, and the image pinned |
+| `Meteorologist.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+| `Meteorologist.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
 
 #### Picoclaw (`apps/picoclaw/`)
 

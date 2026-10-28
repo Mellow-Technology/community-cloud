@@ -1,0 +1,141 @@
+# Meteorologist: Community Cloud's web interface. See ui/meteorologist.
+#
+# It holds no access of its own. People sign in through Authentik, and
+# every request to the Kubernetes API is made with that person's own
+# ID token, so what they can do here is what RBAC already lets them do
+# anywhere else. Its ServiceAccount is never used, so no token is
+# mounted at all: the pod is only given the API server's address and
+# the CA to check it with, from the kube-root-ca.crt ConfigMap every
+# namespace has.
+#
+# Its sign in is the "meteorologist" client in Authentik
+# (Meteorologist.blueprint.yaml), which the API server trusts once the
+# k3s or cluster-sign-in bundle has run with this package enabled (see
+# installer/src/cli/commands/ClusterSignIn.ts).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meteorologist
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meteorologist
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: meteorologist
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: meteorologist
+    spec:
+      serviceAccountName: meteorologist
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The image's "node" user. By name, the kubelet couldn't tell
+        # it isn't root and would refuse to start the pod.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: meteorologist
+          # Pinned, and released from a meteorologist-v<version> tag;
+          # see .github/workflows/meteorologist.yml and
+          # scripts/release/meteorologist.ts, which sets this
+          image: ghcr.io/mellow-technology/meteorologist:0.1.0
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: METEOROLOGIST_KUBE_MODE
+              value: user
+            - name: METEOROLOGIST_URL
+              value: {{ printf "https://%s" .Values.domain.meteorologist | quote }}
+            - name: OIDC_ISSUER
+              value: {{ printf "https://%s/application/o/meteorologist/" .Values.domain.auth | quote }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: meteorologist-oidc
+                  key: username
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: meteorologist-oidc
+                  key: password
+            # What session cookies are sealed with. Made once, so
+            # restarting Meteorologist doesn't sign everyone out.
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: meteorologist-session
+                  key: password
+            # The in-cluster address, with the CA mounted below in place
+            # of the ServiceAccount's
+            - name: KUBE_API_SERVER
+              value: https://kubernetes.default.svc
+            - name: KUBE_CA_FILE
+              value: /etc/meteorologist/kube-ca/ca.crt
+          volumeMounts:
+            - name: kube-ca
+              mountPath: /etc/meteorologist/kube-ca
+              readOnly: true
+            # Next writes its image cache here, and the rest of the
+            # filesystem is read only
+            - name: cache
+              mountPath: /app/.next/cache
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: kube-ca
+          configMap:
+            name: kube-root-ca.crt
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meteorologist
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app.kubernetes.io/name: meteorologist
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

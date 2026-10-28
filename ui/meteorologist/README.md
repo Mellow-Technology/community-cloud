@@ -83,9 +83,11 @@ Meteorologist itself needs no RBAC. Its pod's service account token is
 never used; the pod only provides the API server's address and CA.
 
 **The API server only accepts tokens issued to clients it knows
-about.** Meteorologist's Authentik client has to be added to
-`k3s.signInClients` (or share Headlamp's client) before signing in will
-work against a real cluster.
+about.** Installed by the installer's `meteorologist` package, its
+Authentik client is `meteorologist`, which the API server trusts once
+the package is enabled and the `cluster-sign-in` bundle has run (see
+`k8s/apps/meteorologist/`). Run anywhere else, its client has to be
+listed in `k3s.signInClients`.
 
 ### Development without signing in
 

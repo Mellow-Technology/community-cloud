@@ -251,6 +251,27 @@ repository and carried inside the installer: `bun run build:plugins`,
 then `bun run build:embedded`. Their ConfigMaps are applied before
 the chart, and Headlamp is restarted when they change.
 
+## Meteorologist (`meteorologist/`)
+
+Community Cloud's own web interface, built from `ui/meteorologist`:
+namespaces, with their quotas, defaults and registries, and the
+WebApplications Cirrus runs. Install it with the `meteorologist`
+package; it's reached at `values.domain.meteorologist`, in
+`community-cloud`. It works as Headlamp does: people sign in through
+Authentik, and it calls the API with their token, so what they can do
+is what RBAC already lets them. Its client ID is fixed as
+`meteorologist`, since the API server is told it; the `cluster-sign-in`
+bundle tells a running cluster.
+
+| File | What it is |
+|---|---|
+| `Meteorologist.yaml` | Its Deployment and Service. No ServiceAccount token is mounted; it's given the API server's CA from `kube-root-ca.crt`. |
+| `Meteorologist.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+| `Meteorologist.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+
+The image is pinned in `Meteorologist.yaml` and released with
+`scripts/release/meteorologist.ts`, which sets the pin.
+
 ## Picoclaw (`picoclaw/`)
 
 An AI agent with a web console. Install it with the `picoclaw`

@@ -1,0 +1,60 @@
+# Meteorologist's client in Authentik.
+#
+# Not a Kubernetes manifest. This is an Authentik blueprint, which the
+# installer hands to Authentik's worker once the client's credentials
+# exist — see installer/src/cli/commands/Authentik.ts. The client ID
+# and secret arrive through "!Context". The ID is always
+# "meteorologist": the Kubernetes API server is told it, and only
+# accepts tokens issued to a client it was told about (see
+# ClusterSignIn.ts).
+#
+# Like Headlamp, Meteorologist hands the ID token it gets here straight
+# to the API server, which takes the person's Authentik username and
+# groups from the "profile" scope. So the signing key has to be one the
+# API server can check from Authentik's published keys — the
+# self-signed certificate, rather than the client secret.
+#
+# "offline_access" gets Meteorologist a refresh token, so a session
+# outlives the ID token's few minutes; "email" is only for showing who
+# is signed in.
+version: 1
+metadata:
+  name: Community Cloud - Meteorologist
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider
+    identifiers:
+      name: Meteorologist
+    attrs:
+      client_type: confidential
+      client_id: !Context client_id
+      client_secret: !Context client_secret
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # Asymmetric, so the API server can check a token without the
+      # client secret
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # The issuer is the application's own address, which is what the
+      # API server is told to expect
+      issuer_mode: per_provider
+      # Meteorologist sends people back here, and nowhere else
+      redirect_uris:
+        - matching_mode: strict
+          url: {{ printf "https://%s/auth/callback" .Values.domain.meteorologist | quote }}
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-offline_access]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: meteorologist
+    attrs:
+      name: Meteorologist
+      provider: !KeyOf provider
+      meta_launch_url: {{ printf "https://%s/" .Values.domain.meteorologist | quote }}
+      meta_description: Community Cloud's web interface
+      policy_engine_mode: any

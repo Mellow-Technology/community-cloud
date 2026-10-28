@@ -468,6 +468,82 @@ const INSTALL_SCRIPT = [
   "exit $code",
 ];
 
+// Where K3s can be told to hand the API server a flag: the unit the
+// install script writes, with its arguments in it, and K3s's own
+// configuration files
+const K3S_FLAG_SOURCES = [
+  "/etc/systemd/system/k3s.service",
+  "/etc/rancher/k3s/config.yaml",
+  "/etc/rancher/k3s/config.yaml.d/*.yaml",
+];
+
+/**
+ * Writing the API server's sign in settings, and checking it reads
+ * them.
+ *
+ * Part of the k3s bundle, ahead of the server that's told to read
+ * them, and the whole of the cluster-sign-in bundle. That one is for a
+ * cluster that's already running: the file is rewritten on every run
+ * and reread by the API server when it changes, so a client added to
+ * the configuration, or a package like Meteorologist that brings one,
+ * needs only this, and not K3s installed again.
+ *
+ * The check is what makes that true rather than hopeful. A file the
+ * API server was never told about is read by nobody, and a cluster
+ * whose sign in was first set up by hand can be handing it another
+ * file from somewhere else — which wins, whatever this one says.
+ *
+ * @returns
+ */
+function signInCommands(): CommandSpec[] {
+  const path = AUTHENTICATION_CONFIG_PATH;
+  const skipWhen = (config: CloudConfig, context: any) =>
+    getInstallationType(context) !== K3SInstallationType.Server || !signsInThroughAuthentik(config);
+  const stdin = (config: CloudConfig) => buildAuthenticationConfig(config) ?? "";
+
+  return [
+    {
+      name: "write-authentication-config",
+      description: "Write the API server's settings for signing in through Authentik",
+      scope: CommandScope.EachServer,
+      skipWhen,
+      command: [
+        `sudo mkdir -p ${dirname(path)} || { echo "Couldn't create ${dirname(path)}" >&2; exit 1; }`,
+        ...writeFileCommand(path, { asRoot: true }),
+        `echo "wrote ${path}"`,
+      ],
+      stdin,
+      output: OutputType.Raw,
+    },
+    {
+      name: "verify-authentication-config",
+      purpose: CommandPurpose.Verify,
+      description: "Verify the API server reads the sign in settings, and that they're current",
+      scope: CommandScope.EachServer,
+      skipWhen,
+      command: [
+        `sudo test -f ${path} || { echo "${path} isn't there, so nobody can sign in to the cluster through Authentik. Run the cluster-sign-in bundle to write it." >&2; exit 1; }`,
+        `sudo cmp -s - ${path} || { echo "${path} isn't what the configuration says: a sign in client has been added or taken away since it was written. Run the cluster-sign-in bundle to rewrite it; the API server rereads it without restarting." >&2; exit 1; }`,
+        // Every authentication-config K3s is given, and where from
+        `found=$(for f in ${K3S_FLAG_SOURCES.join(" ")}; do [ -f "$f" ] && sudo grep -Ho "authentication-config=[^\\"'[:space:],]*" "$f"; done | sort -u)`,
+        `others=$(printf '%s\\n' "$found" | grep -v ":authentication-config=${path}$" | grep . || true)`,
+        `[ -z "$others" ] || { echo "K3s also hands the API server another authentication-config, which it reads in place of ${path}:" >&2; printf '%s\\n' "$others" >&2; echo "Take that out of wherever it's written, then run the k3s bundle on this server, which restarts K3s with ${path}." >&2; exit 1; }`,
+        `[ -n "$found" ] || { echo "K3s isn't started with authentication-config=${path}, so the API server never reads it. Run the k3s bundle on this server, which restarts K3s with it." >&2; exit 1; }`,
+        `echo "the API server reads ${path}, and it's current:"`,
+        `printf '%s\\n' "$found"`,
+      ],
+      stdin,
+      output: OutputType.Raw,
+    },
+  ];
+}
+
+/**
+ * The cluster-sign-in bundle: the sign in settings alone, on every
+ * server, for a cluster that's already running. See signInCommands.
+ */
+export const ClusterSignInCommands: CommandSpec[] = signInCommands();
+
 export const K3sCommands: CommandSpec[] = [
   /**
    * Work out which address the node registers on, before anything is
@@ -513,26 +589,7 @@ export const K3sCommands: CommandSpec[] = [
     }),
   },
 
-  /**
-   * The API server's sign in settings, ahead of the server that's told
-   * to read them. Rewritten on every run, and reread by the API server
-   * when they change, so a client added to the configuration needs
-   * only this.
-   */
-  {
-    name: "write-authentication-config",
-    description: "Write the API server's settings for signing in through Authentik",
-    scope: CommandScope.EachServer,
-    skipWhen: (config: CloudConfig, context: any) =>
-      getInstallationType(context) !== K3SInstallationType.Server || !signsInThroughAuthentik(config),
-    command: [
-      `sudo mkdir -p ${dirname(AUTHENTICATION_CONFIG_PATH)} || { echo "Couldn't create ${dirname(AUTHENTICATION_CONFIG_PATH)}" >&2; exit 1; }`,
-      ...writeFileCommand(AUTHENTICATION_CONFIG_PATH, { asRoot: true }),
-      `echo "wrote ${AUTHENTICATION_CONFIG_PATH}"`,
-    ],
-    stdin: (config: CloudConfig) => buildAuthenticationConfig(config) ?? "",
-    output: OutputType.Raw,
-  },
+  ...signInCommands(),
 
   /**
    * Install the servers.
