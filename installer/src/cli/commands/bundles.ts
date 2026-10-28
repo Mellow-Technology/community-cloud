@@ -10,7 +10,7 @@ import { CommandPurpose, CommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // Command Bundles
-import { K3sCommands } from "./K3s.ts";
+import { ClusterSignInCommands, K3sCommands } from "./K3s.ts";
 import { ClusterOnlineCommands, NodeJoinedCommands } from "./AddNode.ts";
 import { BasePackageCommands } from "./BasePackages.ts";
 import { NodeLabelCommands } from "./NodeLabels.ts";
@@ -174,6 +174,12 @@ const builtInBundles: BundleDefinition[] = [
     commands: ClusterOnlineCommands,
   },
   {
+    name: "cluster-sign-in",
+    description: "Rewrite the API server's sign in settings on each server, without reinstalling K3s",
+    commands: ClusterSignInCommands,
+    checkedBy: "k3s",
+  },
+  {
     name: "dns",
     description: "Install ExternalDNS for each configured DNS provider and namespace",
     commands: DnsCommands,
@@ -239,6 +245,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "mattermost",
     description: "Install Mattermost chat into cc-office",
     commands: buildSinglePackageBundle("mattermost"),
+    checkedBy: "helm-charts",
+  },
+  {
+    name: "meteorologist",
+    description: "Install Meteorologist into community-cloud, Community Cloud's web interface",
+    commands: buildSinglePackageBundle("meteorologist"),
     checkedBy: "helm-charts",
   },
   {

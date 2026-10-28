@@ -38,7 +38,7 @@ import { MailSecurity } from "../../util/mail.ts";
 import { SecretDefinition } from "./Secrets.ts";
 import type { AuthentikClient } from "./Authentik.ts";
 import type { GateDefinition } from "./OAuth2Proxy.ts";
-import { CLUSTER_CLIENT_ID } from "./ClusterSignIn.ts";
+import { CLUSTER_CLIENT_ID, METEOROLOGIST_CLIENT_ID } from "./ClusterSignIn.ts";
 
 /**
  * Something that can be installed.
@@ -934,6 +934,58 @@ const builtInPackages: PackageDefinition[] = [
 
     // Where GitLab sends its webhooks
     values: ["domain.cirrus"],
+  },
+  {
+    name: "meteorologist",
+    description: "Meteorologist, Community Cloud's web interface, signed into through Authentik",
+    // Beside Headlamp: a way into the cluster, not an application on it
+    namespace: CLUSTER_NAMESPACE,
+
+    // It signs in through Authentik, and acts as whoever signed in, so
+    // it needs the API server to trust its client. Enabling it adds
+    // that client to the API server's settings, which the k3s and
+    // cluster-sign-in bundles write; see ClusterSignIn.ts. It shows
+    // and makes WebApplications, so Cirrus is what gives it anything
+    // to do, but it runs without it.
+    after: ["authentik", "cirrus"],
+
+    // No chart: Meteorologist is ours. The namespace again, for the
+    // label the cluster Gateway looks for, as for Headlamp. The image
+    // is pinned in Meteorologist.yaml.
+    manifests: {
+      before: ["embed://networking/cilium/gateway/Gateway.namespace.yaml"],
+      after: [
+        "embed://apps/meteorologist/Meteorologist.yaml",
+        "embed://apps/meteorologist/Meteorologist.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // The username is the client ID, and it's fixed, as Headlamp's
+      // is: the API server is told it. Only the secret is made up.
+      {
+        name: "meteorologist-oidc",
+        description: "the client Meteorologist signs in to Authentik as",
+        username: METEOROLOGIST_CLIENT_ID,
+      },
+      // What session cookies are sealed with. Made once, so a restart
+      // doesn't sign everybody out.
+      {
+        name: "meteorologist-session",
+        description: "the key Meteorologist seals its session cookies with",
+        keyBytes: 32,
+      },
+    ],
+
+    authentik: {
+      blueprint: "embed://apps/meteorologist/Meteorologist.blueprint.yaml",
+      secret: "meteorologist-oidc",
+      slug: METEOROLOGIST_CLIENT_ID,
+    },
+
+    rollout: ["deployment/meteorologist"],
+
+    values: ["domain.meteorologist", "domain.auth"],
   },
   {
     name: "tailscale-operator",

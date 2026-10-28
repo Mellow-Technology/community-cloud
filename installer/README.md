@@ -140,7 +140,7 @@ gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
 | `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
 | `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik`, `servicelb` and `local-storage` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API, Cilium's own IP management hands out load balancer addresses, and TopoLVM provisions local volumes. K3s's local-path provisioner also claims to be the default storage class, and Kubernetes allows only one. |
 | `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
-| `signInClients` | — | Clients in Authentik, besides Headlamp's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
+| `signInClients` | — | Clients in Authentik, besides Headlamp's and Meteorologist's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
 | `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
 
 ### `network`
@@ -318,7 +318,8 @@ manifests alone. `true` is shorthand for enabled, and
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
 `mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
-`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`, `cirrus`.
+`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`, `cirrus`,
+`meteorologist`.
 Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too. `cloudnative-pg`, `redis-operator` and
@@ -369,6 +370,17 @@ also takes GitLab's pipeline webhooks on `values.domain.cirrus` and
 rolls out each image a successful pipeline publishes, running the
 application's migrations first. See
 [operators/cirrus](../operators/cirrus/README.md).
+
+`meteorologist` installs Meteorologist, Community Cloud's web
+interface, into `community-cloud` on `values.domain.meteorologist`. It
+makes namespaces and WebApplications, and like Headlamp it signs people
+in through Authentik and talks to the Kubernetes API as whoever signed
+in, so it has no permissions of its own; its pod isn't even given a
+ServiceAccount token. Its Authentik client is `meteorologist`, which
+the API server trusts once the package is enabled and the
+`cluster-sign-in` (or `k3s`) bundle has run; see
+[signing in to the cluster](#signing-in-to-the-cluster). See
+[ui/meteorologist](../ui/meteorologist/README.md).
 
 Plane is projects, issues and docs, on `values.domain.plane`, with its
 web app, public pages, admin pages and API all on that hostname. Its
@@ -461,12 +473,22 @@ own, so on an existing cluster it's installed or updated with
 The API server trusts Authentik through an `AuthenticationConfiguration`
 the `k3s` bundle writes to `/etc/rancher/k3s/authentication.yaml` on
 each server, whenever there's a `values.domain.auth` and a client to
-trust it for: Headlamp's, `headlamp`, when the `headlamp` package is
-enabled, and any listed in `k3s.signInClients`, such as one made in
-Authentik for kubectl. Each Authentik application is its own issuer.
-The API server rereads the file when it changes, so adding a client
-needs only the `k3s` bundle again; the first one also restarts K3s
-with the setting that points at the file.
+trust it for: Headlamp's, `headlamp`, and Meteorologist's,
+`meteorologist`, when those packages are enabled, and any listed in
+`k3s.signInClients`, such as one made in Authentik for kubectl. Each
+Authentik application is its own issuer. The API server rereads the
+file when it changes, so adding a client to a running cluster needs
+only the `cluster-sign-in` bundle, which rewrites the file on each
+server without reinstalling K3s. Only the first time does K3s have to
+be started with the setting that points at the file, which the `k3s`
+bundle does.
+
+Both bundles check the API server really reads the file: that it's
+current, and that K3s is given `authentication-config` pointing at it
+and at nothing else. A cluster whose sign in was first set up by hand,
+with the setting in a file of its own under
+`/etc/rancher/k3s/config.yaml.d/`, fails that check until the file is
+removed and the `k3s` bundle has restarted K3s with the installer's.
 
 - People are `authentik:<username>` to the cluster, in
   `authentik:<group>` for each of their Authentik groups. The prefix
