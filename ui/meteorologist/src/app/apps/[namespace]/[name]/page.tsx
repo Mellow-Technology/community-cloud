@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
 import { describeError, isNotFound, settle } from "@/lib/kube/client";
+import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
 import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
 import { appHealth } from "@/lib/webapp/health";
 import { requestedServices, specImage } from "@/lib/webapp/present";
@@ -154,6 +155,16 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
               {
                 label: "Hostnames",
                 value: app.spec.hostnames?.length ? <TagList tags={app.spec.hostnames} /> : undefined,
+              },
+              {
+                label: "Database",
+                value:
+                  app.spec.postgres === undefined ? undefined : (
+                    <>
+                      <code>{postgresDatabase(app.metadata.name)}</code>, its own, on {namespace}&apos;s shared Postgres
+                      server, <code>{POSTGRES_CLUSTER}</code>
+                    </>
+                  ),
               },
               { label: "Bucket quota", value: app.spec.bucket?.quota },
               {

@@ -459,6 +459,10 @@
               "type": "string",
               "description": "Cirrus's webhook endpoint, which code forges such as GitLab call when they publish an image."
             },
+            "meteorologist": {
+              "type": "string",
+              "description": "Meteorologist, Community Cloud's web interface, signed into through Authentik."
+            },
             "storage": {
               "type": "string",
               "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."

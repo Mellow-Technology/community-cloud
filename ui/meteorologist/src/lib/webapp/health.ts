@@ -14,6 +14,7 @@
 import {
   CONDITION_PROVISIONED,
   CONDITION_READY,
+  CONDITION_RELEASE_CHECKED,
   CONDITION_ROLLED_OUT,
   CONDITION_WEBHOOK,
   type WebApplication,
@@ -23,7 +24,8 @@ import type { Condition } from "../kube/types";
 /**
  * - healthy: running the image it should, with everything it asked for
  * - degraded: running, but something around it isn't right, such as
- *   the forge's webhook
+ *   the forge's webhook, or GitLab not answering when asked for the
+ *   newest release
  * - progressing: on its way, such as mid-rollout or migrating
  * - failing: stuck until someone does something
  * - pending: Cirrus hasn't looked at this version of it yet
@@ -97,8 +99,12 @@ export function appHealth(app: WebApplication): Health {
 
   const ready = findCondition(conditions, CONDITION_READY);
   const webhook = findCondition(conditions, CONDITION_WEBHOOK);
+  const checked = findCondition(conditions, CONDITION_RELEASE_CHECKED);
 
   if (ready?.status === "True") {
+    if (checked?.status === "False") {
+      return health("degraded", checked.message || "Cirrus couldn't ask GitLab for the newest release.");
+    }
     return webhook?.status === "False"
       ? health("degraded", webhook.message || "The forge's webhook isn't registered, so new releases won't arrive.")
       : health("healthy");

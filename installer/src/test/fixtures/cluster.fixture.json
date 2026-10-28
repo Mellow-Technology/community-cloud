@@ -16,6 +16,7 @@
       "signing": "sign.example.test",
       "plane": "plane.example.test",
       "cirrus": "cirrus.example.test",
+      "meteorologist": "meteorologist.example.test",
       "headlamp": "headlamp.example.test",
       "storage": "s3.example.test"
     },

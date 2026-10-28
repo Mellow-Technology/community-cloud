@@ -35,6 +35,7 @@ export const CONDITION_READY = "Ready";
 export const CONDITION_PROVISIONED = "Provisioned";
 export const CONDITION_ROLLED_OUT = "RolledOut";
 export const CONDITION_WEBHOOK = "WebhookRegistered";
+export const CONDITION_RELEASE_CHECKED = "ReleaseChecked";
 
 export interface ImageSpec {
   repository: string;

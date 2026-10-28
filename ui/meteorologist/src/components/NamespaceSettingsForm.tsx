@@ -196,8 +196,9 @@ export function NamespaceSettingsForm({ initial, existing, regions }: NamespaceS
         <div className={styles.fields}>
           <p className={styles.note}>
             What a container is given when it doesn&apos;t state its own. A quota makes Kubernetes refuse pods that
-            don&apos;t state what it limits, so these are what keep those running — including{" "}
-            <code>{POSTGRES_CLUSTER}</code>, which states nothing. Applications that set their own resources keep them.
+            don&apos;t state what it limits, so these are what keep those running — including the namespace&apos;s
+            Postgres server, <code>{POSTGRES_CLUSTER}</code>, which states nothing. Applications that set their own
+            resources keep them.
           </p>
           <div className={styles.row}>
             <TextField label="CPU request" placeholder="100m" {...text("defaultCpuRequest")} />
