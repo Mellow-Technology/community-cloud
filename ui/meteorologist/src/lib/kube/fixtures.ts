@@ -16,6 +16,7 @@
  * module in development.
  */
 import { getCapability } from "../capabilities";
+import type { NodeUsage } from "../cluster";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
 import type {
@@ -99,6 +100,29 @@ function certificate(namespaceName: string, app: string, condition: Condition): 
     status: {
       conditions: [condition],
       ...(condition.type === "Ready" ? { notAfter: "2099-01-01T00:00:00Z", renewalTime: "2098-12-02T00:00:00Z" } : {}),
+    },
+  };
+}
+
+/**
+ * A node as its kubelet would report it.
+ *
+ * @param name
+ * @param cores its capacity
+ * @param memory GiB of capacity
+ * @param usedCores
+ * @param usedMemory GiB in use
+ * @returns
+ */
+function fixtureNode(name: string, cores: number, memory: number, usedCores: number, usedMemory: number): NodeUsage {
+  return {
+    name,
+    cpuCores: cores,
+    memoryBytes: memory * 2 ** 30,
+    summary: {
+      cpu: { usageNanoCores: usedCores * 1e9 },
+      memory: { rssBytes: usedMemory * 2 ** 30 },
+      network: { interfaces: [{ name: "defined1", rxBytes: cores * 61 * 2 ** 30, txBytes: cores * 23 * 2 ** 30 }] },
     },
   };
 }
@@ -502,6 +526,11 @@ export function fixtureClient(): KubeClient {
     },
 
     listRegions: async () => [...store().regions],
+
+    getClusterUsage: async () => ({
+      nodes: [fixtureNode("fra-1", 16, 64, 5.2, 38), fixtureNode("sea-1", 8, 32, 1.4, 11)],
+      podPhases: [...Array.from({ length: 61 }, () => "Running"), "Succeeded", "Succeeded", "Failed"],
+    }),
 
     listResourceQuotas: async (namespace) => copy(inNamespace(store().quotas, namespace)),
 

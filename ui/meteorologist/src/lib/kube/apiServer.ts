@@ -25,6 +25,8 @@ import {
 import "server-only";
 
 import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
+import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
+import { parseQuantity } from "../quantity";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
 import type {
@@ -211,6 +213,35 @@ function clientFor(config: KubeConfig): KubeClient {
       attempt(
         async () => (await core.createNamespace({ body: { metadata: { name, labels, annotations } } })) as Namespace,
       ),
+
+    getClusterUsage: () =>
+      attempt(async (): Promise<ClusterUsage> => {
+        const [nodes, pods] = await Promise.all([core.listNode(), core.listPodForAllNamespaces()]);
+        const usage = await Promise.all(
+          nodes.items.map(async (node) => {
+            const name = node.metadata?.name ?? "";
+            // The kubelet's own summary, through the API server. One
+            // that doesn't answer leaves the node out of the usage, not
+            // the whole panel off.
+            const summary = await core
+              .connectGetNodeProxyWithPath({ name, path: "stats/summary" })
+              // Typed as text, but the client parses the kubelet's JSON itself
+              .then(
+                (body: unknown) =>
+                  (typeof body === "string" ? JSON.parse(body) : body) as { node?: KubeletNodeSummary },
+              )
+              .then((body) => body.node)
+              .catch(() => undefined);
+            return {
+              name,
+              cpuCores: parseQuantity(node.status?.capacity?.cpu) ?? 0,
+              memoryBytes: parseQuantity(node.status?.capacity?.memory) ?? 0,
+              summary,
+            };
+          }),
+        );
+        return { nodes: usage, podPhases: pods.items.map((pod) => pod.status?.phase ?? "Unknown") };
+      }),
 
     listRegions: () =>
       attempt(async () => {

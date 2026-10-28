@@ -64,3 +64,8 @@
   color: var(--gm-color-text-muted);
   font-size: var(--gm-text-sm);
 }
+
+// The cluster's state, above its figures
+.clusterStatus {
+  margin: 0 0 var(--gm-space-4);
+}
