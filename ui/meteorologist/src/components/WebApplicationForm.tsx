@@ -34,7 +34,7 @@ import { createTokenSecret, saveWebApplication, setNamespaceCapability } from "@
 import { enabledCapabilities, type Capability } from "@/lib/capabilities";
 import { validateForm, type EnvRow, type WebApplicationForm as FormModel } from "@/lib/webapp/form";
 import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_IMAGE_TAG, DEFAULT_TOKEN_KEY } from "@/lib/webapp/types";
-import { POSTGRES_CLUSTER } from "@/lib/postgres";
+import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
 import styles from "./WebApplicationForm.module.scss";
 
@@ -248,8 +248,9 @@ export function WebApplicationForm({
             onChange={(event) => set("postgres", event.target.checked)}
             description={
               <>
-                Its own database and role in the namespace&apos;s Postgres, <code>{POSTGRES_CLUSTER}</code>, which runs
-                beside it, in its region. The connection details arrive as environment variables from the{" "}
+                A database of its own, <code>{form.name ? postgresDatabase(form.name) : "<app>"}</code>, with a login of
+                its own, on the Postgres server every application in the namespace shares. The server runs beside it, in
+                its region. The connection details arrive as environment variables from the{" "}
                 <code>{form.name || "<app>"}-postgres</code> Secret: <code>DATABASE_URL</code>, <code>PGHOST</code>,{" "}
                 <code>PGPORT</code>, <code>PGDATABASE</code>, <code>PGUSER</code> and <code>PGPASSWORD</code>.
               </>

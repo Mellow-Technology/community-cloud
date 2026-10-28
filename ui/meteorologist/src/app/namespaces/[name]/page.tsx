@@ -28,7 +28,7 @@ import {
   regionOf,
   toNamespaceForm,
 } from "@/lib/namespace/settings";
-import { POSTGRES_CLUSTER, POSTGRES_STORAGE } from "@/lib/postgres";
+import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresDatabase } from "@/lib/postgres";
 
 // What a quota's keys mean, in the order they're shown
 const QUOTA_LABELS: Record<string, string> = {
@@ -130,7 +130,7 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
           <DetailList items={[{ label: "Region", value: regionOf(namespace.metadata.annotations) || "Anywhere" }]} />
         </Card>
 
-        <Card title="Postgres" level={2}>
+        <Card title="Postgres server" level={2}>
           {!clusters.ok ? (
             <ErrorNotice error={clusters.error} title="Couldn't look for it" />
           ) : postgres ? (
@@ -149,15 +149,20 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
                 { label: "Volume", value: postgres.spec?.storage?.size },
                 { label: "Host", value: <code>{`${POSTGRES_CLUSTER}-rw.${name}.svc`}</code> },
                 {
-                  label: "Databases for",
-                  value: usingPostgres.map((app) => app.metadata.name).join(", ") || "No application yet",
+                  label: "Databases",
+                  value: usingPostgres.length
+                    ? usingPostgres
+                        .map((app) => `${postgresDatabase(app.metadata.name)}, for ${app.metadata.name}`)
+                        .join("; ")
+                    : "None yet",
                 },
               ]}
             />
           ) : (
             <p className={styles.empty}>
               None yet. Cirrus starts <code>{POSTGRES_CLUSTER}</code>, with a {POSTGRES_STORAGE} volume, when the first
-              application here asks for a database, and every later one shares it. It stays when the applications go.
+              application here asks for a database, and every later one gets a database of its own on it. It stays when
+              the applications go.
             </p>
           )}
         </Card>

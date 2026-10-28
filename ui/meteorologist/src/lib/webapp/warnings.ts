@@ -98,7 +98,10 @@ export function postgresNote(namespace: {
     return undefined;
   }
   if (namespace.hasPostgres) {
-    return { tone: "neutral", message: `It joins the other databases in ${namespace.name}'s ${POSTGRES_CLUSTER}.` };
+    return {
+      tone: "neutral",
+      message: `${namespace.name} already has its Postgres server, ${POSTGRES_CLUSTER}, so the database goes on it, beside the other applications'.`,
+    };
   }
   const problem = postgresStorageProblem(namespace.storageQuota, namespace.storageUsed);
   if (problem !== undefined) {
@@ -107,7 +110,8 @@ export function postgresNote(namespace: {
   return {
     tone: "neutral",
     message:
-      `${namespace.name} has no Postgres yet, so this starts one: ${POSTGRES_CLUSTER}, with a ${POSTGRES_STORAGE} ` +
-      "volume, shared by every application here that asks for a database after it. It stays if the applications go.",
+      `${namespace.name} has no Postgres server yet, so this starts one, ${POSTGRES_CLUSTER}, with a ${POSTGRES_STORAGE} ` +
+      "volume. Every application here that asks for a database later gets its own on the same server, " +
+      "and the server stays if the applications go.",
   };
 }

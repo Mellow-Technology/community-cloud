@@ -11,7 +11,8 @@
  */
 import { formatBytes, parseQuantity } from "./quantity";
 
-// The Cluster's name in every namespace
+// The Cluster's name in every namespace. It's the server, which
+// every application there shares, not any one application's database
 export const POSTGRES_CLUSTER = "cirrus-postgres";
 
 // The volume a new one is given
@@ -39,4 +40,18 @@ export function postgresStorageProblem(hard: string | undefined, used: string | 
     `The namespace's Postgres needs a ${POSTGRES_STORAGE} volume, and the storage quota has ` +
     `${formatBytes(Math.max(left, 0))} left, so it won't start until the quota is raised.`
   );
+}
+
+/**
+ * The database an application is given, and the role it signs in as,
+ * which share a name. Hyphens become underscores, as
+ * postgres_identifier in operators/cirrus/src/naming.rs makes them.
+ * That also shortens a name past 63 characters, which an application's
+ * can't be: its Service is named after it.
+ *
+ * @param application the WebApplication's name
+ * @returns
+ */
+export function postgresDatabase(application: string): string {
+  return application.replaceAll("-", "_");
 }
