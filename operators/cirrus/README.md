@@ -63,8 +63,11 @@ server's pruning would.
 
 `kubectl get webapp` shows the deployed image, readiness and address.
 `kubectl describe webapp shop` shows the conditions — `Provisioned`,
-`RolledOut`, `WebhookRegistered` and `Ready` — and what each is waiting
-on.
+`RolledOut`, `WebhookRegistered`, `ReleaseChecked` and `Ready` — and
+what each is waiting on. `ReleaseChecked` is false when Cirrus couldn't
+ask GitLab for the newest release; it tries again within a couple of
+minutes, and until then runs the last release it found, or
+`spec.image.tag` if it never found one.
 
 ### What the application is given
 
