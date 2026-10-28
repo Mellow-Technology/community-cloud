@@ -495,3 +495,24 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
 
   return errors;
 }
+
+/**
+ * Where on GitLab a token for the form's project is made: the
+ * project's own access tokens, or the person's fine-grained ones. A
+ * project that hasn't been typed yet only gets the GitLab.
+ *
+ * @param form
+ * @param kind
+ * @returns
+ */
+export function gitlabTokenPage(
+  form: Pick<WebApplicationForm, "gitlabUrl" | "gitlabProject">,
+  kind: "project" | "personal",
+): string {
+  const base = (nonEmpty(form.gitlabUrl) ?? DEFAULT_GITLAB_URL).replace(/\/+$/, "");
+  if (kind === "personal") {
+    return `${base}/-/user_settings/personal_access_tokens`;
+  }
+  const project = nonEmpty(form.gitlabProject)?.replace(/^\/+|\/+$/g, "");
+  return project ? `${base}/${project}/-/settings/access_tokens` : base;
+}
