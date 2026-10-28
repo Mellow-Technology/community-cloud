@@ -22,6 +22,7 @@ import type {
   SecretSummary,
   ServiceAccount,
 } from "./types";
+import type { ClusterUsage } from "../cluster";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -83,6 +84,15 @@ export interface KubeClient {
    * @returns
    */
   listRegions(): Promise<string[]>;
+
+  /**
+   * Each node's capacity and what its kubelet says it's using, and the
+   * phase of every pod. Needs cluster-wide reads, including nodes/proxy,
+   * so for most people it's a 403.
+   *
+   * @returns
+   */
+  getClusterUsage(): Promise<ClusterUsage>;
 
   /**
    * ResourceQuotas, in one namespace or in all of them.

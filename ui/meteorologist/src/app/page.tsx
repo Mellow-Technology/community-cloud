@@ -1,6 +1,6 @@
 /**
  * @file
- * The landing page: how the applications are doing, each of them
+ * The landing page: how the cluster and the applications are doing, each of them
  * worst first, and the way to everything else.
  */
 import Link from "next/link";
@@ -13,6 +13,7 @@ import { Table } from "gui-mellow/Table";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { certificateCell } from "@/components/CertificateBadge";
+import { ClusterPanel } from "@/components/ClusterPanel";
 import { HealthBadge } from "@/components/HealthBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
@@ -27,10 +28,11 @@ import styles from "@/components/page.module.scss";
  */
 export default async function OverviewPage() {
   const kube = await getKube();
-  const [namespaces, apps, certificates] = await Promise.all([
+  const [namespaces, apps, certificates, usage] = await Promise.all([
     settle(() => kube.listNamespaces()),
     settle(() => kube.listWebApplications()),
     settle(() => kube.listCertificates()),
+    settle(() => kube.getClusterUsage()),
   ]);
 
   const counts = apps.ok ? countHealth(apps.value) : undefined;
@@ -59,6 +61,8 @@ export default async function OverviewPage() {
       </Grid>
 
       {!apps.ok && <ErrorNotice error={apps.error} title="Couldn't list applications" />}
+
+      <ClusterPanel usage={usage} />
 
       {counts && (
         <section className={styles.section}>
