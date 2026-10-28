@@ -13,7 +13,15 @@
  * HTTP status the API server gave, so a page can tell "you may not"
  * from "there's no such thing" without knowing about either client.
  */
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  SecretSummary,
+  ServiceAccount,
+} from "./types";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -160,6 +168,15 @@ export interface KubeClient {
    * @returns
    */
   listPostgresClusters(namespace?: string): Promise<PostgresCluster[]>;
+
+  /**
+   * cert-manager Certificates, in one namespace or in all of them.
+   * Empty when cert-manager isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listCertificates(namespace?: string): Promise<Certificate[]>;
 
   /**
    * WebApplications, in one namespace or in all of them.

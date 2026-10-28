@@ -9,6 +9,7 @@ import { SelectField } from "gui-mellow/Field";
 import { Table } from "gui-mellow/Table";
 import { TagList } from "gui-mellow/Tag";
 
+import { certificateCell } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
 import { PageHeader } from "@/components/PageHeader";
@@ -28,9 +29,10 @@ export const metadata: Metadata = { title: "Applications" };
 export default async function AppsPage({ searchParams }: { searchParams: Promise<{ namespace?: string }> }) {
   const { namespace } = await searchParams;
   const kube = await getKube();
-  const [apps, namespaces] = await Promise.all([
+  const [apps, namespaces, certificates] = await Promise.all([
     settle(() => kube.listWebApplications(namespace || undefined)),
     settle(() => kube.listNamespaces()),
+    settle(() => kube.listCertificates(namespace || undefined)),
   ]);
 
   return (
@@ -75,6 +77,7 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
             { label: "Name", sortable: true },
             { label: "Namespace", sortable: true },
             { label: "Health", sortable: true },
+            ...(certificates.ok ? [{ label: "Certificate", sortable: true }] : []),
             "Image",
             "Address",
             "Uses",
@@ -85,6 +88,7 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
               { value: app.metadata.name, display: <Link href={appHref(app)}>{app.metadata.name}</Link> },
               app.metadata.namespace ?? "",
               { value: HEALTH_ORDER.indexOf(health.state), display: <HealthBadge health={health} /> },
+              ...(certificates.ok ? [certificateCell(app, certificates.value)] : []),
               <span key="image" className={styles.mono}>
                 {shownImage(app)}
               </span>,

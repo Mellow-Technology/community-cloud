@@ -17,13 +17,15 @@ import { TagList } from "gui-mellow/Tag";
 import { stringify } from "yaml";
 
 import { DetailList } from "@/components/DetailList";
+import { CertificateBadge } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
-import { isNotFound, settle } from "@/lib/kube/client";
+import { describeError, isNotFound, settle } from "@/lib/kube/client";
 import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
+import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
 import { appHealth } from "@/lib/webapp/health";
 import { requestedServices, specImage } from "@/lib/webapp/present";
 
@@ -62,7 +64,10 @@ function when(iso: string | undefined): string | undefined {
 export default async function AppPage({ params }: { params: Promise<Params> }) {
   const { namespace, name } = await params;
   const kube = await getKube();
-  const found = await settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name)));
+  const [found, certificates] = await Promise.all([
+    settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
+    settle(() => kube.listCertificates(decodeURIComponent(namespace))),
+  ]);
 
   if (!found.ok) {
     if (isNotFound(found.error)) {
@@ -78,6 +83,7 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
 
   const app = found.value;
   const health = appHealth(app);
+  const certificate = certificates.ok ? certificateStatus(app, findCertificate(app, certificates.value)) : undefined;
   const status = app.status;
   const gitlab = app.spec.source?.gitlab;
   const editHref = `/apps/${namespace}/${name}/edit`;
@@ -109,6 +115,17 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
           <DetailList
             items={[
               { label: "Address", value: status?.url && <a href={status.url}>{status.url}</a> },
+              {
+                label: "Certificate",
+                value: !app.spec.hostnames?.length ? undefined : !certificates.ok ? (
+                  describeError(certificates.error)
+                ) : (
+                  <>
+                    <CertificateBadge status={certificate} />
+                    {certificate?.message && <span className={styles.detail}>{certificate.message}</span>}
+                  </>
+                ),
+              },
               { label: "Running", value: status?.deployedImage && <code>{status.deployedImage}</code> },
               { label: "Spec image", value: <code>{specImage(app)}</code> },
               {
