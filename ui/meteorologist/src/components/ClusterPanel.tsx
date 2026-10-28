@@ -14,7 +14,7 @@ import { StatusDot } from "gui-mellow/StatusDot";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
 import styles from "@/components/page.module.scss";
-import { bytesIn, summarizeCluster, type ClusterUsage } from "@/lib/cluster";
+import { bytesIn, clusterMessage, summarizeCluster, type ClusterUsage } from "@/lib/cluster";
 import { isForbidden, type Settled } from "@/lib/kube/client";
 
 /**
@@ -52,7 +52,9 @@ export function ClusterPanel({ usage }: { usage: Settled<ClusterUsage> }) {
     <section className={styles.section}>
       <h2 className={styles.heading}>Cluster</h2>
       <p className={styles.clusterStatus}>
-        <StatusDot tone={summary.tone}>{summary.label}</StatusDot>
+        <StatusDot tone={summary.tone} title={summary.label}>
+          {clusterMessage(summary.health)}
+        </StatusDot>
         {summary.reasons.length > 0 && <span className={styles.detail}>{summary.reasons.join(". ")}.</span>}
         {summary.unreported.length > 0 && (
           <span className={styles.detail}>
