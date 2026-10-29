@@ -23,6 +23,7 @@ import type {
   ServiceAccount,
 } from "./types";
 import type { ClusterUsage } from "../cluster";
+import type { DnsProvider } from "../dns/types";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -163,12 +164,73 @@ export interface KubeClient {
   setImagePullSecrets(namespace: string, name: string, secrets: string[]): Promise<void>;
 
   /**
-   * The Secrets in a namespace, by name and type only.
+   * The Secrets in a namespace, by name, type and metadata only.
    *
    * @param namespace
    * @returns
    */
   listSecrets(namespace: string): Promise<SecretSummary[]>;
+
+  /**
+   * One key of a Secret, decoded, or undefined when the Secret or the
+   * key isn't there. Only ever called on the server, for a value it
+   * uses there and then, such as a GitLab token.
+   *
+   * @param namespace
+   * @param name
+   * @param key
+   * @returns
+   */
+  readSecretValue(namespace: string, name: string, key: string): Promise<string | undefined>;
+
+  /**
+   * Makes or replaces a Secret from plain strings, as Meteorologist's
+   * own. Keys it doesn't name are left as they were.
+   *
+   * @param namespace
+   * @param name
+   * @param data
+   * @param labels
+   * @param annotations
+   */
+  applySecret(
+    namespace: string,
+    name: string,
+    data: Record<string, string>,
+    labels?: Record<string, string>,
+    annotations?: Record<string, string>,
+  ): Promise<void>;
+
+  /**
+   * Removes a Secret, if it's there.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteSecret(namespace: string, name: string): Promise<void>;
+
+  /**
+   * Every DnsProvider. Empty when Cirrus's CRD for them isn't there.
+   *
+   * @returns
+   */
+  listDnsProviders(): Promise<DnsProvider[]>;
+
+  /**
+   * Makes a DnsProvider, or sets the spec fields Meteorologist owns on
+   * an existing one, with server-side apply.
+   *
+   * @param provider
+   */
+  applyDnsProvider(provider: DnsProvider): Promise<void>;
+
+  /**
+   * Removes a DnsProvider, if it's there. Cirrus's instances for it go
+   * with it.
+   *
+   * @param name
+   */
+  deleteDnsProvider(name: string): Promise<void>;
 
   /**
    * CloudNativePG Clusters, in one namespace or in all of them. Empty
@@ -230,6 +292,7 @@ export interface KubeClient {
    * @param data
    * @param labels
    * @param type Opaque unless said
+   * @param annotations
    */
   createSecret(
     namespace: string,
@@ -237,6 +300,7 @@ export interface KubeClient {
     data: Record<string, string>,
     labels?: Record<string, string>,
     type?: string,
+    annotations?: Record<string, string>,
   ): Promise<void>;
 }
 

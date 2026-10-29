@@ -12,9 +12,13 @@
  * doesn't mean reading Cirrus's source to find the variable names.
  *
  * When a choice needs something the namespace doesn't allow, the form
- * says so beside the choice and offers to allow it there and then. The
- * same goes for the GitLab token: the Secret can be made from here
- * rather than with kubectl.
+ * says so beside the choice and offers to allow it there and then.
+ *
+ * An image from GitLab is chosen, not typed: through one of the
+ * namespace's GitLab connections (made on the namespace's GitLab page,
+ * apart from any one application), from the projects its token can
+ * see. That also tells Cirrus everything it needs to roll out new
+ * images as pipelines build them.
  *
  * The conversion to and from the resource, the validation and the
  * warnings are all in src/lib/webapp, where they're tested; this only
@@ -27,13 +31,24 @@ import { Alert } from "gui-mellow/Alert";
 import { Badge } from "gui-mellow/Badge";
 import { Button } from "gui-mellow/Button";
 import { SelectField, TextField } from "gui-mellow/Field";
+import { SegmentedControl } from "gui-mellow/SegmentedControl";
 import { Steps } from "gui-mellow/Steps";
 import { Switch } from "gui-mellow/Switch";
 
-import { createTokenSecret, saveWebApplication, setNamespaceCapability } from "@/lib/actions";
+import { saveWebApplication, setNamespaceCapability } from "@/lib/actions";
 import { enabledCapabilities, type Capability } from "@/lib/capabilities";
-import { gitlabTokenPage, validateForm, type EnvRow, type WebApplicationForm as FormModel } from "@/lib/webapp/form";
-import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_IMAGE_TAG, DEFAULT_TOKEN_KEY } from "@/lib/webapp/types";
+import { publisherOf } from "@/lib/dns/providers";
+import type { DnsProvider } from "@/lib/dns/types";
+import { CONNECTION_KEY, type GitLabConnection } from "@/lib/gitlab/connections";
+import {
+  soleConnection,
+  validateForm,
+  type EnvRow,
+  type ImageSource,
+  type WebApplicationForm as FormModel,
+} from "@/lib/webapp/form";
+import { DEFAULT_GITLAB_REF, DEFAULT_IMAGE_TAG } from "@/lib/webapp/types";
+import { GitLabImagePicker } from "./GitLabImagePicker";
 import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
 import styles from "./WebApplicationForm.module.scss";
@@ -49,6 +64,9 @@ export interface NamespaceChoice {
   hasPostgres?: boolean;
   storageQuota?: string;
   storageUsed?: string;
+  gitlabConnections?: GitLabConnection[];
+  // The DNS providers publishing its routes
+  dnsProviders?: DnsProvider[];
 }
 
 export interface WebApplicationFormProps {
@@ -80,6 +98,14 @@ export function WebApplicationForm({
   const namespace = namespaces.find((choice) => choice.name === form.namespace);
   const warnings = capabilityWarnings(form, namespace?.labels);
   const postgres = namespace && postgresNote(namespace);
+  const connections = namespace?.gitlabConnections ?? [];
+  // An application's connection that's an unmarked Secret, from
+  // before connections, is still offered
+  const connectionChoices =
+    form.gitlabTokenSecretName !== "" && !connections.some((each) => each.name === form.gitlabTokenSecretName)
+      ? [...connections, { name: form.gitlabTokenSecretName, url: form.gitlabUrl }]
+      : connections;
+  const fromGitLab = form.imageSource === "gitlab";
 
   const set = <K extends keyof FormModel>(key: K, value: FormModel[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -140,7 +166,10 @@ export function WebApplicationForm({
             value={form.namespace}
             error={shownErrors.namespace}
             hint={editing ? "An application can't move between namespaces." : undefined}
-            onChange={(event) => set("namespace", event.target.value)}
+            onChange={(event) => {
+              const chosen = namespaces.find((choice) => choice.name === event.target.value);
+              setForm((current) => ({ ...current, namespace: event.target.value, ...soleConnection(chosen) }));
+            }}
             options={[
               { value: "", label: "Choose a namespace", disabled: true },
               ...namespaces.map((choice) => ({ value: choice.name, label: choice.name })),
@@ -173,14 +202,89 @@ export function WebApplicationForm({
       title: "What it runs",
       body: (
         <div className={styles.fields}>
+          <SegmentedControl<ImageSource>
+            label="Where the image comes from"
+            value={form.imageSource}
+            onChange={(value) => set("imageSource", value)}
+            options={[
+              { value: "gitlab", label: "A GitLab project" },
+              { value: "other", label: "Any registry" },
+            ]}
+          />
+          {fromGitLab &&
+            (form.namespace === "" ? (
+              <p className={styles.note}>Choose a namespace first: its GitLab connections are what reach GitLab.</p>
+            ) : connectionChoices.length === 0 ? (
+              <Alert
+                tone="primary"
+                title={`${form.namespace} has no GitLab connections yet`}
+                actions={
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    href={`/namespaces/${encodeURIComponent(form.namespace)}/gitlab`}
+                  >
+                    Add one
+                  </Button>
+                }
+              >
+                A connection is a GitLab token kept in the namespace, shared by its applications. With one, the project
+                and its image are chosen from a list, and new images can be rolled out as they&apos;re built.
+              </Alert>
+            ) : (
+              <GitLabImagePicker
+                key={`${form.namespace}/${form.gitlabTokenSecretName}`}
+                namespace={form.namespace}
+                connections={connectionChoices}
+                connection={form.gitlabTokenSecretName}
+                project={form.gitlabProject}
+                image={form.repository}
+                error={shownErrors.gitlabTokenSecretName ?? shownErrors.gitlabProject}
+                onConnection={(connection) =>
+                  setForm((current) => ({
+                    ...current,
+                    gitlabTokenSecretName: connection.name,
+                    gitlabTokenSecretKey: CONNECTION_KEY,
+                    gitlabUrl: connection.url,
+                    gitlabProject: "",
+                  }))
+                }
+                onChoose={({ connection, url, project, image }) =>
+                  setForm((current) => ({
+                    ...current,
+                    gitlabTokenSecretName: connection,
+                    gitlabUrl: url,
+                    gitlabProject: project.path,
+                    gitlabRef:
+                      current.gitlabRef === DEFAULT_GITLAB_REF && project.defaultBranch
+                        ? project.defaultBranch
+                        : current.gitlabRef,
+                    repository: image ?? current.repository,
+                    // A first choice of project is one to keep up to date
+                    gitlab: current.gitlabProject === "" && !editing ? true : current.gitlab,
+                  }))
+                }
+                onImage={(image) => set("repository", image)}
+              />
+            ))}
           <TextField
             label="Image"
             required
             placeholder="registry.gitlab.com/group/app"
-            hint="Without the tag. This is what runs until a release from GitLab replaces it."
+            hint={
+              fromGitLab
+                ? "Filled in from the project's container registry. Without the tag."
+                : "Without the tag, such as ghcr.io/owner/app."
+            }
             {...text("repository")}
           />
-          <TextField label="Tag" required placeholder="latest" {...text("tag")} />
+          <TextField
+            label="Tag"
+            required
+            placeholder="latest"
+            hint={form.gitlab && fromGitLab ? "What runs until the first pipeline Cirrus hears about." : undefined}
+            {...text("tag")}
+          />
           <TextField
             label="Pull secrets"
             placeholder="registry-credentials"
@@ -223,8 +327,11 @@ export function WebApplicationForm({
       body: (
         <div className={styles.fields}>
           <p className={styles.note}>
-            Each hostname is served over HTTPS through the cluster Gateway, with a certificate from Let&apos;s Encrypt.
-            Point its DNS at the cluster first. Leave this empty for an application only other workloads talk to.
+            Each hostname is served over HTTPS through the cluster Gateway, with a certificate from Let&apos;s Encrypt.{" "}
+            {(namespace?.dnsProviders ?? []).length > 0
+              ? `Names in ${namespace?.dnsProviders?.flatMap((provider) => provider.spec.domains).join(", ")} are put in DNS for you; point any other name at the cluster yourself.`
+              : "Point its DNS at the cluster first."}{" "}
+            Leave this empty for an application only other workloads talk to.
           </p>
           <ListEditor
             label="Hostnames"
@@ -234,6 +341,26 @@ export function WebApplicationForm({
             error={shownErrors.hostnames}
             onChange={(hostnames) => set("hostnames", hostnames)}
           />
+          {namespace?.dnsProviders !== undefined &&
+            form.hostnames.some((hostname) => hostname.trim() !== "") &&
+            namespace.dnsProviders.length > 0 && (
+              <ul className={styles.preserved}>
+                {form.hostnames
+                  .map((hostname) => hostname.trim().toLowerCase())
+                  .filter((hostname) => hostname !== "")
+                  .map((hostname) => {
+                    const publisher = publisherOf(namespace.dnsProviders ?? [], hostname);
+                    return (
+                      <li key={hostname}>
+                        <code>{hostname}</code>{" "}
+                        {publisher
+                          ? `is published by ${publisher.metadata.name} (${publisher.spec.provider}).`
+                          : "isn't in any domain published for this namespace; point it at the cluster by hand."}
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
           {warningFor("hostnames")}
         </div>
       ),
@@ -305,78 +432,42 @@ export function WebApplicationForm({
       body: (
         <div className={styles.fields}>
           <Switch
-            label="Release from GitLab"
-            checked={form.gitlab}
+            label="Update automatically on image builds"
+            checked={form.gitlab && fromGitLab}
+            disabled={!fromGitLab}
             onChange={(event) => set("gitlab", event.target.checked)}
-            description="Each successful pipeline on the branch below publishes an image, and Cirrus rolls it out. Cirrus registers a webhook on the project to hear about them."
+            description={
+              fromGitLab ? (
+                <>
+                  When a pipeline on the branch below succeeds, Cirrus rolls out the image it built
+                  {form.gitlabProject ? (
+                    <>
+                      {" "}
+                      for <code>{form.gitlabProject}</code>
+                    </>
+                  ) : null}
+                  . It registers a webhook on the project to hear about them, and checks every few minutes in case one
+                  is missed.
+                </>
+              ) : (
+                "Only for an image from a GitLab project, chosen under What it runs. Otherwise, change the tag here to roll out a new one."
+              )
+            }
           />
-          {form.gitlab && (
+          {form.gitlab && fromGitLab && (
             <div className={styles.indented}>
-              <div className={styles.fields}>
-                <TextField label="GitLab" placeholder={DEFAULT_GITLAB_URL} {...text("gitlabUrl")} />
-                <TextField label="Project" required placeholder="group/app" {...text("gitlabProject")} />
-                <div className={styles.row}>
-                  <TextField
-                    label="Branch or tag"
-                    placeholder={DEFAULT_GITLAB_REF}
-                    hint="Whose successful pipelines are rolled out."
-                    {...text("gitlabRef")}
-                  />
-                  <TextField
-                    label="Image tag"
-                    placeholder={DEFAULT_IMAGE_TAG}
-                    hint="What the pipeline tags the image as. {commit_sha}, {short_sha} and {ref} are filled in."
-                    {...text("gitlabImageTag")}
-                  />
-                </div>
-                <div className={styles.row}>
-                  <TextField
-                    label="Token Secret"
-                    required
-                    placeholder={`${form.name || "app"}-gitlab-token`}
-                    hint="A Secret in this namespace holding a GitLab token, made below or by hand."
-                    {...text("gitlabTokenSecretName")}
-                  />
-                  <TextField
-                    label="Key in the Secret"
-                    placeholder={DEFAULT_TOKEN_KEY}
-                    {...text("gitlabTokenSecretKey")}
-                  />
-                </div>
-                <div className={`${styles.note} ${styles.noteBlock}`}>
-                  <p>
-                    Cirrus uses the token to keep its webhook on the project, and to look up pipelines and image
-                    digests. Either kind works:
-                  </p>
-                  <ul>
-                    <li>
-                      A{" "}
-                      <a href={gitlabTokenPage(form, "project")} target="_blank" rel="noreferrer">
-                        project access token
-                      </a>{" "}
-                      with the <code>api</code> scope and the Maintainer role. It belongs to the project, so it keeps
-                      working whoever leaves.
-                    </li>
-                    <li>
-                      A{" "}
-                      <a href={gitlabTokenPage(form, "personal")} target="_blank" rel="noreferrer">
-                        fine-grained personal token
-                      </a>{" "}
-                      limited to this project, with Webhook: read, create, update and delete; Pipeline: read; and
-                      Container Repository: read. Whoever makes it has to be a Maintainer of the project, since GitLab
-                      also checks what they may do, and it stops working if they lose that.
-                    </li>
-                  </ul>
-                  <p>
-                    Pulling the image is separate: that uses the namespace&apos;s registry credentials, which only need{" "}
-                    <code>read_registry</code>.
-                  </p>
-                </div>
-                <TokenSecretCreator
-                  namespace={form.namespace}
-                  app={form.name}
-                  secretKey={form.gitlabTokenSecretKey || DEFAULT_TOKEN_KEY}
-                  onCreated={(name) => set("gitlabTokenSecretName", name)}
+              <div className={styles.row}>
+                <TextField
+                  label="Branch or tag"
+                  placeholder={DEFAULT_GITLAB_REF}
+                  hint="Whose successful pipelines are rolled out."
+                  {...text("gitlabRef")}
+                />
+                <TextField
+                  label="Image tag"
+                  placeholder={DEFAULT_IMAGE_TAG}
+                  hint="What the pipeline tags the image as. {commit_sha}, {short_sha} and {ref} are filled in."
+                  {...text("gitlabImageTag")}
                 />
               </div>
             </div>
@@ -540,88 +631,6 @@ function CapabilityWarningNotice({
       {warning.message} Allowing it labels the namespace <code>{`${capability.label}=${capability.value}`}</code>.
       {error && <p className={styles.error}>{error}</p>}
     </Alert>
-  );
-}
-
-/**
- * Makes the Secret for a GitLab access token, from a token pasted in.
- *
- * @param props
- * @param props.namespace
- * @param props.app
- * @param props.secretKey the key to store the token under
- * @param props.onCreated given the new Secret's name
- * @returns
- */
-function TokenSecretCreator({
-  namespace,
-  app,
-  secretKey,
-  onCreated,
-}: {
-  namespace: string;
-  app: string;
-  secretKey: string;
-  onCreated: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [token, setToken] = useState("");
-  const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<{ ok: boolean; message: string }>();
-  const secretName = name.trim() || `${app || "app"}-gitlab-token`;
-
-  return (
-    <Disclosure title="Create the token Secret here">
-      <div className={styles.fields}>
-        <p className={styles.note}>
-          In GitLab, under the project&apos;s Settings → Access tokens, make a token with the <code>api</code> scope and
-          the Maintainer role, and paste it below. It goes straight into a Secret in {namespace || "the namespace"} and
-          isn&apos;t kept anywhere else.
-        </p>
-        <div className={styles.row}>
-          <TextField
-            label="Secret name"
-            placeholder={secretName}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <TextField
-            label="Access token"
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-          />
-        </div>
-        <div>
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={pending}
-            disabled={namespace === "" || token.trim() === ""}
-            onClick={() =>
-              startTransition(async () => {
-                const created = await createTokenSecret(namespace, secretName, secretKey, token, app);
-                if (created.ok) {
-                  setToken("");
-                  onCreated(secretName);
-                  setResult({ ok: true, message: `Made ${secretName}, and set it as the token Secret.` });
-                } else {
-                  setResult({ ok: false, message: created.error });
-                }
-              })
-            }
-          >
-            Create Secret
-          </Button>
-        </div>
-        {result && (
-          <Alert tone={result.ok ? "success" : "danger"} role="status">
-            {result.message}
-          </Alert>
-        )}
-      </div>
-    </Disclosure>
   );
 }
 

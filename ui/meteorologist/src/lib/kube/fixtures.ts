@@ -17,6 +17,8 @@
  */
 import { getCapability } from "../capabilities";
 import type { NodeUsage } from "../cluster";
+import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
+import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
 import type {
@@ -32,8 +34,9 @@ import type {
 interface FixtureStore {
   namespaces: Map<string, Namespace>;
   webapps: Map<string, WebApplication>;
-  // By namespace/name, each Secret's type
-  secrets: Map<string, string>;
+  // By namespace/name
+  secrets: Map<string, FixtureSecret>;
+  dnsProviders: Map<string, DnsProvider>;
   quotas: Map<string, ResourceQuota>;
   limitRanges: Map<string, LimitRange>;
   serviceAccounts: Map<string, ServiceAccount>;
@@ -41,6 +44,17 @@ interface FixtureStore {
   certificates: Map<string, Certificate>;
   regions: string[];
   version: number;
+}
+
+/**
+ * A Secret, as far as the pretend cluster keeps one.
+ */
+interface FixtureSecret {
+  type: string;
+  data: Record<string, string>;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  creationTimestamp: string;
 }
 
 // When the fixtures were "made", so ages on the page look plausible
@@ -270,9 +284,50 @@ function seed(): FixtureStore {
   return {
     namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
     webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
-    secrets: new Map([
-      ["team-shop/shop-gitlab-token", "Opaque"],
-      ["team-shop/pull-registry-gitlab-com", "kubernetes.io/dockerconfigjson"],
+    secrets: new Map<string, FixtureSecret>([
+      [
+        "team-shop/shop-gitlab-token",
+        {
+          type: "Opaque",
+          data: { token: "glpat-fixture" },
+          labels: { [CONNECTION_LABEL]: "true" },
+          annotations: { [URL_ANNOTATION]: "https://gitlab.com" },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
+        "team-shop/pull-registry-gitlab-com",
+        { type: "kubernetes.io/dockerconfigjson", data: {}, creationTimestamp: CREATED },
+      ],
+      [
+        `${DNS_NAMESPACE}/cirrus-dns-acme`,
+        { type: "Opaque", data: { CF_API_TOKEN: "fixture" }, creationTimestamp: CREATED },
+      ],
+    ]),
+    dnsProviders: new Map([
+      [
+        "acme",
+        {
+          apiVersion: DNS_API_VERSION,
+          kind: DNS_KIND,
+          metadata: { name: "acme", generation: 1, creationTimestamp: CREATED },
+          spec: {
+            provider: "cloudflare",
+            domains: ["example.org"],
+            namespaces: ["cc-office", "team-shop"],
+            credentialsSecret: "cirrus-dns-acme",
+            policy: "sync",
+          },
+          status: {
+            observedGeneration: 1,
+            conditions: [condition("Ready", true, "Ready")],
+            instances: [
+              { namespace: "cc-office", deployment: "cirrus-dns-acme-cc-office", ready: true },
+              { namespace: "team-shop", deployment: "cirrus-dns-acme-team-shop", ready: true },
+            ],
+          },
+        },
+      ],
     ]),
     quotas: new Map([
       [
@@ -388,10 +443,19 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.postgres === undefined) {
+  if (holder.__meteorologistFixtures?.dnsProviders === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
+}
+
+/**
+ * Now, as the API server writes times.
+ *
+ * @returns
+ */
+function now(): string {
+  return new Date().toISOString().replace(/\.\d+Z$/, "Z");
 }
 
 /**
@@ -498,13 +562,77 @@ export function fixtureClient(): KubeClient {
       return copy(replaced);
     },
 
-    createSecret: async (namespace, name, _data, _labels, type = "Opaque") => {
+    createSecret: async (namespace, name, data, labels, type = "Opaque", annotations) => {
       requireNamespace(namespace);
       const id = key(namespace, name);
       if (store().secrets.has(id)) {
         throw new KubeError(409, `secrets "${name}" already exists`, "AlreadyExists");
       }
-      store().secrets.set(id, type);
+      store().secrets.set(id, { type, data: { ...data }, labels, annotations, creationTimestamp: now() });
+    },
+
+    applySecret: async (namespace, name, data, labels, annotations) => {
+      if (namespace !== DNS_NAMESPACE) {
+        requireNamespace(namespace);
+      }
+      const id = key(namespace, name);
+      const existing = store().secrets.get(id);
+      store().secrets.set(id, {
+        type: existing?.type ?? "Opaque",
+        data: { ...existing?.data, ...data },
+        labels: { ...existing?.labels, ...labels },
+        annotations: { ...existing?.annotations, ...annotations },
+        creationTimestamp: existing?.creationTimestamp ?? now(),
+      });
+    },
+
+    readSecretValue: async (namespace, name, secretKey) => store().secrets.get(key(namespace, name))?.data[secretKey],
+
+    deleteSecret: async (namespace, name) => {
+      store().secrets.delete(key(namespace, name));
+    },
+
+    listDnsProviders: async () => copy([...store().dnsProviders.values()]),
+
+    applyDnsProvider: async (provider) => {
+      const existing = store().dnsProviders.get(provider.metadata.name);
+      const generation = (existing?.metadata.generation ?? 0) + 1;
+      const namespaces = provider.spec.namespaces ?? [];
+      // As Cirrus would report it, straight away
+      store().dnsProviders.set(
+        provider.metadata.name,
+        copy({
+          ...provider,
+          metadata: {
+            ...existing?.metadata,
+            ...provider.metadata,
+            generation,
+            creationTimestamp: existing?.metadata.creationTimestamp ?? now(),
+          },
+          spec: { ...existing?.spec, ...provider.spec },
+          status: {
+            observedGeneration: generation,
+            conditions: [
+              {
+                type: "Ready",
+                status: "True",
+                reason: "Ready",
+                observedGeneration: generation,
+                lastTransitionTime: now(),
+              },
+            ],
+            instances: namespaces.map((namespace) => ({
+              namespace,
+              deployment: `cirrus-dns-${provider.metadata.name}-${namespace}`,
+              ready: true,
+            })),
+          },
+        }),
+      );
+    },
+
+    deleteDnsProvider: async (name) => {
+      store().dnsProviders.delete(name);
     },
 
     patchNamespaceAnnotations: async (name, patch) => {
@@ -571,7 +699,13 @@ export function fixtureClient(): KubeClient {
     listSecrets: async (namespace) =>
       [...store().secrets.entries()]
         .filter(([id]) => id.startsWith(`${namespace}/`))
-        .map(([id, type]) => ({ name: id.slice(namespace.length + 1), type })),
+        .map(([id, secret]) => ({
+          name: id.slice(namespace.length + 1),
+          type: secret.type,
+          labels: secret.labels,
+          annotations: secret.annotations,
+          creationTimestamp: secret.creationTimestamp,
+        })),
 
     listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
 
