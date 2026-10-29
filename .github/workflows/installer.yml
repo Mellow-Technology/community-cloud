@@ -83,6 +83,10 @@ jobs:
           cache-dependency-path: headlamp/plugins/*/package-lock.json
       - run: bun install --frozen-lockfile
       - run: bun run build:plugins
+      # Before the rebuild below, which would hide it: a run from a
+      # checkout applies the committed database, not k8s/
+      - name: The committed embedded database matches k8s/
+        run: bun test src/test/embedded.test.ts
       - run: bun run build:embedded
       - run: bun run typecheck
       - run: bun run test
