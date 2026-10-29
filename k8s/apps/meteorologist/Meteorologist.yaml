@@ -55,7 +55,7 @@ spec:
           # Pinned, and released from a meteorologist-v<version> tag;
           # see .github/workflows/meteorologist.yml and
           # scripts/release/meteorologist.ts, which sets this
-          image: ghcr.io/mellow-technology/meteorologist:0.1.0
+          image: ghcr.io/mellow-technology/meteorologist:0.2.0
           ports:
             - name: http
               containerPort: 3000
