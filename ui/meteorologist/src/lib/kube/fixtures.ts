@@ -297,7 +297,13 @@ function seed(): FixtureStore {
       ],
       [
         "team-shop/pull-registry-gitlab-com",
-        { type: "kubernetes.io/dockerconfigjson", data: {}, creationTimestamp: CREATED },
+        {
+          type: "kubernetes.io/dockerconfigjson",
+          // Made by hand, so without Meteorologist's annotation: the
+          // form has to read the registry out of it
+          data: { ".dockerconfigjson": JSON.stringify({ auths: { "https://registry.gitlab.com": {} } }) },
+          creationTimestamp: CREATED,
+        },
       ],
       [
         `${DNS_NAMESPACE}/cirrus-dns-acme`,

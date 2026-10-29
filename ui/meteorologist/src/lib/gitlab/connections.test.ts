@@ -71,6 +71,12 @@ describe("the image to run for a project", () => {
     );
   });
 
+  test("is left to be chosen among several, none named for the project", () => {
+    expect(
+      imageFor(project, ["registry.gitlab.com/acme/shop/web", "registry.gitlab.com/acme/shop/worker"]),
+    ).toBeUndefined();
+  });
+
   test("is where the first image would go, before there are any", () => {
     expect(imageFor(project, [])).toBe("registry.gitlab.com/acme/shop");
     expect(imageFor({ ...project, registryPrefix: undefined }, [])).toBeUndefined();
