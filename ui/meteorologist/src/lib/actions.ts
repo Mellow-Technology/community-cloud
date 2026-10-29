@@ -56,6 +56,7 @@ import {
   type NamespaceForm,
 } from "./namespace/settings";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
+import { REGISTRY_ANNOTATION, normaliseRegistry } from "./webapp/registry";
 
 /**
  * What an action did: done, with anything worth handing back, or not,
@@ -272,7 +273,8 @@ export async function findGitLabImages(
     const { url, token } = await connectionWithToken(await getKube(), namespace, connection);
     const repositories = await gitLabFor(url, token).listRepositories(project.id);
     const suggested = imageFor(project, repositories);
-    const images = [...new Set([...repositories, ...(suggested ? [suggested] : [])])];
+    // Before the first image there are no repositories, only where one will go
+    const images = repositories.length > 0 ? repositories : suggested ? [suggested] : [];
     return { images, suggested };
   });
 }
@@ -382,6 +384,8 @@ async function applyNamespaceSettings(kube: KubeClient, form: NamespaceForm): Pr
       { ".dockerconfigjson": dockerConfigJson(registry) },
       CREATED_BY,
       PULL_SECRET_TYPE,
+      // So the application form can tell which images it's for
+      { [REGISTRY_ANNOTATION]: normaliseRegistry(registry.server) },
     );
   }
   await kube.setImagePullSecrets(namespace, DEFAULT_SERVICE_ACCOUNT, defaultPullSecrets(form));

@@ -42,11 +42,13 @@ import type { DnsProvider } from "@/lib/dns/types";
 import { CONNECTION_KEY, type GitLabConnection } from "@/lib/gitlab/connections";
 import {
   soleConnection,
+  splitList,
   validateForm,
   type EnvRow,
   type ImageSource,
   type WebApplicationForm as FormModel,
 } from "@/lib/webapp/form";
+import { pullSecretsFor, registryOf, type PullSecret } from "@/lib/webapp/registry";
 import { DEFAULT_GITLAB_REF, DEFAULT_IMAGE_TAG } from "@/lib/webapp/types";
 import { GitLabImagePicker } from "./GitLabImagePicker";
 import { postgresDatabase } from "@/lib/postgres";
@@ -65,6 +67,8 @@ export interface NamespaceChoice {
   storageQuota?: string;
   storageUsed?: string;
   gitlabConnections?: GitLabConnection[];
+  // Its registry credentials, and which registries each is for
+  pullSecrets?: PullSecret[];
   // The DNS providers publishing its routes
   dnsProviders?: DnsProvider[];
 }
@@ -88,6 +92,8 @@ export function WebApplicationForm({
   const router = useRouter();
   const editing = resourceVersion !== undefined;
   const [form, setForm] = useState(initial);
+  // An application that already names its credentials keeps them
+  const [pullAuto, setPullAuto] = useState(initial.imagePullSecrets.trim() === "");
   const [namespaces, setNamespaces] = useState(initialNamespaces);
   const [attempted, setAttempted] = useState(false);
   const [saveError, setSaveError] = useState<string>();
@@ -106,6 +112,23 @@ export function WebApplicationForm({
       ? [...connections, { name: form.gitlabTokenSecretName, url: form.gitlabUrl }]
       : connections;
   const fromGitLab = form.imageSource === "gitlab";
+
+  // Registry credentials follow the image, until someone chooses them:
+  // the namespace's Secrets for the image's registry. Worked out here
+  // rather than kept in step, so whatever changes the image changes them.
+  const imageRegistry = registryOf(form.repository);
+  const pullSelected = pullAuto
+    ? pullSecretsFor(form.repository, namespace?.pullSecrets ?? [])
+    : splitList(form.imagePullSecrets);
+  const effective =
+    pullAuto && namespace?.pullSecrets !== undefined ? { ...form, imagePullSecrets: pullSelected.join(", ") } : form;
+  // Every Secret the namespace has, and any named that it doesn't
+  const pullChoices = [
+    ...(namespace?.pullSecrets ?? []),
+    ...pullSelected
+      .filter((name) => !(namespace?.pullSecrets ?? []).some((secret) => secret.name === name))
+      .map((name) => ({ name, registries: [] })),
+  ];
 
   const set = <K extends keyof FormModel>(key: K, value: FormModel[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -144,7 +167,7 @@ export function WebApplicationForm({
       return;
     }
     startSaving(async () => {
-      const result = await saveWebApplication(form, resourceVersion);
+      const result = await saveWebApplication(effective, resourceVersion);
       if (result.ok) {
         router.push(`/apps/${encodeURIComponent(result.value.namespace)}/${encodeURIComponent(result.value.name)}`);
         router.refresh();
@@ -285,12 +308,74 @@ export function WebApplicationForm({
             hint={form.gitlab && fromGitLab ? "What runs until the first pipeline Cirrus hears about." : undefined}
             {...text("tag")}
           />
-          <TextField
-            label="Pull secrets"
-            placeholder="registry-credentials"
-            hint="Usually empty: the namespace's own registry credentials are used. Name Secrets here, separated by commas, only to use these instead."
-            {...text("imagePullSecrets")}
-          />
+          {namespace?.pullSecrets === undefined ? (
+            <TextField
+              label="Pull secrets"
+              placeholder="registry-credentials"
+              hint="Usually empty: the namespace's own registry credentials are used. Name Secrets here, separated by commas, only to use these instead."
+              {...text("imagePullSecrets")}
+            />
+          ) : (
+            <fieldset className={styles.list}>
+              <legend className={styles.legend}>Registry credentials</legend>
+              {pullChoices.length === 0 ? (
+                <p className={styles.note}>
+                  {form.namespace} has no registry credentials. A public image needs none; for a private one, add them
+                  under{" "}
+                  <a href={`/namespaces/${encodeURIComponent(form.namespace)}`}>
+                    the namespace&apos;s private registries
+                  </a>
+                  .
+                </p>
+              ) : (
+                pullChoices.map((secret) => (
+                  <Switch
+                    key={secret.name}
+                    label={secret.name}
+                    checked={pullSelected.includes(secret.name)}
+                    description={
+                      secret.registries.length > 0
+                        ? `For ${secret.registries.join(", ")}`
+                        : "For a registry it doesn't name"
+                    }
+                    onChange={(event) => {
+                      setPullAuto(false);
+                      set(
+                        "imagePullSecrets",
+                        (event.target.checked
+                          ? [...pullSelected, secret.name]
+                          : pullSelected.filter((name) => name !== secret.name)
+                        ).join(", "),
+                      );
+                    }}
+                  />
+                ))
+              )}
+              {pullChoices.length > 0 && (
+                <p className={styles.note}>
+                  {pullAuto
+                    ? imageRegistry === undefined
+                      ? "Chosen for you once there's an image: the credentials for its registry."
+                      : pullSelected.length > 0
+                        ? `Chosen for you: the credentials for ${imageRegistry}.`
+                        : `None of these are for ${imageRegistry}, so none are named; a public image needs none.`
+                    : "Chosen by hand."}{" "}
+                  {!pullAuto && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setPullAuto(true);
+                        set("imagePullSecrets", "");
+                      }}
+                    >
+                      Choose for me
+                    </Button>
+                  )}
+                </p>
+              )}
+            </fieldset>
+          )}
         </div>
       ),
     },

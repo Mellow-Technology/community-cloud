@@ -11,14 +11,17 @@
  * image stays editable, since a pipeline may push somewhere the
  * registry doesn't list yet.
  */
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Alert } from "gui-mellow/Alert";
-import { Button } from "gui-mellow/Button";
-import { SelectField, TextField } from "gui-mellow/Field";
+import { ComboboxField, type ComboboxOption } from "gui-mellow/Combobox";
+import { SelectField } from "gui-mellow/Field";
 
 import { findGitLabImages, findGitLabProjects } from "@/lib/actions";
 import type { GitLabConnection, GitLabProject } from "@/lib/gitlab/connections";
 import styles from "./WebApplicationForm.module.scss";
+
+// How long typing has to pause before GitLab is searched
+const SEARCH_DELAY_MS = 250;
 
 export interface GitLabChoice {
   connection: string;
@@ -62,33 +65,45 @@ export function GitLabImagePicker({
   onChoose: (choice: GitLabChoice) => void;
   onImage: (image: string) => void;
 }) {
-  const [search, setSearch] = useState("");
   const [projects, setProjects] = useState<GitLabProject[]>();
   const [images, setImages] = useState<string[]>([]);
   const [problem, setProblem] = useState<string>();
-  const [searching, startSearching] = useTransition();
+  const [searching, setSearching] = useState(false);
+  // What the shown projects were searched for
+  const [query, setQuery] = useState("");
   const [looking, startLooking] = useTransition();
   const chosen = connections.find((each) => each.name === connection);
+  // Only the newest search's answer is shown, however the answers arrive
+  const latest = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const find = (text: string) =>
-    startSearching(async () => {
-      setProblem(undefined);
-      const found = await findGitLabProjects(namespace, connection, text);
-      if (found.ok) {
-        setProjects(found.value);
-      } else {
-        setProjects(undefined);
-        setProblem(found.error);
-      }
-    });
+  const find = async (text: string) => {
+    const asked = (latest.current += 1);
+    setSearching(true);
+    const found = await findGitLabProjects(namespace, connection, text);
+    if (asked !== latest.current) {
+      return;
+    }
+    setSearching(false);
+    setQuery(text);
+    setProblem(found.ok ? undefined : found.error);
+    setProjects(found.ok ? found.value : undefined);
+  };
+
+  // Typing searches GitLab once it pauses, rather than on every key
+  const search = (text: string) => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => void find(text), SEARCH_DELAY_MS);
+  };
 
   // The newest projects, as soon as there's a connection to ask with.
   // The form keys this by namespace and connection, so a change of
   // either starts afresh rather than showing the last one's projects.
   useEffect(() => {
     if (namespace !== "" && connection !== "") {
-      find("");
+      search("");
     }
+    return () => clearTimeout(timer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [namespace, connection]);
 
@@ -111,12 +126,13 @@ export function GitLabImagePicker({
     });
   };
 
-  // The chosen project stays listed even before a search finds it
+  // The chosen project stays listed, unless a search has left it out
   const listed = projects ?? [];
-  const options = [
-    { value: "", label: projects === undefined ? "Searching…" : "Choose a project", disabled: true },
-    ...(project !== "" && !listed.some((each) => each.path === project) ? [{ value: project, label: project }] : []),
-    ...listed.map((each) => ({ value: each.path, label: each.path })),
+  const options: ComboboxOption[] = [
+    ...(project !== "" && query === "" && !listed.some((each) => each.path === project)
+      ? [{ value: project, label: project }]
+      : []),
+    ...listed.map((each) => ({ value: each.path, label: each.path, description: each.name })),
   ];
 
   return (
@@ -150,38 +166,19 @@ export function GitLabImagePicker({
       />
       {connection !== "" && (
         <>
-          <div className={styles.listRow}>
-            <TextField
-              label="Find a project"
-              className={styles.grow}
-              placeholder="group/app"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  find(search);
-                }
-              }}
-            />
-            <Button variant="secondary" size="sm" loading={searching} onClick={() => find(search)}>
-              Search
-            </Button>
-          </div>
-          <SelectField
+          <ComboboxField
             label="Project"
             required
+            placeholder="Search by name or path"
             value={project}
-            error={connection !== "" ? error : undefined}
-            hint={
-              projects !== undefined && projects.length === 0
-                ? "The token can't see any projects matching that. Is it a member of the project?"
-                : looking
-                  ? "Looking in its container registry…"
-                  : undefined
-            }
-            onChange={(event) => choose(event.target.value)}
             options={options}
+            filter={false}
+            loading={searching}
+            onInputChange={search}
+            onChange={choose}
+            emptyMessage="The token can't see a project matching that. Is it a member of the project?"
+            error={error}
+            hint={looking ? "Looking in its container registry…" : "The most recently active first. Type to search."}
           />
           {images.length > 1 && (
             <SelectField
