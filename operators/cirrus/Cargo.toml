@@ -1,6 +1,6 @@
 [package]
 name = "cirrus"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Runs web applications on Community Cloud: their workloads, what they depend on, and their rollouts"
