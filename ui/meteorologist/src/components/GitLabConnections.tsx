@@ -80,7 +80,7 @@ export function GitLabConnections({
   return (
     <div className={styles.form}>
       <section className={pageStyles.section}>
-        <h2 className={pageStyles.heading}>Connections</h2>
+        <h2 className={pageStyles.heading}>GitLab connections</h2>
         {connections.length === 0 ? (
           <p className={pageStyles.empty}>None yet. Add one below, and applications here can choose their project.</p>
         ) : (
@@ -107,7 +107,7 @@ export function GitLabConnections({
       </section>
 
       <section className={pageStyles.section}>
-        <h2 className={pageStyles.heading}>Add a connection</h2>
+        <h2 className={pageStyles.heading}>Add a GitLab connection</h2>
         <div className={styles.fields}>
           <div className={`${styles.note} ${styles.noteBlock}`}>
             <p>
@@ -132,10 +132,23 @@ export function GitLabConnections({
                 <a href={pages.personal} target="_blank" rel="noreferrer">
                   fine-grained personal token
                 </a>
-                . Under <em>User</em>, Project: Read, which is what lists projects. Under <em>Group and project</em>,
-                for the groups or projects it&apos;s for: Project: Read; Webhook: Read, Create, Update and Delete;
-                Pipeline: Read; and Container Repository: Read. Whoever makes it has to be a Maintainer of those
-                projects, since GitLab also checks what they may do, and it stops working if they lose that.
+                , with these permissions:
+                <ul>
+                  <li>
+                    Under <em>User</em>: Project: Read, which is what lists projects
+                  </li>
+                  <li>
+                    Under <em>Group and project</em>, for the groups or projects it&apos;s for:
+                    <ul>
+                      <li>Project: Read</li>
+                      <li>Webhook: Read, Create, Update and Delete</li>
+                      <li>Pipeline: Read</li>
+                      <li>Container Repository: Read</li>
+                    </ul>
+                  </li>
+                </ul>
+                Whoever makes it has to be a Maintainer of those projects, since GitLab also checks what they may do,
+                and it stops working if they lose that.
               </li>
             </ul>
             <p>

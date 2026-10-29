@@ -222,7 +222,7 @@ export function WebApplicationForm({
                   <Button
                     size="sm"
                     variant="secondary"
-                    href={`/namespaces/${encodeURIComponent(form.namespace)}/gitlab`}
+                    href={`/namespaces/${encodeURIComponent(form.namespace)}?tab=integration`}
                   >
                     Add one
                   </Button>

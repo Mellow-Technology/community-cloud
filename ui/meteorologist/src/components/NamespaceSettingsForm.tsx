@@ -191,7 +191,7 @@ export function NamespaceSettingsForm({ initial, existing, regions }: NamespaceS
       ),
     },
     {
-      title: "Each container, unless it says otherwise",
+      title: "Default container resource limits",
       body: (
         <div className={styles.fields}>
           <p className={styles.note}>
