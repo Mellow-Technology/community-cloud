@@ -23,6 +23,7 @@ import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
 import { buildAllocationValues } from "./allocations.ts";
 import { buildObjectStorageValues } from "./objectStorage.ts";
+import { buildProjectSendValues } from "./projectsend.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import { buildMailValues } from "./mail.ts";
@@ -421,6 +422,10 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
       region: "us-east-1",
     };
   }
+
+  // Where ProjectSend keeps its files, from "projectsend.storage", as
+  // something its manifests can test with an "if". See projectsend.ts.
+  values.projectsend = buildProjectSendValues(rawConfig);
 
   // The Authentik group whose members administer the cluster, signed
   // in through Headlamp. See ClusterSignIn.ts.

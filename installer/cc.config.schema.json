@@ -466,6 +466,10 @@
             "storage": {
               "type": "string",
               "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."
+            },
+            "files": {
+              "type": "string",
+              "description": "ProjectSend, for sharing files with clients, signed into through Authentik."
             }
           },
           "additionalProperties": {
@@ -477,6 +481,17 @@
           "properties": {
             "secretKey": {
               "type": "string"
+            }
+          }
+        },
+        "projectsend": {
+          "type": "object",
+          "description": "ProjectSend, from the projectsend package.",
+          "properties": {
+            "storage": {
+              "type": "string",
+              "enum": ["local", "s3"],
+              "description": "Where ProjectSend keeps the files people share. \"local\" is a volume on a node's disks, through TopoLVM; \"s3\" is a bucket in SeaweedFS, which needs the seaweedfs package and values.domain.storage, since downloads are links to the bucket. Either way the size is storage.allocations.projectsendGb. Defaults to \"local\". Chosen once: changing it later doesn't move the files already there."
             }
           }
         },
@@ -808,6 +823,16 @@
               "type": "integer",
               "minimum": 1,
               "description": "Each SeaweedFS volume server. Defaults to 50."
+            },
+            "mariadbGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The shared MariaDB, cc-mariadb, for the applications that need MySQL. Defaults to 10."
+            },
+            "projectsendGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ProjectSend's files: its volume, or with values.projectsend.storage \"s3\", its bucket's quota. Defaults to 50."
             }
           }
         },

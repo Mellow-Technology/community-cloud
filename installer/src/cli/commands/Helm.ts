@@ -971,6 +971,37 @@ export function buildSinglePackageBundle(name: string) {
 }
 
 /**
+ * Build a bundle that installs a few packages in turn, and nothing
+ * else.
+ *
+ * For packages that only make sense together, where one is what the
+ * next requires — the MariaDB operator and its resource types, which
+ * come as two charts. Each is checked and installed as it would be on
+ * its own, in order, so each one's requirements are there by the time
+ * they're checked. A command two of them share, like the check that
+ * Helm is there, runs once.
+ *
+ * @param names the packages, in the order they go in
+ * @returns the bundle's commands, as a function of the configuration
+ */
+export function buildPackagesBundle(names: string[]) {
+  return (config: CloudConfig): CommandSpec[] => {
+    const seen = new Set<string>();
+
+    return names
+      .flatMap((name) => buildSinglePackageBundle(name)(config))
+      .filter((command) => {
+        if (seen.has(command.name)) {
+          return false;
+        }
+
+        seen.add(command.name);
+        return true;
+      });
+  };
+}
+
+/**
  * Check everything a package needs is already on the cluster.
  *
  * Asked with the same probe as each one's own check that it's

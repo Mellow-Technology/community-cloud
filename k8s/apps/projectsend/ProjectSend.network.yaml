@@ -1,0 +1,93 @@
+# How ProjectSend is reached.
+#
+# A ListenerSet on the cluster Gateway, as for Documenso: the hostname
+# and its certificate belong to ProjectSend, the address and the Envoy
+# serving it are shared. cc-office carries the label the Gateway takes
+# listeners from.
+#
+# Everything is routed. ProjectSend has its own sign in, through
+# Authentik or a password, and the links it sends clients to download
+# with work without an account, so there's nothing to gate.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.files }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.files }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: projectsend-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: projectsend
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.files }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: projectsend
+          port: 80
+      # Downloads and uploads take as long as they take. Envoy otherwise
+      # ends a request that hasn't finished in 15 seconds, which is a
+      # download of anything much bigger than a document; zero turns
+      # the limit off.
+      timeouts:
+        request: 0s
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: projectsend-redirect
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: projectsend
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.files }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

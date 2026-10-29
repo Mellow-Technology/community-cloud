@@ -1,0 +1,117 @@
+# What ProjectSend is told before anyone uses it.
+#
+# ProjectSend keeps signing in through another provider, and where
+# files go, as settings in its database, changed from its admin pages.
+# There's no environment variable for either, deliberately: upstream
+# would rather a setting have one home. So the pod's first container
+# runs this before ProjectSend starts, every time, through the image's
+# own entrypoint:
+#
+# 1. waits for the database, and brings it up to date as the image
+#    would on start;
+# 2. points the OpenID Connect sign in at Authentik, with the client in
+#    the projectsend-oidc Secret;
+# 3. with "values.projectsend.storage" "s3", points uploads at the
+#    bucket, with its keys from projectsend-s3.
+#
+# Through ProjectSend's own models rather than SQL, so the client
+# secret and the bucket's key are encrypted with its application key
+# the way the admin pages would, and its caches of both are cleared.
+#
+# What's the installer's is kept in step on every start: the client's
+# ID, secret and issuer, and the bucket. What's an administrator's —
+# whether the sign in is switched on, who it lets in — is only set the
+# first time, and left alone after.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: projectsend-provision
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  provision.sh: |
+    #!/bin/sh
+    set -eu
+    cd /var/www/html
+
+    # As the image's entrypoint waits, for a database that may still be
+    # coming up on a first install
+    i=0
+    until su-exec www-data php artisan db:show --quiet > /dev/null 2>&1; do
+      i=$((i + 1))
+      if [ "$i" -ge 300 ]; then
+        echo "projectsend: gave up waiting for the database after 300s:" >&2
+        su-exec www-data php artisan db:show >&2 || true
+        exit 1
+      fi
+      sleep 1
+    done
+
+    # The settings tables have to be there to be written to. Running it
+    # again as ProjectSend starts finds nothing left to do.
+    su-exec www-data php artisan projectsend:update
+
+    su-exec www-data php artisan tinker --execute="require '/opt/community-cloud/provision.php';"
+
+  provision.php: |
+    <?php
+
+    use App\Modules\Identity\Social\OidcDiscovery;
+    use App\Modules\Identity\Social\SocialProvider;
+    use App\Modules\Identity\Social\SocialSettings;
+    use App\Modules\Platform\Settings\ExternalStorageConfigApplier;
+    use App\Modules\Platform\Settings\ExternalStorageSettings;
+    use App\Modules\Platform\Settings\StorageProvider;
+
+    $required = function (string $name): string {
+        $value = getenv($name);
+        if (! is_string($value) || $value === '') {
+            throw new RuntimeException("projectsend: {$name} isn't set");
+        }
+
+        return $value;
+    };
+
+    // Signing in through Authentik
+    $oidc = SocialSettings::for(SocialProvider::Oidc);
+    $first = ! $oidc->exists;
+    $oidc->client_id = $required('CC_OIDC_CLIENT_ID');
+    $oidc->client_secret = $required('CC_OIDC_CLIENT_SECRET');
+    $oidc->issuer_url = $required('CC_OIDC_ISSUER');
+
+    if ($first) {
+        $oidc->enabled = true;
+        // Authentik vouches for addresses (see ProjectSend.blueprint.yaml),
+        // and an unverified one may never take over an existing account
+        $oidc->require_verified_email = true;
+        // Anyone Authentik lets through who has no account yet gets one,
+        // as a client, ready to use. Staff are made in ProjectSend, and
+        // sign in through Authentik by having the same address there.
+        $oidc->auto_provision = true;
+        $oidc->auto_approve = true;
+    }
+
+    $oidc->save();
+    app(OidcDiscovery::class)->forget($oidc->issuer_url);
+    echo "projectsend: signing in through Authentik at {$oidc->issuer_url}\n";
+
+    // Files in the bucket, when that's the choice. Left alone otherwise,
+    // so an installation an administrator pointed somewhere else stays
+    // pointed there.
+    if (getenv('CC_STORAGE') === 's3') {
+        $storage = ExternalStorageSettings::current();
+        $storage->active = true;
+        $storage->provider = StorageProvider::S3;
+        $storage->use_instance_role = false;
+        $storage->key = $required('CC_S3_ACCESS_KEY');
+        $storage->secret = $required('CC_S3_SECRET_KEY');
+        $storage->bucket = $required('CC_S3_BUCKET');
+        $storage->region = $required('CC_S3_REGION');
+        $storage->endpoint = $required('CC_S3_ENDPOINT');
+        $storage->use_path_style = true;
+        $storage->root = null;
+        $storage->save();
+        app(ExternalStorageConfigApplier::class)->flush();
+        echo "projectsend: keeping files in the {$storage->bucket} bucket at {$storage->endpoint}\n";
+    }

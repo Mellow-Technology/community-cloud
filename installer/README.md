@@ -317,8 +317,9 @@ manifests alone. `true` is shorthand for enabled, and
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
-`mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
-`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`, `cirrus`,
+`mariadb-operator-crds`, `mariadb-operator`, `mattermost-operator`,
+`headlamp`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
+`mattermost`, `picoclaw`, `plane`, `projectsend`, `cirrus`,
 `meteorologist`.
 Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
@@ -352,6 +353,18 @@ other bucket needs keys or a link signed with them. See
 `community-cloud` and, through it, the one Redis the applications in
 `cc-office` share, with its password
 in the `cc-redis` Secret there.
+
+`mariadb-operator` installs the MariaDB operator into `community-cloud`
+and, through it, `cc-mariadb`, the one MariaDB the applications in
+`cc-office` that need MySQL share, with its root password in the
+`cc-mariadb` Secret there. The cluster's databases are Postgres; this
+is for the ones that can't be, like ProjectSend. As with cc-postgres,
+an application asks for its own `Database`, `User` and `Grant`, and
+only the operator connects as root. Its resource types are a chart of
+their own, `mariadb-operator-crds`, which the operator requires.
+Removing that release removes every MariaDB with it, so nothing should.
+The `mariadb` bundle installs both. There are no backups of
+`cc-mariadb` yet.
 
 `rabbitmq-operator` installs the RabbitMQ team's Cluster Operator and
 Messaging Topology Operator, vendored at pinned versions in
@@ -393,8 +406,8 @@ its first administrator with `values.adminEmail` and the password in
 the `plane-admin` Secret, before anyone else can claim its admin
 pages.
 
-`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw` and `plane` are
-applications in `cc-office`, each with a ListenerSet of its own on the
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`, `plane` and
+`projectsend` are applications in `cc-office`, each with a ListenerSet of its own on the
 cluster Gateway. Any of them can be installed on its own, into a
 cluster that already has the rest:
 
@@ -454,6 +467,33 @@ add `ADMIN` to their `roles` in the `User` table.
 Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
+
+ProjectSend shares files with clients, on `values.domain.files`, and
+signs people in through Authentik over OpenID Connect, waiting for it
+as Documenso does. It only runs on MySQL, so its database is in
+`cc-mariadb` and it brings `mariadb-operator` with it, as well as
+`redis-operator` for its sessions, cache and queue. Its files are in
+one of two places, chosen with `values.projectsend.storage`:
+
+- `local`, the default: a volume on a node's disks, through TopoLVM.
+- `s3`: a bucket in SeaweedFS. ProjectSend hands a download over as a
+  link signed for the bucket, so it talks to SeaweedFS on
+  `values.domain.storage`, where a browser can follow the link.
+  Preflight checks that `seaweedfs` is enabled and that hostname is
+  set.
+
+Either way the size is `storage.allocations.projectsendGb`. The choice
+is made once: changing it later starts new uploads in the new place
+and moves nothing. ProjectSend keeps its sign in and storage settings
+in its database rather than its environment, so each time it starts,
+a first container writes them there through its own models: the
+Authentik client and, for `s3`, the bucket (see
+`ProjectSend.provision.yaml`). The first administrator is made with
+`values.adminEmail` and the password in the `projectsend-admin`
+Secret; signing in through Authentik with the same address is the
+same account. Anyone else Authentik lets through gets a client account
+of their own, so as with Documenso, who may sign in is decided by what
+is bound to the application in Authentik.
 
 Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
 through Authentik too, and then talks to the Kubernetes API as
@@ -583,8 +623,8 @@ node's `sshHost`.
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
 `domain.billing`, `domain.billingApi`, `domain.signing`, `domain.plane`,
-`domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
-`authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
+`domain.headlamp`, `domain.storage`, `domain.files`, `clusterAdminGroup`,
+`projectsend.storage` and `authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
 members are cluster admins through Headlamp or kubectl, `k8s-admins`
 unless it's set; it has to start with `k8s-`, which preflight checks.
 `authentik.secretKey` signs Authentik's sessions: keep it, since a new
@@ -603,7 +643,8 @@ would have been worked out:
 | `networkDevices` | The shared interface list. |
 | `storageControllerReplicas` | How many TopoLVM controllers run: one per `storage-local` node, at least 1 and at most 2. They insist on separate nodes, so a replica with no node of its own never schedules and the install waits for it forever. Set it to run more on a larger cluster. |
 | `mail` | [`smtp`](#smtp), for the namespace being rendered. |
-| `databaseVolumeSize`, `objectStorageVolumeSize` | `storage.allocations`: `databaseGb` (30 by default) and `objectStorageGb` (50). |
+| `databaseVolumeSize`, `objectStorageVolumeSize`, `mariadbVolumeSize`, `projectsendVolumeSize` | `storage.allocations`: `databaseGb` (30 by default), `objectStorageGb` (50), `mariadbGb` (10) and `projectsendGb` (50). |
+| `projectsend` | `projectsend.storage`, `local` unless it's `s3`, and `projectsend.s3` for the manifests to test. |
 | `objectStorage` | The cluster's S3 gateway: `endpoint`, `host` (`seaweed-s3.seaweedfs.svc:8333`) and `region`. |
 | `clusterAdminGroup` | `k8s-admins`, unless `values.clusterAdminGroup` names another `k8s-` group. |
 | `headlampPlugins`, `headlampPluginsRevision` | The Headlamp plugins built into the installer, and a revision that changes with them so Headlamp restarts for a new build. |

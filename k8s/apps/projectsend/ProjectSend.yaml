@@ -1,0 +1,188 @@
+# ProjectSend
+#
+# The official image, which is the whole application in one container:
+# nginx, PHP, the queue workers and the scheduler, under supervisord.
+# Its database is in cc-mariadb and its sessions, cache and queue in
+# the shared Redis, so what it keeps on disk is the files people share
+# — on a volume, or in a bucket, from ProjectSend.storage.yaml — and
+# what it makes from them, which can be made again.
+#
+# One replica, replaced rather than rolled: the volume is local and can
+# only be mounted on one node, and two copies starting together would
+# both migrate the database.
+apiVersion: v1
+kind: Service
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: projectsend
+    role: server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: projectsend
+      role: server
+  template:
+    metadata:
+      labels:
+        app: projectsend
+        role: server
+        app.kubernetes.io/managed-by: "community-cloud"
+      annotations:
+        # Changes when the mail server does, so the pod is replaced and
+        # starts with the new one. Nothing restarts it for a changed
+        # ConfigMap or Secret otherwise.
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      initContainers:
+        # Points ProjectSend at Authentik, and at the bucket when there
+        # is one, before it starts. See ProjectSend.provision.yaml. The
+        # image's entrypoint sets the storage up first, then runs it.
+        - name: provision
+          image: projectsend/projectsend:2.8.0
+          imagePullPolicy: IfNotPresent
+          command: ["projectsend-entrypoint"]
+          args: ["sh", "/opt/community-cloud/provision.sh"]
+          envFrom: &envFrom
+            - configMapRef:
+                name: projectsend
+          env: &env
+            - name: APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-app-key
+                  key: password
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-db
+                  key: password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-redis
+                  key: password
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-admin
+                  key: password
+            - name: CC_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-oidc
+                  key: username
+            - name: CC_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-oidc
+                  key: password
+{{ if .Values.projectsend.s3 }}
+            # Written by the SeaweedFS operator, so the pod waits until
+            # the bucket's keys exist
+            - name: CC_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-s3
+                  key: accessKey
+            - name: CC_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: projectsend-s3
+                  key: secretKey
+{{ end }}
+            # Optional, so a cluster without a mail server, and so
+            # without the Secret, still starts
+            - name: MAIL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: username
+                  optional: true
+            - name: MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cc-smtp
+                  key: password
+                  optional: true
+          volumeMounts: &volumeMounts
+            - name: storage
+              mountPath: /var/www/html/storage
+            - name: provision
+              mountPath: /opt/community-cloud
+              readOnly: true
+      containers:
+        - name: projectsend
+          image: projectsend/projectsend:2.8.0
+          imagePullPolicy: IfNotPresent
+          envFrom: *envFrom
+          env: *env
+          ports:
+            - name: http
+              containerPort: 80
+          # The entrypoint migrates the database again before it starts
+          # listening, which the provisioning has already done, so this
+          # is quick after the first time
+          startupProbe:
+            httpGet:
+              path: /up
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: 250m
+          volumeMounts: *volumeMounts
+      volumes:
+        # Its "storage" directory: uploaded files on the volume, and
+        # what's made from them — thumbnails, previews, zips, chunks of
+        # uploads under way. With the files in a bucket only the last of
+        # those is here, and all of it can be made again.
+        - name: storage
+{{ if .Values.projectsend.s3 }}
+          emptyDir: {}
+{{ else }}
+          persistentVolumeClaim:
+            claimName: projectsend-files
+{{ end }}
+        - name: provision
+          configMap:
+            name: projectsend-provision

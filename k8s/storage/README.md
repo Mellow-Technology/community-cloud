@@ -219,9 +219,12 @@ rather than in each manifest:
 |---|---|---|
 | `databaseGb` | The shared Postgres cluster, `cc-postgres` | 30 |
 | `objectStorageGb` | Each of SeaweedFS's volume servers | 50 |
+| `mariadbGb` | The shared MariaDB, `cc-mariadb`, with the `mariadb-operator` package | 10 |
+| `projectsendGb` | ProjectSend's files: its volume, or with `values.projectsend.storage` `s3`, its bucket's quota instead | 50 |
 
-The manifests read these back as `.Values.databaseVolumeSize` and
-`.Values.objectStorageVolumeSize`. SeaweedFS claims `objectStorageGb`
+The manifests read these back as `.Values.databaseVolumeSize`,
+`.Values.objectStorageVolumeSize`, `.Values.mariadbVolumeSize` and
+`.Values.projectsendVolumeSize`. SeaweedFS claims `objectStorageGb`
 once per volume server. The classes allow expansion, so a
 size can be raised and the claim grows to match on the next install.
 A size can't be lowered. The sum has to fit on the storage nodes,

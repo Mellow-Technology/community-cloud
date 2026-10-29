@@ -25,6 +25,8 @@ declare module "bun:sqlite" {
   }
 
   export class Database {
+    // Opened from a file by the test that checks the committed copy
+    constructor(filename?: string, options?: { readonly?: boolean; create?: boolean });
     static deserialize(contents: Uint8Array): Database;
     query(sql: string): Statement;
   }

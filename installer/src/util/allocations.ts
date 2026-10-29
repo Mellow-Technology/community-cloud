@@ -53,6 +53,22 @@ export const ALLOCATIONS: Allocation[] = [
     // Too large and it can't be placed on a smaller node at all.
     defaultGb: 50,
   },
+  {
+    key: "mariadbGb",
+    value: "mariadbVolumeSize",
+    description: "The shared MariaDB, for the applications that need MySQL",
+    // Smaller than Postgres's: it's there for the few applications
+    // that can't use Postgres, and the claim can be grown later
+    defaultGb: 10,
+  },
+  {
+    key: "projectsendGb",
+    value: "projectsendVolumeSize",
+    description: "ProjectSend's files: its volume, or its bucket's quota when they're kept in S3",
+    // The files people share, so more than the databases. In S3 this
+    // is the bucket's quota rather than a claim on a node's disks.
+    defaultGb: 50,
+  },
 ];
 
 /**
