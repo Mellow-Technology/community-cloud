@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { bytesIn, nodeInterface, summarizeCluster, type NodeUsage } from "./cluster";
+import { bytesIn, clusterMessage, nodeInterface, summarizeCluster, type NodeUsage } from "./cluster";
 
 const GiB = 2 ** 30;
 
@@ -78,4 +78,10 @@ test("bytes share their total's unit", () => {
   expect(bytesIn(12 * GiB, 64 * GiB)).toEqual({ value: 12, unit: "GiB" });
   expect(bytesIn(512 * 2 ** 20, 64 * GiB)).toEqual({ value: 0.5, unit: "GiB" });
   expect(bytesIn(3 * 2 ** 40)).toEqual({ value: 3, unit: "TiB" });
+});
+
+test("the status line has something to say for every state", () => {
+  expect(clusterMessage("green", 0)).toBe("Huzzah!");
+  expect(clusterMessage("red", 0.99)).toBe("Rekt 😭");
+  expect(clusterMessage("yellow", 0.5)).toBe("YOLO");
 });

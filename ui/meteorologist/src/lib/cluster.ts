@@ -88,6 +88,27 @@ const PRESENTATION: Record<ClusterHealth, { tone: HealthTone; label: string }> =
   red: { tone: "danger", label: "In trouble" },
 };
 
+// What the status line says, picked at random, as on the homepage. The
+// plain label is on hover, and the reasons underneath, for whoever
+// doesn't speak Turtle.
+const MESSAGES: Record<ClusterHealth, string[]> = {
+  green: ["Huzzah!", "Make it so", "This is the way", "I have spoken"],
+  yellow: ["Wiggin' out 😒, we're looking into it", "YOLO", "Awkward Turtle 🐢"],
+  red: ["I can't even", "We can't hear you over the sound of all these alarms 🚨", "Rekt 😭"],
+};
+
+/**
+ * Something to say about the cluster's health.
+ *
+ * @param health
+ * @param random a number from 0 up to 1
+ * @returns
+ */
+export function clusterMessage(health: ClusterHealth, random: number = Math.random()): string {
+  const messages = MESSAGES[health];
+  return messages[Math.floor(random * messages.length)] ?? messages[0]!;
+}
+
 /**
  * The one interface whose traffic stands for a node's. On a CNI not
  * listed, the kubelet's default interface, then the first physical
