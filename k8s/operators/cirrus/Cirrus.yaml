@@ -43,6 +43,10 @@ spec:
             # Where GitLab reaches the webhooks; Cirrus.network.yaml
             - name: CIRRUS_WEBHOOK_BASE_URL
               value: "https://{{ .Values.domain.cirrus }}"
+            # Folded, hashed, into the owner ID of each ExternalDNS a
+            # DnsProvider runs, as the installer does for its own
+            - name: CIRRUS_CLUSTER_DOMAIN
+              value: "{{ .Values.domain.main }}"
             - name: RUST_LOG
               value: info
           readinessProbe:

@@ -1,15 +1,16 @@
 //! @file
-//! Cirrus's entry point: the controller and the webhook server, side
-//! by side in one process.
+//! Cirrus's entry point: the controllers — WebApplications and
+//! DnsProviders — and the webhook server, side by side in one process.
 //!
 //! They share a Kubernetes client and nothing else; the webhook only
 //! writes a release into a WebApplication's status, and the controller
-//! picks it up from there. If either stops, the process exits, so the
-//! Deployment restarts the pair rather than leaving half of Cirrus
+//! picks it up from there. If any of them stops, the process exits, so
+//! the Deployment restarts the lot rather than leaving part of Cirrus
 //! running.
 
 use std::sync::Arc;
 
+use cirrus::dns;
 use cirrus::reconcile::{self, Context};
 use cirrus::settings::Settings;
 use cirrus::webhook;
@@ -44,7 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::select! {
         result = server => result?,
-        () = reconcile::run(client, settings) => {}
+        () = reconcile::run(client.clone(), settings.clone()) => {}
+        () = dns::controller::run(client, settings) => {}
     }
     Ok(())
 }

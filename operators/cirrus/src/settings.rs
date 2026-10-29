@@ -38,6 +38,14 @@ pub struct Settings {
     pub gateway_name: String,
     pub gateway_namespace: String,
     pub cluster_issuer: String,
+
+    /// Where the ExternalDNS instances for DnsProviders run, and where
+    /// their credentials are kept: nobody's application namespace.
+    pub dns_namespace: String,
+    /// The cluster's main domain, folded into the owner ID each
+    /// ExternalDNS marks its records with, so two clusters writing the
+    /// same zone leave each other's records alone.
+    pub cluster_domain: String,
 }
 
 impl Default for Settings {
@@ -62,6 +70,10 @@ impl Default for Settings {
             gateway_name: "cc-letsencrypt-web-gateway".to_string(),
             gateway_namespace: "community-cloud".to_string(),
             cluster_issuer: "cc-lets-encrypt".to_string(),
+            // The namespace the installer's own instances use, so
+            // credentials for both are kept in one place
+            dns_namespace: "external-dns".to_string(),
+            cluster_domain: String::new(),
         }
     }
 }
@@ -92,6 +104,8 @@ impl Settings {
             gateway_name: read("CIRRUS_GATEWAY_NAME", defaults.gateway_name),
             gateway_namespace: read("CIRRUS_GATEWAY_NAMESPACE", defaults.gateway_namespace),
             cluster_issuer: read("CIRRUS_CLUSTER_ISSUER", defaults.cluster_issuer),
+            dns_namespace: read("CIRRUS_DNS_NAMESPACE", defaults.dns_namespace),
+            cluster_domain: read("CIRRUS_CLUSTER_DOMAIN", defaults.cluster_domain),
         }
     }
 

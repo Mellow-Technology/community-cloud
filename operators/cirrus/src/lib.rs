@@ -14,6 +14,7 @@
 
 pub mod conditions;
 pub mod crd;
+pub mod dns;
 pub mod error;
 pub mod forge;
 pub mod naming;

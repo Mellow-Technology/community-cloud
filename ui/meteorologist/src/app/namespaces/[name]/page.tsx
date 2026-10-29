@@ -1,7 +1,7 @@
 /**
  * @file
- * One namespace: its capabilities, its Postgres, what it's using, and
- * its settings.
+ * One namespace: its capabilities, its Postgres, its GitLab
+ * connections, what it's using, its DNS and its settings.
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -14,12 +14,14 @@ import { Table } from "gui-mellow/Table";
 import { CapabilitySwitch } from "@/components/CapabilitySwitch";
 import { DetailList } from "@/components/DetailList";
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { NamespaceDns } from "@/components/NamespaceDns";
 import { NamespaceSettingsForm } from "@/components/NamespaceSettingsForm";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
+import { connectionsIn } from "@/lib/gitlab/connections";
 import { getKube } from "@/lib/kube";
-import { isNotFound, settle } from "@/lib/kube/client";
+import { isForbidden, isNotFound, settle } from "@/lib/kube/client";
 import type { PostgresCluster } from "@/lib/kube/types";
 import {
   DEFAULT_SERVICE_ACCOUNT,
@@ -80,7 +82,7 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
   }
 
   const namespace = found.value;
-  const [quotas, limitRange, serviceAccount, secrets, clusters, apps, regions] = await Promise.all([
+  const [quotas, limitRange, serviceAccount, secrets, clusters, apps, regions, dns] = await Promise.all([
     settle(() => kube.listResourceQuotas(name)),
     settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
     settle(() => kube.getServiceAccount(name, DEFAULT_SERVICE_ACCOUNT)),
@@ -88,7 +90,9 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
     settle(() => kube.listPostgresClusters(name)),
     settle(() => kube.listWebApplications(name)),
     settle(() => kube.listRegions()),
+    settle(() => kube.listDnsProviders()),
   ]);
+  const connections = secrets.ok ? connectionsIn(secrets.value) : [];
 
   const ours = quotas.ok ? quotas.value.find((quota) => quota.metadata.name === SETTINGS_NAME) : undefined;
   const postgres = clusters.ok
@@ -167,6 +171,25 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
           )}
         </Card>
 
+        <Card title="GitLab" level={2}>
+          {!secrets.ok ? (
+            <ErrorNotice error={secrets.error} title="Couldn't list its connections" />
+          ) : (
+            <>
+              <p className={styles.empty}>
+                {connections.length === 0
+                  ? "No connections yet. With one, applications here choose their project and image from GitLab, and update as pipelines build them."
+                  : `${connections.length} connection${connections.length === 1 ? "" : "s"}: ${connections.map((each) => each.name).join(", ")}.`}
+              </p>
+              <div>
+                <Button href={`/namespaces/${encodeURIComponent(name)}/gitlab`} variant="secondary" size="sm">
+                  {connections.length === 0 ? "Add a connection" : "Manage connections"}
+                </Button>
+              </div>
+            </>
+          )}
+        </Card>
+
         {ours?.status?.hard && (
           <Card title="Using" level={2}>
             <DetailList
@@ -198,6 +221,19 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
           />
         </section>
       )}
+
+      <section className={styles.section}>
+        <h2 className={styles.heading}>DNS</h2>
+        {dns.ok ? (
+          <NamespaceDns namespace={name} providers={dns.value} />
+        ) : isForbidden(dns.error) ? (
+          <p className={styles.empty}>
+            DNS providers belong to the whole cluster, so only cluster admins see and change them.
+          </p>
+        ) : (
+          <ErrorNotice error={dns.error} title="Couldn't list DNS providers" />
+        )}
+      </section>
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Settings</h2>

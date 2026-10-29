@@ -105,12 +105,15 @@ export interface ServiceAccount {
 }
 
 /**
- * A Secret's name and type, and never its contents: nothing here needs
- * to read one.
+ * A Secret's name, type and metadata, and never its contents. The few
+ * places that need a value read that one key alone, on the server.
  */
 export interface SecretSummary {
   name: string;
   type: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  creationTimestamp?: string;
 }
 
 /**

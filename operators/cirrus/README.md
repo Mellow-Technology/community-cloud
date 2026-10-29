@@ -17,6 +17,10 @@ services the cluster already runs:
 It runs in `community-cloud`, and the installer's `cirrus` package
 installs it along with everything above.
 
+It also runs ExternalDNS for each `DnsProvider`, so a namespace's
+hostnames are put in DNS without anyone editing records; see
+[Publishing DNS](#publishing-dns).
+
 ## A WebApplication
 
 ```yaml
@@ -55,8 +59,9 @@ More in [examples/](./examples):
 | [`static-site.yaml`](./examples/static-site.yaml) | The least there is: an image on two hostnames, no source |
 | [`rails-app.yaml`](./examples/rails-app.yaml) | Everything at once — Postgres, a bucket, RabbitMQ, migrations, GitLab — with the labelled namespace and token Secret it needs |
 | [`internal-api.yaml`](./examples/internal-api.yaml) | No hostname, a self-managed GitLab, a release branch and a custom image tag |
+| [`dns-provider.yaml`](./examples/dns-provider.yaml) | A DnsProvider publishing one namespace's hostnames in Cloudflare, and its credentials |
 
-`tests/examples.rs` reads every WebApplication in there with the
+`tests/examples.rs` reads every WebApplication and DnsProvider in there with the
 operator's own types, so a field the operator doesn't know as typed
 fails the build — though an unknown field is ignored, as the API
 server's pruning would.
@@ -159,6 +164,61 @@ from a live WebApplication stops Cirrus maintaining those resources but
 doesn't delete them. They're removed when the WebApplication is
 deleted.
 
+## Publishing DNS
+
+A `DnsProvider` is one DNS provider account, the domains it holds, and
+the namespaces whose hostnames it publishes. It's cluster-scoped, since
+which namespace may write which domain is the cluster's decision, not
+a namespace's:
+
+```yaml
+apiVersion: community-cloud.technology/v1alpha1
+kind: DnsProvider
+metadata:
+  name: acme
+spec:
+  provider: cloudflare          # any ExternalDNS provider
+  domains: [acme.example]
+  excludeDomains: []            # parts given to another provider
+  namespaces: [acme]            # one ExternalDNS each
+  credentialsSecret: cirrus-dns-acme   # the default, in external-dns
+  target: 203.0.113.7           # optional: what records point at
+  policy: sync                  # or upsert-only, which never deletes
+  args: []                      # further ExternalDNS flags
+```
+
+For each namespace Cirrus runs an ExternalDNS in `external-dns`
+(`cirrus-dns-<provider>-<namespace>`) that reads only that namespace's
+routes and writes only the provider's domains, with every key of the
+credentials Secret as an environment variable. A route naming a
+domain its namespace wasn't given is simply ignored.
+
+This is the same design as the installer's `dns` section
+(`installer/src/util/dns.ts`), kept in the cluster instead, so a
+team's or a client's domain can be added from Meteorologist without
+re-running a bundle. The two can sit side by side: the names and TXT
+owner IDs differ (`cirrus-…` against `external-dns-…` and `cc-…`), so
+neither touches the other's instances or records. Use the installer
+for the cluster's own domains, which change with the cluster, and
+DnsProviders for what changes with the people using it.
+
+A DnsProvider runs nothing, and says why in its `Ready` condition,
+when:
+
+- **`Invalid`**: it has no provider or domains, or an unknown policy.
+- **`DomainConflict`**: another DnsProvider publishing different
+  namespaces holds the same domain, or one containing it without
+  excluding it, so two sets of namespaces could write the same
+  names. Only other DnsProviders are checked; the installer checks
+  its own section, but neither sees the other's, so don't give the
+  same domain to both.
+- **`MissingCredentials`**: the credentials Secret isn't in
+  `external-dns`.
+
+Deleting the DnsProvider removes its instances. With the default
+`sync` policy, an instance that's removed leaves its records behind,
+since nothing is left to delete them.
+
 ## Configuration
 
 Cirrus reads its settings from the environment. The defaults are the
@@ -179,6 +239,8 @@ names the installer uses.
 | `CIRRUS_S3_ENDPOINT` | `http://seaweed-s3.seaweedfs.svc:8333` |
 | `CIRRUS_GATEWAY_NAME`, `CIRRUS_GATEWAY_NAMESPACE` | `cc-letsencrypt-web-gateway`, `community-cloud` |
 | `CIRRUS_CLUSTER_ISSUER` | `cc-lets-encrypt` |
+| `CIRRUS_DNS_NAMESPACE` | `external-dns`, where DnsProviders' ExternalDNS instances and credentials are |
+| `CIRRUS_CLUSTER_DOMAIN` | empty. The installer sets `{values.domain.main}`, hashed into each instance's TXT owner ID |
 | `RUST_LOG` | `info` |
 
 ## Developing
@@ -186,7 +248,7 @@ names the installer uses.
 ```bash
 cargo test                       # unit tests, plus a check that the CRD is current
 cargo clippy --all-targets -- -D warnings
-cargo run --bin crdgen > ../../k8s/operators/cirrus/Cirrus.crd.yaml   # after changing src/crd.rs
+cargo run --bin crdgen > ../../k8s/operators/cirrus/Cirrus.crd.yaml   # after changing src/crd.rs or src/dns/mod.rs
 docker build -t cirrus:dev .
 ```
 
@@ -197,6 +259,7 @@ cluster, not a real one.
 | Path | What it is |
 |---|---|
 | `src/crd.rs` | The WebApplication types; the CRD is generated from them |
+| `src/dns/` | DnsProvider: its types, the domain conflict check, the ExternalDNS it runs, and its controller |
 | `src/reconcile/` | The reconciler. `mod.rs` runs the steps in order, with one module per thing it makes |
 | `src/forge/` | GitLab: webhooks, pipelines, registry digests |
 | `src/webhook.rs` | The HTTP server: `/hooks/gitlab/<namespace>/<name>`, `/healthz`, `/readyz` |

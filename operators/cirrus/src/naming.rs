@@ -43,6 +43,14 @@ pub fn shared_name(namespace: &str, name: &str) -> String {
     fit(format!("{namespace}-{name}"), '-')
 }
 
+/// The ServiceAccount, ClusterRoleBinding and Deployment of the
+/// ExternalDNS a DnsProvider runs for one namespace. "cirrus-dns-"
+/// rather than the installer's "external-dns-", so the two can never
+/// claim each other's objects.
+pub fn dns_instance_name(provider: &str, namespace: &str) -> String {
+    fit(format!("cirrus-dns-{provider}-{namespace}"), '-')
+}
+
 /// The Postgres role and database name. Hyphens would have to be
 /// quoted everywhere they're used, so they become underscores.
 pub fn postgres_identifier(name: &str) -> String {
@@ -66,5 +74,16 @@ mod tests {
         assert!(a.len() <= MAX_NAME);
         assert_ne!(a, b);
         assert!(postgres_identifier(&"x".repeat(100)).len() <= MAX_NAME);
+    }
+
+    #[test]
+    fn dns_instances_are_named_apart_from_the_installers() {
+        assert_eq!(dns_instance_name("office", "cc-office"), "cirrus-dns-office-cc-office");
+        let long = dns_instance_name(&"p".repeat(40), &"n".repeat(40));
+        assert!(long.len() <= MAX_NAME && long.starts_with("cirrus-dns-"));
+        assert_ne!(
+            long,
+            dns_instance_name(&"p".repeat(40), &format!("{}x", "n".repeat(39)))
+        );
     }
 }

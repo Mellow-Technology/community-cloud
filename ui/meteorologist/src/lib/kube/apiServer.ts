@@ -26,6 +26,7 @@ import "server-only";
 
 import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
 import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
+import { DNS_PLURAL, type DnsProvider } from "../dns/types";
 import { parseQuantity } from "../quantity";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
@@ -193,6 +194,7 @@ function clientFor(config: KubeConfig): KubeClient {
   const core = config.makeApiClient(CoreV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
+  const dns = { group: GROUP, version: VERSION, plural: DNS_PLURAL };
   const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
   const apply = setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply);
 
@@ -321,8 +323,64 @@ function clientFor(config: KubeConfig): KubeClient {
         (await core.listNamespacedSecret({ namespace })).items.map((secret): SecretSummary => ({
           name: secret.metadata?.name ?? "",
           type: secret.type ?? "Opaque",
+          labels: secret.metadata?.labels,
+          annotations: secret.metadata?.annotations,
+          creationTimestamp:
+            secret.metadata?.creationTimestamp instanceof Date
+              ? secret.metadata.creationTimestamp.toISOString()
+              : (secret.metadata?.creationTimestamp as string | undefined),
         })),
       ),
+
+    readSecretValue: async (namespace, name, key) => {
+      const secret = await optional(() => core.readNamespacedSecret({ name, namespace }));
+      const value = secret?.data?.[key];
+      return value === undefined ? undefined : Buffer.from(value, "base64").toString("utf8");
+    },
+
+    applySecret: (namespace, name, data, labels, annotations) =>
+      attempt(async () => {
+        await core.patchNamespacedSecret(
+          {
+            name,
+            namespace,
+            body: {
+              apiVersion: "v1",
+              kind: "Secret",
+              metadata: { name, namespace, labels, annotations },
+              type: "Opaque",
+              stringData: data,
+            },
+            fieldManager: FIELD_MANAGER,
+            force: true,
+          },
+          apply,
+        );
+      }),
+
+    deleteSecret: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => core.deleteNamespacedSecret({ name, namespace }));
+      }),
+
+    listDnsProviders: async () =>
+      // A 404 means Cirrus's CRD isn't installed, so there are none
+      (await optional(async () => ((await custom.listClusterCustomObject(dns)) as { items: DnsProvider[] }).items)) ??
+      [],
+
+    applyDnsProvider: (provider) =>
+      attempt(async () => {
+        const { status: _status, ...body } = provider;
+        await custom.patchClusterCustomObject(
+          { ...dns, name: provider.metadata.name, body, fieldManager: FIELD_MANAGER, force: true },
+          apply,
+        );
+      }),
+
+    deleteDnsProvider: (name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteClusterCustomObject({ ...dns, name }));
+      }),
 
     listPostgresClusters: async (namespace) =>
       // A 404 means CloudNativePG isn't installed, so there are none
@@ -379,11 +437,11 @@ function clientFor(config: KubeConfig): KubeClient {
         })) as WebApplication;
       }),
 
-    createSecret: (namespace, name, data, labels, type = "Opaque") =>
+    createSecret: (namespace, name, data, labels, type = "Opaque", annotations) =>
       attempt(async () => {
         await core.createNamespacedSecret({
           namespace,
-          body: { metadata: { name, namespace, labels }, type, stringData: data },
+          body: { metadata: { name, namespace, labels, annotations }, type, stringData: data },
         });
       }),
   };

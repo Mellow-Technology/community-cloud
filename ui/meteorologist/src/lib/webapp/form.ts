@@ -18,6 +18,7 @@
  * a field Cirrus adds after this was written all come through as they
  * were.
  */
+import type { GitLabConnection } from "../gitlab/connections";
 import type { EnvVar, ResourceRequirements } from "../kube/types";
 import {
   API_VERSION,
@@ -54,6 +55,9 @@ export interface WebApplicationForm {
   namespace: string;
   name: string;
 
+  // Whether the image is one of a GitLab project's, chosen through a
+  // connection, or typed in. Only the first can update itself.
+  imageSource: ImageSource;
   repository: string;
   tag: string;
   imagePullSecrets: string;
@@ -78,6 +82,7 @@ export interface WebApplicationForm {
   migrationArgs: string;
   migrationTimeoutSeconds: string;
 
+  // Whether new images are rolled out as pipelines build them
   gitlab: boolean;
   gitlabUrl: string;
   gitlabProject: string;
@@ -92,6 +97,8 @@ export interface WebApplicationForm {
   preservedEnv: EnvVar[];
 }
 
+export type ImageSource = "gitlab" | "other";
+
 /**
  * The form for an application that doesn't exist yet.
  *
@@ -102,6 +109,7 @@ export function emptyForm(namespace = ""): WebApplicationForm {
   return {
     namespace,
     name: "",
+    imageSource: "gitlab",
     repository: "",
     tag: DEFAULT_TAG,
     imagePullSecrets: "",
@@ -131,6 +139,27 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     env: [],
     preservedEnv: [],
   };
+}
+
+/**
+ * The form's connection fields set to a namespace's only GitLab
+ * connection, when it has exactly one, so there's nothing to choose.
+ *
+ * @param namespace
+ * @returns
+ */
+export function soleConnection(
+  namespace: { gitlabConnections?: GitLabConnection[] } | undefined,
+): Partial<WebApplicationForm> {
+  const only = namespace?.gitlabConnections?.length === 1 ? namespace.gitlabConnections[0] : undefined;
+  return only
+    ? {
+        gitlabTokenSecretName: only.name,
+        gitlabTokenSecretKey: DEFAULT_TOKEN_KEY,
+        gitlabUrl: only.url,
+        gitlabProject: "",
+      }
+    : { gitlabTokenSecretName: "", gitlabProject: "" };
 }
 
 /**
@@ -176,6 +205,7 @@ export function toForm(app: WebApplication): WebApplicationForm {
   return {
     namespace: app.metadata.namespace ?? "",
     name: app.metadata.name,
+    imageSource: gitlab !== undefined ? "gitlab" : "other",
     repository: spec.image.repository,
     tag: spec.image.tag ?? DEFAULT_TAG,
     imagePullSecrets: (spec.imagePullSecrets ?? []).join(", "),
@@ -351,7 +381,7 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
     delete spec.migrations;
   }
 
-  if (form.gitlab) {
+  if (form.gitlab && form.imageSource === "gitlab") {
     spec.source = {
       ...spec.source,
       gitlab: {
@@ -477,42 +507,21 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     }
   }
 
-  if (form.gitlab) {
+  if (form.gitlab && form.imageSource === "gitlab") {
     const url = form.gitlabUrl.trim();
+    const secret = form.gitlabTokenSecretName.trim();
+    if (secret === "") {
+      errors.gitlabTokenSecretName = "Choose the GitLab connection it updates through.";
+    } else if (secret.length > 253 || !SECRET_NAME.test(secret)) {
+      errors.gitlabTokenSecretName = "Not a valid Secret name.";
+    }
     if (url !== "" && !/^https?:\/\/[^\s/]+/.test(url)) {
       errors.gitlabUrl = "The GitLab instance's address, such as https://gitlab.com.";
     }
     if (form.gitlabProject.trim() === "") {
-      errors.gitlabProject = "The project's path, such as group/app, or its numeric id.";
-    }
-    const secret = form.gitlabTokenSecretName.trim();
-    if (secret === "") {
-      errors.gitlabTokenSecretName = "Name the Secret holding the access token, or create one below.";
-    } else if (secret.length > 253 || !SECRET_NAME.test(secret)) {
-      errors.gitlabTokenSecretName = "Not a valid Secret name.";
+      errors.gitlabProject = "Choose the project whose images it runs.";
     }
   }
 
   return errors;
-}
-
-/**
- * Where on GitLab a token for the form's project is made: the
- * project's own access tokens, or the person's fine-grained ones. A
- * project that hasn't been typed yet only gets the GitLab.
- *
- * @param form
- * @param kind
- * @returns
- */
-export function gitlabTokenPage(
-  form: Pick<WebApplicationForm, "gitlabUrl" | "gitlabProject">,
-  kind: "project" | "personal",
-): string {
-  const base = (nonEmpty(form.gitlabUrl) ?? DEFAULT_GITLAB_URL).replace(/\/+$/, "");
-  if (kind === "personal") {
-    return `${base}/-/user_settings/personal_access_tokens`;
-  }
-  const project = nonEmpty(form.gitlabProject)?.replace(/^\/+|\/+$/g, "");
-  return project ? `${base}/${project}/-/settings/access_tokens` : base;
 }

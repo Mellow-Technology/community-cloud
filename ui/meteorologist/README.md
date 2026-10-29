@@ -34,6 +34,24 @@ know about:
   - **Private registries**: `kubernetes.io/dockerconfigjson` Secrets,
     named on the namespace's `default` ServiceAccount, so every pod
     pulls with them unless it names its own.
+  - **GitLab connections** (`/namespaces/<name>/gitlab`): GitLab
+    tokens kept in the namespace, apart from any one application. Each
+    is an Opaque Secret labelled
+    `community-cloud.technology/gitlab-connection=true`, with its
+    instance in the `community-cloud.technology/gitlab-url` annotation
+    and the token under `token`. The token is checked with GitLab
+    before it's saved, and is what the application form lists projects
+    and their registry images with. Cirrus uses the same Secret for its
+    webhook and pipeline checks.
+  - **DNS**: the `DnsProvider`s (Cirrus's cluster-scoped resource)
+    publishing the namespace's hostnames. From here a namespace can
+    join an existing provider, stop, or get a new one with its own
+    account's credentials. Those go in a Secret in `external-dns`,
+    where Cirrus runs one ExternalDNS per provider and namespace.
+    Domains are checked against every other provider first, by the
+    same rule as the installer's: two providers publishing different
+    namespaces may not share a domain unless the broader one excludes
+    it. Only cluster admins can see or change providers.
 
   The page also shows the namespace's Postgres: the CloudNativePG
   Cluster `cirrus-postgres`, which Cirrus starts for the first
@@ -46,8 +64,12 @@ know about:
   operator turns into a Deployment, its database, bucket, queue, routes
   and rollouts. Creating and editing go through a guided form. The form
   explains what each shared service provides, warns when the namespace
-  is missing a label that a choice needs (and can add it on the spot),
-  and can create the GitLab token Secret for you.
+  is missing a label that a choice needs, and can add it on the spot.
+  An image from GitLab is chosen rather than typed: through one of the
+  namespace's connections, from the projects its token can see, with
+  the image taken from the project's container registry. "Update
+  automatically on image builds" then has Cirrus roll out each image a
+  successful pipeline builds.
 
 It's a Next.js (App Router) app built on
 [GUI Mellow](https://github.com/Mellow-Technology/gui-mellow).

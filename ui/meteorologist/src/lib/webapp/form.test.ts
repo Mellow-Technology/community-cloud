@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { emptyForm, fromForm, gitlabTokenPage, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
+import { emptyForm, fromForm, soleConnection, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
 import type { WebApplication } from "./types";
 
 /**
@@ -251,9 +251,29 @@ test("splitList takes commas and spaces", () => {
   expect(splitList(" a,b  c,, ")).toEqual(["a", "b", "c"]);
 });
 
-test("where a GitLab token is made", () => {
-  const form = { gitlabUrl: "https://gitlab.example.test/", gitlabProject: "group/app" };
-  expect(gitlabTokenPage(form, "project")).toBe("https://gitlab.example.test/group/app/-/settings/access_tokens");
-  expect(gitlabTokenPage(form, "personal")).toBe("https://gitlab.example.test/-/user_settings/personal_access_tokens");
-  expect(gitlabTokenPage({ gitlabUrl: "", gitlabProject: "" }, "project")).toBe("https://gitlab.com");
+describe("an image from elsewhere", () => {
+  test("never updates itself, whatever the switch says", () => {
+    const app = fromForm(
+      form({ imageSource: "other", gitlab: true, gitlabProject: "acme/shop", gitlabTokenSecretName: "token" }),
+    );
+    expect(app.spec.source).toBeUndefined();
+    expect(validateForm(form({ imageSource: "other", gitlab: true }))).toEqual({});
+  });
+
+  test("is what an application without a source is read back as", () => {
+    const sparse = fromForm(form({ imageSource: "other" }));
+    expect(toForm(sparse).imageSource).toBe("other");
+    const updating = fromForm(form({ gitlab: true, gitlabProject: "acme/shop", gitlabTokenSecretName: "token" }));
+    expect(toForm(updating).imageSource).toBe("gitlab");
+  });
+});
+
+test("a namespace's only connection is chosen for you", () => {
+  const work = { name: "work", url: "https://gitlab.example.test" };
+  expect(soleConnection({ gitlabConnections: [work] })).toMatchObject({
+    gitlabTokenSecretName: "work",
+    gitlabUrl: "https://gitlab.example.test",
+  });
+  expect(soleConnection({ gitlabConnections: [work, { ...work, name: "other" }] }).gitlabTokenSecretName).toBe("");
+  expect(soleConnection(undefined).gitlabTokenSecretName).toBe("");
 });
