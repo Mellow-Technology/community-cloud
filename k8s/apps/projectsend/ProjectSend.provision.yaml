@@ -52,7 +52,7 @@ data:
     # again as ProjectSend starts finds nothing left to do.
     su-exec www-data php artisan projectsend:update
 
-    su-exec www-data php artisan tinker --execute="require '/opt/community-cloud/provision.php';"
+    su-exec www-data php /opt/community-cloud/provision.php
 
   provision.php: |
     <?php
@@ -63,6 +63,13 @@ data:
     use App\Modules\Platform\Settings\ExternalStorageConfigApplier;
     use App\Modules\Platform\Settings\ExternalStorageSettings;
     use App\Modules\Platform\Settings\StorageProvider;
+
+    // ProjectSend's application, booted as artisan boots it, without a
+    // command. Not tinker: it's an interactive shell, and wants to write
+    // its own configuration into a home directory www-data doesn't have.
+    require '/var/www/html/vendor/autoload.php';
+    $app = require '/var/www/html/bootstrap/app.php';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
     $required = function (string $name): string {
         $value = getenv($name);
