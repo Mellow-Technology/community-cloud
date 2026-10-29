@@ -21,14 +21,26 @@
  *   bun scripts/release/<component>.ts --dry-run     check only
  *   bun scripts/release/<component>.ts set 0.2.0     write the version everywhere
  *   bun scripts/release/<component>.ts set minor     the same, from the current one
+ *
+ * A place under k8s/ is also a manifest the installer carries in
+ * installer/src/generated/embedded.sqlite, and a run from a checkout
+ * applies that copy, not the file. So `set` writes the new version
+ * into the database's row for it too; otherwise an image pin bumped in
+ * k8s/ alone goes on installing the old image.
  */
 import { $ } from "bun";
+import { Database } from "bun:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // The repository's root, whichever directory the script is run from
 export const ROOT = resolve(import.meta.dir, "../..");
+
+// The installer's copy of k8s/, and the prefix its paths are stored
+// without (installer/scripts/generateEmbedded.ts)
+export const EMBEDDED_DATABASE = "installer/src/generated/embedded.sqlite";
+const EMBEDDED_SOURCE = "k8s/";
 
 // Releases are cut from here, on the remote
 const RELEASE_BRANCH = "main";
@@ -285,14 +297,47 @@ async function setVersion(component: Component, requested: string): Promise<void
     throw new Error(`Couldn't find ${component.places[0]?.describe}`);
   }
   const version = nextVersion(current, requested);
+  const embedded: Record<string, string> = {};
   for (const { place, text, version: was } of places) {
-    await writeFile(join(ROOT, place.file), place.write(text, version));
+    const written = place.write(text, version);
+    await writeFile(join(ROOT, place.file), written);
     console.log(`  ${place.file}: ${was ?? "?"} → ${version}`);
+    if (place.file.startsWith(EMBEDDED_SOURCE)) {
+      embedded[place.file] = written;
+    }
+  }
+  if (Object.keys(embedded).length > 0) {
+    updateEmbedded(join(ROOT, EMBEDDED_DATABASE), embedded);
+    console.log(`  ${EMBEDDED_DATABASE}: the same, in the installer's copy`);
   }
   console.log(
     `\n${component.title} is now ${version} in every place it's written. Commit it and get it onto ` +
       `${RELEASE_BRANCH}, then run this again without "set" to tag it.`,
   );
+}
+
+/**
+ * Writes manifests into the installer's embedded database, in place of
+ * the rows already there. Only rows that exist are changed: a new
+ * manifest needs `bun run build:embedded`, which this doesn't stand in
+ * for.
+ *
+ * @param databasePath
+ * @param files contents, by path from the repository's root
+ */
+export function updateEmbedded(databasePath: string, files: Record<string, string>): void {
+  const database = new Database(databasePath);
+  try {
+    const update = database.prepare("update files set contents = ? where path = ?");
+    for (const [file, contents] of Object.entries(files)) {
+      const path = file.slice(EMBEDDED_SOURCE.length);
+      if (update.run(contents, path).changes !== 1) {
+        throw new Error(`${path} isn't in ${EMBEDDED_DATABASE}. Run "bun run build:embedded" in installer/.`);
+      }
+    }
+  } finally {
+    database.close();
+  }
 }
 
 /**

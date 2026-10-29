@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { cirrus } from "./cirrus";
 import { installer } from "./installer";
 import { meteorologist } from "./meteorologist";
-import { ROOT, compareVersions, latestReleased, nextVersion, packageJsonPlace } from "./release";
+import {
+  EMBEDDED_DATABASE,
+  ROOT,
+  compareVersions,
+  latestReleased,
+  nextVersion,
+  packageJsonPlace,
+  updateEmbedded,
+} from "./release";
 
 describe("versions", () => {
   test("are ordered as semver orders them", () => {
@@ -51,5 +61,31 @@ describe("places", () => {
       const text = await readFile(join(ROOT, place.file), "utf8");
       expect(place.read(text)).toMatch(/^\d+\.\d+\.\d+/);
     }
+  });
+});
+
+describe("the installer's embedded copy", () => {
+  // A copy of the real database, so the test changes nothing it shouldn't
+  test("gets a manifest's new version, and refuses one it doesn't have", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "release-"));
+    const database = join(directory, "embedded.sqlite");
+    try {
+      await copyFile(join(ROOT, EMBEDDED_DATABASE), database);
+      updateEmbedded(database, { "k8s/operators/cirrus/Cirrus.yaml": "image: cirrus:9.9.9\n" });
+      const read = new Database(database, { readonly: true });
+      const row = read.query("select contents from files where path = ?").get("operators/cirrus/Cirrus.yaml");
+      read.close();
+      expect(row).toEqual({ contents: "image: cirrus:9.9.9\n" });
+      expect(() => updateEmbedded(database, { "k8s/nowhere.yaml": "" })).toThrow(/build:embedded/);
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+
+  test("covers every place a release writes under k8s/", () => {
+    const manifests = [cirrus, installer, meteorologist].flatMap((component) =>
+      component.places.filter((place) => place.file.startsWith("k8s/")).map((place) => place.file),
+    );
+    expect(manifests).toEqual(["k8s/operators/cirrus/Cirrus.yaml", "k8s/apps/meteorologist/Meteorologist.yaml"]);
   });
 });
