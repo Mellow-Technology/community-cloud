@@ -1,7 +1,8 @@
 /**
  * @file
- * One namespace: its capabilities, its Postgres, its GitLab
- * connections, what it's using, its DNS and its settings.
+ * One namespace, in tabs: General (its capabilities, its Postgres, what
+ * it's using and its settings), DNS (the providers publishing it), and
+ * Integration (its GitLab connections).
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -14,8 +15,10 @@ import { Table } from "gui-mellow/Table";
 import { CapabilitySwitch } from "@/components/CapabilitySwitch";
 import { DetailList } from "@/components/DetailList";
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { GitLabConnections } from "@/components/GitLabConnections";
 import { NamespaceDns } from "@/components/NamespaceDns";
 import { NamespaceSettingsForm } from "@/components/NamespaceSettingsForm";
+import { NamespaceTabs } from "@/components/NamespaceTabs";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
@@ -30,6 +33,7 @@ import {
   regionOf,
   toNamespaceForm,
 } from "@/lib/namespace/settings";
+import { namespaceTab } from "@/lib/namespace/tabs";
 import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresDatabase } from "@/lib/postgres";
 
 // What a quota's keys mean, in the order they're shown
@@ -64,8 +68,15 @@ function postgresTone(cluster: PostgresCluster): "success" | "warning" {
  * @param props.params
  * @returns
  */
-export default async function NamespacePage({ params }: { params: Promise<{ name: string }> }) {
+export default async function NamespacePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ name: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const name = decodeURIComponent((await params).name);
+  const { tab } = await searchParams;
   const kube = await getKube();
   const found = await settle(() => kube.getNamespace(name));
 
@@ -93,6 +104,13 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
     settle(() => kube.listDnsProviders()),
   ]);
   const connections = secrets.ok ? connectionsIn(secrets.value) : [];
+  const usedBy: Record<string, string[]> = {};
+  for (const app of apps.ok ? apps.value : []) {
+    const secret = app.spec.source?.gitlab?.tokenSecret.name;
+    if (secret !== undefined) {
+      (usedBy[secret] ??= []).push(app.metadata.name);
+    }
+  }
 
   const ours = quotas.ok ? quotas.value.find((quota) => quota.metadata.name === SETTINGS_NAME) : undefined;
   const postgres = clusters.ok
@@ -117,151 +135,153 @@ export default async function NamespacePage({ params }: { params: Promise<{ name
         }
       />
 
-      <Grid min="300px" gap={5}>
-        <Card title="Capabilities" level={2}>
-          <DetailList
-            items={CAPABILITIES.map((capability) => ({
-              label: capability.title,
-              value: (
-                <CapabilitySwitch
-                  namespace={name}
-                  capability={capability.id}
-                  enabled={hasCapability(namespace.metadata.labels, capability)}
-                />
-              ),
-            }))}
-          />
-          <DetailList items={[{ label: "Region", value: regionOf(namespace.metadata.annotations) || "Anywhere" }]} />
-        </Card>
-
-        <Card title="Postgres server" level={2}>
-          {!clusters.ok ? (
-            <ErrorNotice error={clusters.error} title="Couldn't look for it" />
-          ) : postgres ? (
-            <DetailList
-              items={[
-                {
-                  label: "State",
-                  value: (
-                    <StatusDot tone={postgresTone(postgres)}>{postgres.status?.phase ?? "Not started yet"}</StatusDot>
-                  ),
-                },
-                {
-                  label: "Instances",
-                  value: `${postgres.status?.readyInstances ?? 0} of ${postgres.spec?.instances ?? 1} ready`,
-                },
-                { label: "Volume", value: postgres.spec?.storage?.size },
-                { label: "Host", value: <code>{`${POSTGRES_CLUSTER}-rw.${name}.svc`}</code> },
-                {
-                  label: "Databases",
-                  value: usingPostgres.length
-                    ? usingPostgres
-                        .map((app) => `${postgresDatabase(app.metadata.name)}, for ${app.metadata.name}`)
-                        .join("; ")
-                    : "None yet",
-                },
-              ]}
-            />
-          ) : (
-            <p className={styles.empty}>
-              None yet. Cirrus starts <code>{POSTGRES_CLUSTER}</code>, with a {POSTGRES_STORAGE} volume, when the first
-              application here asks for a database, and every later one gets a database of its own on it. It stays when
-              the applications go.
-            </p>
-          )}
-        </Card>
-
-        <Card title="GitLab" level={2}>
-          {!secrets.ok ? (
-            <ErrorNotice error={secrets.error} title="Couldn't list its connections" />
-          ) : (
+      <NamespaceTabs
+        selected={namespaceTab(tab)}
+        panels={{
+          general: (
             <>
-              <p className={styles.empty}>
-                {connections.length === 0
-                  ? "No connections yet. With one, applications here choose their project and image from GitLab, and update as pipelines build them."
-                  : `${connections.length} connection${connections.length === 1 ? "" : "s"}: ${connections.map((each) => each.name).join(", ")}.`}
-              </p>
-              <div>
-                <Button href={`/namespaces/${encodeURIComponent(name)}/gitlab`} variant="secondary" size="sm">
-                  {connections.length === 0 ? "Add a connection" : "Manage connections"}
-                </Button>
-              </div>
+              <Grid min="300px" gap={5}>
+                <Card title="Capabilities" level={2}>
+                  <DetailList
+                    items={CAPABILITIES.map((capability) => ({
+                      label: capability.title,
+                      value: (
+                        <CapabilitySwitch
+                          namespace={name}
+                          capability={capability.id}
+                          enabled={hasCapability(namespace.metadata.labels, capability)}
+                        />
+                      ),
+                    }))}
+                  />
+                  <DetailList
+                    items={[{ label: "Region", value: regionOf(namespace.metadata.annotations) || "Anywhere" }]}
+                  />
+                </Card>
+
+                <Card title="Postgres server" level={2}>
+                  {!clusters.ok ? (
+                    <ErrorNotice error={clusters.error} title="Couldn't look for it" />
+                  ) : postgres ? (
+                    <DetailList
+                      items={[
+                        {
+                          label: "State",
+                          value: (
+                            <StatusDot tone={postgresTone(postgres)}>
+                              {postgres.status?.phase ?? "Not started yet"}
+                            </StatusDot>
+                          ),
+                        },
+                        {
+                          label: "Instances",
+                          value: `${postgres.status?.readyInstances ?? 0} of ${postgres.spec?.instances ?? 1} ready`,
+                        },
+                        { label: "Volume", value: postgres.spec?.storage?.size },
+                        { label: "Host", value: <code>{`${POSTGRES_CLUSTER}-rw.${name}.svc`}</code> },
+                        {
+                          label: "Databases",
+                          value: usingPostgres.length
+                            ? usingPostgres
+                                .map((app) => `${postgresDatabase(app.metadata.name)}, for ${app.metadata.name}`)
+                                .join("; ")
+                            : "None yet",
+                        },
+                      ]}
+                    />
+                  ) : (
+                    <p className={styles.empty}>
+                      None yet. Cirrus starts <code>{POSTGRES_CLUSTER}</code>, with a {POSTGRES_STORAGE} volume, when
+                      the first application here asks for a database, and every later one gets a database of its own on
+                      it. It stays when the applications go.
+                    </p>
+                  )}
+                </Card>
+
+                {ours?.status?.hard && (
+                  <Card title="Using" level={2}>
+                    <DetailList
+                      items={Object.entries(QUOTA_LABELS)
+                        .filter(([key]) => ours.status?.hard?.[key] !== undefined)
+                        .map(([key, label]) => ({
+                          label,
+                          value: `${ours.status?.used?.[key] ?? "0"} of ${ours.status?.hard?.[key]}`,
+                        }))}
+                    />
+                  </Card>
+                )}
+              </Grid>
+
+              {quotas.ok && quotas.value.some((quota) => quota.metadata.name !== SETTINGS_NAME) && (
+                <section className={styles.section}>
+                  <h2 className={styles.heading}>Other quotas</h2>
+                  <p className={styles.empty}>Made outside Meteorologist, and left as they are. They apply too.</p>
+                  <Table
+                    columns={["Quota", "Limits"]}
+                    rows={quotas.value
+                      .filter((quota) => quota.metadata.name !== SETTINGS_NAME)
+                      .map((quota) => [
+                        quota.metadata.name,
+                        Object.entries(quota.spec?.hard ?? {})
+                          .map(([key, value]) => `${key}=${value}`)
+                          .join(", "),
+                      ])}
+                  />
+                </section>
+              )}
+
+              <section className={styles.section}>
+                <h2 className={styles.heading}>Settings</h2>
+                {settingsReadable ? (
+                  <NamespaceSettingsForm
+                    initial={toNamespaceForm(
+                      name,
+                      namespace.metadata.annotations,
+                      ours,
+                      limitRange.value,
+                      serviceAccount.value,
+                    )}
+                    existing={{
+                      pullSecrets: secrets.ok
+                        ? secrets.value
+                            .filter((secret) => secret.type === PULL_SECRET_TYPE)
+                            .map((secret) => secret.name)
+                        : [],
+                      hasPostgres: postgres !== undefined,
+                      storageUsed: ours?.status?.used?.["requests.storage"],
+                    }}
+                    regions={regions.ok ? regions.value : []}
+                  />
+                ) : (
+                  <ErrorNotice
+                    error={[quotas, limitRange, serviceAccount].find((read) => !read.ok)?.error}
+                    title="Couldn't read this namespace's settings"
+                  />
+                )}
+              </section>
             </>
-          )}
-        </Card>
-
-        {ours?.status?.hard && (
-          <Card title="Using" level={2}>
-            <DetailList
-              items={Object.entries(QUOTA_LABELS)
-                .filter(([key]) => ours.status?.hard?.[key] !== undefined)
-                .map(([key, label]) => ({
-                  label,
-                  value: `${ours.status?.used?.[key] ?? "0"} of ${ours.status?.hard?.[key]}`,
-                }))}
-            />
-          </Card>
-        )}
-      </Grid>
-
-      {quotas.ok && quotas.value.some((quota) => quota.metadata.name !== SETTINGS_NAME) && (
-        <section className={styles.section}>
-          <h2 className={styles.heading}>Other quotas</h2>
-          <p className={styles.empty}>Made outside Meteorologist, and left as they are. They apply too.</p>
-          <Table
-            columns={["Quota", "Limits"]}
-            rows={quotas.value
-              .filter((quota) => quota.metadata.name !== SETTINGS_NAME)
-              .map((quota) => [
-                quota.metadata.name,
-                Object.entries(quota.spec?.hard ?? {})
-                  .map(([key, value]) => `${key}=${value}`)
-                  .join(", "),
-              ])}
-          />
-        </section>
-      )}
-
-      <section className={styles.section}>
-        <h2 className={styles.heading}>DNS</h2>
-        {dns.ok ? (
-          <NamespaceDns namespace={name} providers={dns.value} />
-        ) : isForbidden(dns.error) ? (
-          <p className={styles.empty}>
-            DNS providers belong to the whole cluster, so only cluster admins see and change them.
-          </p>
-        ) : (
-          <ErrorNotice error={dns.error} title="Couldn't list DNS providers" />
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h2 className={styles.heading}>Settings</h2>
-        {settingsReadable ? (
-          <NamespaceSettingsForm
-            initial={toNamespaceForm(
-              name,
-              namespace.metadata.annotations,
-              ours,
-              limitRange.value,
-              serviceAccount.value,
-            )}
-            existing={{
-              pullSecrets: secrets.ok
-                ? secrets.value.filter((secret) => secret.type === PULL_SECRET_TYPE).map((secret) => secret.name)
-                : [],
-              hasPostgres: postgres !== undefined,
-              storageUsed: ours?.status?.used?.["requests.storage"],
-            }}
-            regions={regions.ok ? regions.value : []}
-          />
-        ) : (
-          <ErrorNotice
-            error={[quotas, limitRange, serviceAccount].find((read) => !read.ok)?.error}
-            title="Couldn't read this namespace's settings"
-          />
-        )}
-      </section>
+          ),
+          dns: (
+            <section className={styles.section}>
+              <h2 className={styles.heading}>DNS</h2>
+              {dns.ok ? (
+                <NamespaceDns namespace={name} providers={dns.value} />
+              ) : isForbidden(dns.error) ? (
+                <p className={styles.empty}>
+                  DNS providers belong to the whole cluster, so only cluster admins see and change them.
+                </p>
+              ) : (
+                <ErrorNotice error={dns.error} title="Couldn't list DNS providers" />
+              )}
+            </section>
+          ),
+          integration: secrets.ok ? (
+            <GitLabConnections namespace={name} connections={connections} usedBy={usedBy} />
+          ) : (
+            <ErrorNotice error={secrets.error} title="Couldn't list this namespace's Secrets" />
+          ),
+        }}
+      />
     </>
   );
 }

@@ -129,7 +129,9 @@ export function GitLabImagePicker({
         hint={
           <>
             A token kept in {namespace || "the namespace"}.{" "}
-            {namespace !== "" && <a href={`/namespaces/${encodeURIComponent(namespace)}/gitlab`}>Manage connections</a>}
+            {namespace !== "" && (
+              <a href={`/namespaces/${encodeURIComponent(namespace)}?tab=integration`}>Manage connections</a>
+            )}
           </>
         }
         onChange={(event) => {

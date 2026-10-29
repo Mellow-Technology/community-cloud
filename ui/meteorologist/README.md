@@ -18,9 +18,12 @@ know about:
   They're listed once, in `src/lib/capabilities.ts`. Adding a
   capability means adding one entry there.
 
-  A namespace can be created from here, and each one has a page for
-  its settings, all made the way Kubernetes itself does them so they
-  hold for everything in the namespace, not just what Cirrus makes:
+  A namespace can be created from here, and each one has a page in
+  three tabs: General (capabilities, Postgres, usage and settings), DNS
+  and Integration (GitLab connections). The tab shown is in the
+  address, as `?tab=dns` or `?tab=integration`. The settings are all
+  made the way Kubernetes itself does them, so they hold for
+  everything in the namespace, not just what Cirrus makes:
   - **Region**: the `scheduler.alpha.kubernetes.io/node-selector`
     annotation that the installer's `placement` also sets. It pins
     every pod in the namespace, Postgres included, to the region's
@@ -34,7 +37,7 @@ know about:
   - **Private registries**: `kubernetes.io/dockerconfigjson` Secrets,
     named on the namespace's `default` ServiceAccount, so every pod
     pulls with them unless it names its own.
-  - **GitLab connections** (`/namespaces/<name>/gitlab`): GitLab
+  - **GitLab connections** (the Integration tab): GitLab
     tokens kept in the namespace, apart from any one application. Each
     is an Opaque Secret labelled
     `community-cloud.technology/gitlab-connection=true`, with its

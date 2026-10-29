@@ -51,6 +51,12 @@
     gap: var(--gm-space-2);
     padding-inline-start: var(--gm-space-5);
   }
+
+  // A list inside an item, such as a token's permissions
+  ul ul {
+    gap: var(--gm-space-1);
+    margin-block: var(--gm-space-1);
+  }
 }
 
 .badge {
