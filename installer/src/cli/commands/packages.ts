@@ -932,8 +932,10 @@ const builtInPackages: PackageDefinition[] = [
 
     rollout: ["deployment/cirrus"],
 
-    // Where GitLab sends its webhooks
-    values: ["domain.cirrus"],
+    // Where GitLab sends its webhooks, and the domain that keeps the
+    // records its DnsProviders' ExternalDNS instances make apart from
+    // another cluster's
+    values: ["domain.cirrus", "domain.main"],
   },
   {
     name: "meteorologist",

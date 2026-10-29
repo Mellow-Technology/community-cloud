@@ -27,6 +27,14 @@
  * ID in a TXT record beside them, and only ever changes or removes
  * records carrying its own mark — so instances sharing a zone, or a
  * zone with records made by hand, leave each other alone.
+ *
+ * Cirrus runs instances of the same shape for DnsProvider resources
+ * (operators/cirrus/src/dns), for domains that come and go with the
+ * people a namespace is given to rather than with the cluster. Theirs
+ * are named "cirrus-dns-…" and own records as "cirrus-…", so they and
+ * these never take each other's instances or records. Neither checks
+ * the other's domains for overlaps, though, so a domain belongs in one
+ * place or the other.
  */
 import { createHash } from "node:crypto";
 
