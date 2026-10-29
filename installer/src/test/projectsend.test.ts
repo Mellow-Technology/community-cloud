@@ -268,11 +268,21 @@ describe("ProjectSend's database", () => {
     assert.equal(mariadb.spec.rootPasswordSecretKeyRef.generate, false);
   });
 
-  it("is waited for before ProjectSend, by the name the operator gives its StatefulSet", async () => {
+  it("is waited for before ProjectSend, as the operator reports it", async () => {
     const [mariadb] = await render({}, "embed://apps/office/MariaDB.yaml");
-    assert.equal(PROJECTSEND.rollout![0], `statefulset/${mariadb.metadata.name}`);
-    assert.ok(PROJECTSEND.rollout!.includes("statefulset/redis"));
+    const documents = await render({}, "embed://apps/projectsend/ProjectSend.database.yaml");
+    const asked = [mariadb, ...documents].map(
+      (document) => `${document.kind.toLowerCase()}s.k8s.mariadb.com/${document.metadata.name}`,
+    );
+
+    assert.deepEqual(PROJECTSEND.ready, asked);
     assert.equal(PROJECTSEND.rollout!.at(-1), "deployment/projectsend");
+  });
+
+  it("isn't waited for as a rollout, which an OnDelete StatefulSet can't be", () => {
+    // The operator restarts the MariaDB's pods itself, so its
+    // StatefulSet is OnDelete, and "kubectl rollout status" refuses one
+    assert.ok(!PROJECTSEND.rollout!.some((each) => each.includes("mariadb")), PROJECTSEND.rollout!.join(", "));
   });
 });
 

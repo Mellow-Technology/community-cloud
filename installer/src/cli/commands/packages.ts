@@ -575,12 +575,23 @@ const builtInPackages: PackageDefinition[] = [
       },
     ],
 
-    // The MariaDB and the Redis first: their operators make them, so
-    // nothing about installing the operators waited for them. A bucket,
-    // when there is one, isn't waited for here, since whether there is
-    // one is the configuration's to say; ProjectSend's pod can't start
-    // without the keys to it, so the rollout waits for them instead.
-    rollout: ["statefulset/cc-mariadb", "statefulset/redis", "deployment/projectsend"],
+    // The MariaDB, and ProjectSend's database, user and grant in it,
+    // as the operator reports them. Not the MariaDB's StatefulSet: the
+    // operator restarts its pods itself, so the StatefulSet is OnDelete,
+    // and "rollout status" refuses to wait on one of those.
+    ready: [
+      "mariadbs.k8s.mariadb.com/cc-mariadb",
+      "databases.k8s.mariadb.com/projectsend",
+      "users.k8s.mariadb.com/projectsend",
+      "grants.k8s.mariadb.com/projectsend",
+    ],
+
+    // The Redis first: its operator makes it, so nothing about
+    // installing the operator waited for it. A bucket, when there is
+    // one, isn't waited for here, since whether there is one is the
+    // configuration's to say; ProjectSend's pod can't start without the
+    // keys to it, so the rollout waits for them instead.
+    rollout: ["statefulset/redis", "deployment/projectsend"],
     mail: true,
     values: ["domain.files", "domain.auth", "adminEmail"],
 
