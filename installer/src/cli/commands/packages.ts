@@ -460,6 +460,137 @@ const builtInPackages: PackageDefinition[] = [
     ],
   },
   {
+    name: "mariadb-operator-crds",
+    description: "The MariaDB operator's resource types",
+    chart: { repo: "https://helm.mariadb.com/mariadb-operator", name: "mariadb-operator-crds" },
+    // Pinned with the operator, which has to match it
+    version: "26.10.2",
+    namespace: CLUSTER_NAMESPACE,
+
+    // A chart of their own, as the project publishes them, rather than
+    // the operator's chart installing them. Its chart can, but says
+    // not to: removing the operator would then remove every MariaDB
+    // with it. These go only when this release does — and with them
+    // every MariaDB in the cluster, so this is a package nothing should
+    // ever uninstall.
+  },
+  {
+    name: "mariadb-operator",
+    description: "The MariaDB operator, and the one MariaDB the applications in cc-office that need MySQL share",
+    chart: { repo: "https://helm.mariadb.com/mariadb-operator", name: "mariadb-operator" },
+    // Pinned, so installing an application that needs MariaDB doesn't
+    // also upgrade the operator under the database it's about to use
+    version: "26.10.2",
+    namespace: CLUSTER_NAMESPACE,
+
+    // Community Cloud's databases are Postgres, through CloudNativePG.
+    // This is for the applications that only speak MySQL — ProjectSend
+    // — so that they get a database the way the others do, from an
+    // operator and a resource each, rather than every one bringing a
+    // MySQL of its own. The MariaDB is on "cc-local-ssd-fast", as
+    // cc-postgres is.
+    requires: ["mariadb-operator-crds", "topolvm"],
+
+    manifests: {
+      // The operator runs the cluster, so it's in community-cloud; the
+      // MariaDB is in cc-office, with the applications using it, as the
+      // Redis is, and its root password has to have somewhere to go
+      // first
+      before: ["embed://apps/office/Office.namespace.yaml"],
+      after: ["embed://apps/office/MariaDB.yaml"],
+    },
+
+    // The root password. Only the operator connects as root, to make
+    // the databases and users the applications ask for; each of those
+    // has its own password, from its own package.
+    secrets: [
+      {
+        name: "cc-mariadb",
+        description: "the root password for the MariaDB in cc-office",
+        namespace: "cc-office",
+      },
+    ],
+  },
+  {
+    name: "projectsend",
+    description: "File sharing with clients, signed into through Authentik",
+    namespace: "cc-office",
+
+    // ProjectSend only runs on MySQL, so its database is in the shared
+    // MariaDB rather than cc-postgres. Its sessions, cache and queue
+    // are in the shared Redis.
+    //
+    // Its files are on a volume or in a bucket, as the configuration
+    // chooses (see util/projectsend.ts). Only one of those needs
+    // SeaweedFS, so it's ordered after it rather than requiring it,
+    // and preflight says so when the bucket is chosen without it.
+    requires: ["mariadb-operator", "redis-operator", "topolvm"],
+    after: ["authentik", "seaweedfs"],
+
+    // No chart from the project; the image is the whole application
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/projectsend/ProjectSend.database.yaml",
+        "embed://apps/projectsend/ProjectSend.storage.yaml",
+        "embed://apps/projectsend/ProjectSend.config.yaml",
+        "embed://apps/projectsend/ProjectSend.provision.yaml",
+        "embed://apps/projectsend/ProjectSend.yaml",
+        "embed://apps/projectsend/ProjectSend.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its user in cc-mariadb, which the operator makes with this
+      // password. The name is the MariaDB user's.
+      {
+        name: "projectsend-db",
+        description: "the ProjectSend database user",
+        username: "projectsend",
+      },
+
+      // Laravel's application key. It encrypts the passwords and keys
+      // ProjectSend keeps in its database — the sign in client's
+      // secret, the bucket's — so losing it loses them. Laravel wants
+      // exactly 32 characters.
+      {
+        name: "projectsend-app-key",
+        description: "the key ProjectSend encrypts what it stores with",
+        keyBytes: 16,
+      },
+
+      // The first administrator, made on first start with the
+      // cluster's admin address. Signing in through Authentik with the
+      // same address, once verified, is the same account.
+      {
+        name: "projectsend-admin",
+        description: "the first ProjectSend administrator's password",
+      },
+      {
+        name: "projectsend-oidc",
+        description: "the client ProjectSend signs in to Authentik as",
+      },
+    ],
+
+    // The MariaDB and the Redis first: their operators make them, so
+    // nothing about installing the operators waited for them. A bucket,
+    // when there is one, isn't waited for here, since whether there is
+    // one is the configuration's to say; ProjectSend's pod can't start
+    // without the keys to it, so the rollout waits for them instead.
+    rollout: ["statefulset/cc-mariadb", "statefulset/redis", "deployment/projectsend"],
+    mail: true,
+    values: ["domain.files", "domain.auth", "adminEmail"],
+
+    authentik: {
+      blueprint: "embed://apps/projectsend/ProjectSend.blueprint.yaml",
+      secret: "projectsend-oidc",
+      slug: "projectsend",
+    },
+  },
+  {
     name: "lago",
     description: "Billing: plans, subscriptions, usage and invoices",
     namespace: "cc-office",

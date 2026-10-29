@@ -1,0 +1,58 @@
+# The MariaDB the applications in cc-office that need MySQL share.
+#
+# Made by the MariaDB operator, which the mariadb-operator package
+# installs along with this. It's reached as "cc-mariadb" in cc-office,
+# on 3306. The cluster's databases are Postgres, in cc-postgres; this is
+# for the applications that can't use it, such as ProjectSend, which
+# runs on MySQL alone.
+#
+# As with cc-postgres, an application doesn't edit this. It asks the
+# operator for a Database, a User and a Grant in its own manifests,
+# with a password from its own Secret, and only the operator connects
+# as root — with the password in the cc-mariadb Secret the installer
+# makes.
+#
+# One instance, as cc-postgres has. Its volume is local, so the pod
+# stays on the node where the claim was first made, and losing that
+# node loses what's in it: there are no backups yet.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: cc-mariadb
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # Pinned to the long term release rather than the operator's default,
+  # which follows the newest. A MariaDB upgrade changes the files on
+  # disk, so it should be one somebody chose.
+  image: mariadb:11.8.9
+
+  replicas: 1
+
+  # Made by the installer rather than the operator, so that it's made
+  # once, the same way as every other credential in the cluster
+  rootPasswordSecretKeyRef:
+    name: cc-mariadb
+    key: password
+    generate: false
+
+  # Fast SSDs, as for cc-postgres. The size comes from
+  # "storage.allocations" in the configuration.
+  storage:
+    size: {{ .Values.mariadbVolumeSize }}
+    storageClassName: cc-local-ssd-fast
+    resizeInUseVolumes: true
+
+  # Unicode throughout, and the collation the MySQL applications here
+  # ask for. A database made without saying gets these.
+  myCnf: |
+    [mariadb]
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    skip-name-resolve
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi

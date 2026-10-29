@@ -22,7 +22,7 @@ import { GatewayCommands } from "./GatewayNodes.ts";
 import { PreflightCommands } from "./Preflight.ts";
 import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
-import { HelmCommands, buildSinglePackageBundle } from "./Helm.ts";
+import { HelmCommands, buildPackagesBundle, buildSinglePackageBundle } from "./Helm.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
@@ -242,6 +242,12 @@ const builtInBundles: BundleDefinition[] = [
     destructive: true,
   },
   {
+    name: "mariadb",
+    description: "Install the MariaDB operator into community-cloud, and the MariaDB cc-office shares",
+    commands: buildPackagesBundle(["mariadb-operator-crds", "mariadb-operator"]),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "mattermost",
     description: "Install Mattermost chat into cc-office",
     commands: buildSinglePackageBundle("mattermost"),
@@ -290,6 +296,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "preflight",
     description: "Check a node could be installed on, changing nothing",
     commands: PreflightCommands,
+  },
+  {
+    name: "projectsend",
+    description: "Install ProjectSend into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("projectsend"),
+    checkedBy: "helm-charts",
   },
   {
     name: "rabbitmq",

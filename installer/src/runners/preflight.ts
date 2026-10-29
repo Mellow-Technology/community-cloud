@@ -34,6 +34,7 @@ import { getPlacement } from "../util/placement.ts";
 import { getObjectStorageShape } from "../util/objectStorage.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
+import { checkProjectSendConfig } from "../util/projectsend.ts";
 import { checkSchema } from "../util/configSchema.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
@@ -254,13 +255,25 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     say(problem);
   }
 
+  // ProjectSend's files in a bucket need SeaweedFS, and a hostname
+  // browsers can fetch them from
+  const selections = getPackageSelections(config);
+  const enabledPackages = Object.entries(selections)
+    .filter(([, selection]) => selection.enabled !== false)
+    .map(([name]) => name);
+  if (enabledPackages.includes("projectsend")) {
+    for (const problem of checkProjectSendConfig(config.getConfig(), enabledPackages)) {
+      say(problem);
+    }
+  }
+
   // What each enabled package's templates need. Checked here because
   // the alternative is finding out from a route with no hostname.
   // Looked up the way a template sees them: "values" laid over the
   // top of the rest of the configuration.
   const raw = config.getConfig();
   const values = { ...raw, ...(raw.values ?? {}) };
-  for (const [name, selection] of Object.entries(getPackageSelections(config))) {
+  for (const [name, selection] of Object.entries(selections)) {
     const definition = getPackage(name);
 
     if (selection.enabled === false) {

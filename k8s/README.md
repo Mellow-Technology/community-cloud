@@ -51,6 +51,7 @@ k8s/
 │   ├── office/        # The cc-office namespace and its shared pieces
 │   ├── picoclaw/      # AI agent
 │   ├── plane/         # Projects
+│   ├── projectsend/   # File sharing
 │   └── twenty/        # Twenty CRM
 ├── certs/             # cert-manager and the cluster's issuer
 ├── crd/               # Community Cloud's own custom resources

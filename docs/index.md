@@ -106,11 +106,11 @@ cluster in service.
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
-| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
+| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane`, `projectsend` | One application on its own, into a cluster that has the rest |
 | `cirrus` | Cirrus, the operator that runs WebApplications |
 | `meteorologist` | Meteorologist, the web interface, signed into through Authentik |
 | `cluster-sign-in` | The API server's sign in settings on each server, without reinstalling K3s |
-| `postgres`, `redis`, `rabbitmq` | One shared service on its own: its operator, and what cc-office shares from it |
+| `postgres`, `redis`, `rabbitmq`, `mariadb` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
 
@@ -167,9 +167,10 @@ k8s/
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
 │   ├── meteorologist/           # Meteorologist, the web interface, signed into through Authentik
-│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis and RabbitMQ
+│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis, RabbitMQ and MariaDB
 │   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
 │   ├── plane/                   # Plane projects, on cc-postgres, Redis, RabbitMQ and SeaweedFS
+│   ├── projectsend/             # ProjectSend file sharing, on cc-mariadb and Redis, signed into through Authentik
 │   ├── twenty/                  # Twenty CRM
 │   └── README.md
 ├── certs/
@@ -292,6 +293,24 @@ installs it:
 | `Documenso.config.yaml` | Its environment |
 | `Documenso.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
 | `Documenso.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+
+#### ProjectSend (`apps/projectsend/`)
+
+File sharing with clients, signed into through Authentik over OpenID
+Connect. It runs on MySQL alone, so its database is in `cc-mariadb`,
+from the `mariadb-operator` package, and its files are on a TopoLVM
+volume or in a SeaweedFS bucket, as `values.projectsend.storage` says.
+The `projectsend` package or bundle installs it:
+
+| File | Purpose |
+|---|---|
+| `ProjectSend.yaml` | The application (1 replica), and a first container that writes its settings |
+| `ProjectSend.database.yaml` | Its `Database`, `User` and `Grant` in cc-mariadb |
+| `ProjectSend.storage.yaml` | Its volume, or its SeaweedFS bucket and keys to only that |
+| `ProjectSend.config.yaml` | Its environment |
+| `ProjectSend.provision.yaml` | What points it at Authentik, and at the bucket, as it starts |
+| `ProjectSend.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `ProjectSend.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 
 #### Mattermost (`apps/mattermost/`)
 
@@ -428,8 +447,9 @@ Build one with `community-cloud` and no arguments, and check it with
 
 Enabled under `packages` in the configuration: `cert-manager`,
 `cloudnative-pg`, `topolvm`, `seaweedfs`, `redis-operator`, `headlamp`,
-`rabbitmq-operator`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
-`mattermost`, `picoclaw`, `plane`. Authentik comes from a plugin rather than this list. See
+`rabbitmq-operator`, `mariadb-operator-crds`, `mariadb-operator`,
+`tailscale-operator`, `twenty`, `lago`, `documenso`, `mattermost`,
+`picoclaw`, `plane`, `projectsend`. Authentik comes from a plugin rather than this list. See
 [`packages`](../installer/README.md#packages).
 
 ### AI Inference
@@ -482,7 +502,7 @@ In stages:
 | **SSH** | node-ssh |
 | **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
-| **Databases and queues** | CloudNative-PG, Redis (Opstree), RabbitMQ |
+| **Databases and queues** | CloudNative-PG, MariaDB (its operator), Redis (Opstree), RabbitMQ |
 | **AI** | vLLM (ROCm/AMD GPU) |
-| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, Headlamp, Picoclaw |
+| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, ProjectSend, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |
