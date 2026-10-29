@@ -35,7 +35,7 @@ spec:
           # Pinned, so the operator and the CRD beside it move together.
           # Released from a cirrus-v<version> tag; see
           # .github/workflows/cirrus.yml.
-          image: ghcr.io/mellow-technology/cirrus:0.1.0
+          image: ghcr.io/mellow-technology/cirrus:0.2.0
           ports:
             - name: http
               containerPort: 8080
