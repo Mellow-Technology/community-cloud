@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "^2.0.1",
-    "gui-mellow": "github:Mellow-Technology/gui-mellow#58b2e7c",
+    "gui-mellow": "github:Mellow-Technology/gui-mellow#03e2878",
     "jose": "^6.2.13",
     "next": "^16.4.3",
     "openid-client": "^6.8.8",
