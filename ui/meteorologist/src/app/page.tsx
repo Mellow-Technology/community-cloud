@@ -120,6 +120,10 @@ export default async function OverviewPage() {
               : ""}
             Turn on what each namespace may use.
           </Card>
+          <Card title="Office" href="/office" footer="Office →">
+            The applications installed for the cluster&apos;s people, how each is signed in to, and, for cluster admins,
+            the administrator passwords.
+          </Card>
           <Card title="New application" href="/apps/new" footer="Start →">
             Run an image with a database, a bucket or a queue, served on your own hostname and updated from GitLab.
           </Card>

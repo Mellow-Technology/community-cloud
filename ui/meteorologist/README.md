@@ -74,6 +74,33 @@ know about:
   automatically on image builds" then has Cirrus roll out each image a
   successful pipeline builds.
 
+- **Office**: the office applications the installer put on the
+  cluster, such as ProjectSend, Plane and Twenty, each with its
+  address, its health, how people sign in, and how an administrator
+  gets in. It's made from the record each package's install leaves:
+  a ConfigMap in `community-cloud` labelled
+  `community-cloud.technology/package`, with the record as JSON under
+  `record.json` (see `installer/src/cli/commands/PackageRecord.ts`).
+  Health comes from the Deployments and StatefulSets the install
+  waited for.
+  - Where the install made an administrator, the record names the
+    Secret holding the password, never the password itself.
+    "Show password" reads it on request, as the signed-in person, so
+    it needs `get` on that Secret, which in `cc-office` means a
+    cluster admin. Nothing secret is in the page as it's sent. A
+    record can only name a Secret in its own package's namespace.
+  - Where nobody was made one, the record says how to become the
+    administrator, such as Authentik's initial setup page or
+    "the first person to sign up".
+  - A cluster installed before records existed gets them from
+    `community-cloud run-bundle package-records <server> cc.config.json`,
+    which records every enabled package without installing anything.
+
+  The records are also the start of installing from here: they say
+  what's installed, at which version, and what to wait for. What's
+  still missing is a record of what's available, and a way for
+  Meteorologist to start the installer in the cluster.
+
 It's a Next.js (App Router) app built on
 [GUI Mellow](https://github.com/Mellow-Technology/gui-mellow).
 
@@ -206,7 +233,7 @@ For this to work, the Authentik provider has to allow
 ```sh
 bun run typecheck
 bun run lint
-bun run test           # bun test: capabilities, form conversion, warnings, health, sessions
+bun run test           # bun test: capabilities, form conversion, warnings, health, sessions, office records
 bun run format:check   # Prettier, 120 columns, like the installer
 bun run build          # next build, standalone output
 ```
@@ -259,6 +286,7 @@ src/
     auth/                   OIDC and the session cookie
     kube/                   the KubeClient interface and its implementations
     namespace/              namespace settings: the form, and the resources it becomes
+    office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
     webapp/                 WebApplication types, form conversion, warnings, health
 ```

@@ -8,7 +8,10 @@
  * mid-migration, one blocked because its namespace can't have buckets,
  * one Cirrus hasn't looked at yet. A namespace has a Postgres that's
  * up, another one still starting, and a third a quota too small for
- * one. Changes made through the pages
+ * one. The office applications are a few of the installer's records,
+ * with one of each kind of administrator: a password to show, one
+ * the viewer isn't allowed to see, and one nobody was made. Changes
+ * made through the pages
  * stick until the server restarts, so the forms can be tried end to
  * end. Nothing here ever reaches a real API server.
  *
@@ -19,16 +22,19 @@ import { getCapability } from "../capabilities";
 import type { NodeUsage } from "../cluster";
 import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
 import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
+import { RECORD_KEY, RECORD_LABEL, RECORD_NAMESPACE, type PackageRecord } from "../office";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
 import type {
   Certificate,
   Condition,
+  ConfigMap,
   LimitRange,
   Namespace,
   PostgresCluster,
   ResourceQuota,
   ServiceAccount,
+  Workload,
 } from "./types";
 
 interface FixtureStore {
@@ -42,6 +48,8 @@ interface FixtureStore {
   serviceAccounts: Map<string, ServiceAccount>;
   postgres: Map<string, PostgresCluster>;
   certificates: Map<string, Certificate>;
+  configMaps: Map<string, ConfigMap>;
+  workloads: Map<string, Workload>;
   regions: string[];
   version: number;
 }
@@ -55,6 +63,9 @@ interface FixtureSecret {
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
   creationTimestamp: string;
+  // Refused to whoever asks, as RBAC would refuse someone who isn't a
+  // cluster admin
+  forbidden?: boolean;
 }
 
 // When the fixtures were "made", so ages on the page look plausible
@@ -149,6 +160,45 @@ function fixtureNode(name: string, cores: number, memory: number, usedCores: num
  */
 function capabilityLabels(...ids: Array<"gateway" | "buckets">): Record<string, string> {
   return Object.fromEntries(ids.map((id) => [getCapability(id).label, getCapability(id).value]));
+}
+
+/**
+ * One of the installer's package records, as it writes them.
+ *
+ * @param record
+ * @returns
+ */
+function packageRecord(record: Omit<PackageRecord, "description"> & { description?: string }): ConfigMap {
+  const { chartVersion, ...rest } = record;
+  return {
+    metadata: {
+      name: `cc-package-${record.name}`,
+      namespace: RECORD_NAMESPACE,
+      labels: { [RECORD_LABEL]: record.name },
+    },
+    data: {
+      [RECORD_KEY]: JSON.stringify({
+        version: 1,
+        description: "",
+        ...rest,
+        ...(chartVersion !== undefined ? { chart: { version: chartVersion } } : {}),
+        installer: "1.0.0",
+      }),
+    },
+  };
+}
+
+/**
+ * A workload with so many replicas ready.
+ *
+ * @param kind
+ * @param name
+ * @param ready
+ * @param desired
+ * @returns
+ */
+function workload(kind: Workload["kind"], name: string, ready: number, desired = 1): Workload {
+  return { kind, name, namespace: "cc-office", ready, desired };
 }
 
 /**
@@ -303,6 +353,31 @@ function seed(): FixtureStore {
         `${DNS_NAMESPACE}/cirrus-dns-acme`,
         { type: "Opaque", data: { CF_API_TOKEN: "fixture" }, creationTimestamp: CREATED },
       ],
+      [
+        "cc-office/projectsend-admin",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "correct horse battery staple" },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
+        "cc-office/plane-admin",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "never shown" },
+          creationTimestamp: CREATED,
+          forbidden: true,
+        },
+      ],
+      [
+        "cc-office/picoclaw-launcher",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "pc-fixture-token" },
+          creationTimestamp: CREATED,
+        },
+      ],
     ]),
     dnsProviders: new Map([
       [
@@ -385,6 +460,97 @@ function seed(): FixtureStore {
         }),
       ],
     ]),
+    configMaps: new Map(
+      [
+        packageRecord({
+          name: "authentik",
+          namespace: "cc-office",
+          chartVersion: "2026.5.3",
+          rollout: [],
+          updated: CREATED,
+          app: {
+            title: "Authentik",
+            url: "https://auth.example.test/",
+            signIn: "own",
+            admin: {
+              how: "The administrator, akadmin, is given a password on Authentik's initial setup page, /if/flow/initial-setup/, the first time it's opened. Anyone in the authentik Admins group administers it too.",
+            },
+          },
+        }),
+        packageRecord({
+          name: "projectsend",
+          namespace: "cc-office",
+          rollout: ["statefulset/redis", "deployment/projectsend"],
+          updated: CREATED,
+          app: {
+            title: "ProjectSend",
+            url: "https://files.example.test/",
+            signIn: "authentik",
+            admin: {
+              secret: { namespace: "cc-office", name: "projectsend-admin", key: "password" },
+              login: "admin@example.test",
+            },
+            note: "The administrator can also sign in through Authentik, with an Authentik account that has the same address.",
+          },
+        }),
+        packageRecord({
+          name: "plane",
+          namespace: "cc-office",
+          rollout: ["deployment/plane-web", "deployment/plane-api"],
+          updated: CREATED,
+          app: {
+            title: "Plane",
+            url: "https://plane.example.test/",
+            signIn: "own",
+            admin: {
+              secret: { namespace: "cc-office", name: "plane-admin", key: "password" },
+              login: "admin@example.test",
+            },
+            note: "The instance's own settings are at /god-mode/, for the same account.",
+          },
+        }),
+        packageRecord({
+          name: "twenty",
+          namespace: "cc-office",
+          rollout: ["deployment/twenty-server", "deployment/twenty-worker"],
+          updated: CREATED,
+          app: {
+            title: "Twenty",
+            url: "https://crm.example.test/",
+            signIn: "own",
+            admin: {
+              how: "The first person to sign up makes the workspace, and administers it. They invite everyone else from its settings.",
+            },
+          },
+        }),
+        packageRecord({
+          name: "picoclaw",
+          namespace: "cc-office",
+          rollout: ["deployment/picoclaw", "deployment/picoclaw-gate"],
+          updated: CREATED,
+          app: {
+            title: "Picoclaw",
+            url: "https://agent.example.test/",
+            signIn: "gate",
+            admin: { secret: { namespace: "cc-office", name: "picoclaw-launcher", key: "password" } },
+          },
+        }),
+        // Not an application, so not on the Office page
+        packageRecord({ name: "cert-manager", namespace: "cert-manager", chartVersion: "v1.19.1", rollout: [] }),
+      ].map((each) => [key(RECORD_NAMESPACE, each.metadata.name), each]),
+    ),
+    workloads: new Map(
+      [
+        workload("statefulset", "redis", 1),
+        workload("deployment", "projectsend", 1),
+        workload("deployment", "plane-web", 1),
+        workload("deployment", "plane-api", 1, 2),
+        workload("deployment", "twenty-server", 1),
+        workload("deployment", "twenty-worker", 1),
+        workload("deployment", "picoclaw", 0),
+        workload("deployment", "picoclaw-gate", 1),
+      ].map((each) => [key(each.namespace, `${each.kind}/${each.name}`), each]),
+    ),
     regions: ["fra", "sea"],
     version: 100,
   };
@@ -443,7 +609,7 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.dnsProviders === undefined) {
+  if (holder.__meteorologistFixtures?.configMaps === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
@@ -586,7 +752,17 @@ export function fixtureClient(): KubeClient {
       });
     },
 
-    readSecretValue: async (namespace, name, secretKey) => store().secrets.get(key(namespace, name))?.data[secretKey],
+    readSecretValue: async (namespace, name, secretKey) => {
+      const secret = store().secrets.get(key(namespace, name));
+      if (secret?.forbidden === true) {
+        throw new KubeError(
+          403,
+          `secrets "${name}" is forbidden: User "fixture" cannot get resource "secrets" in API group "" in the namespace "${namespace}"`,
+          "Forbidden",
+        );
+      }
+      return secret?.data[secretKey];
+    },
 
     deleteSecret: async (namespace, name) => {
       store().secrets.delete(key(namespace, name));
@@ -710,5 +886,21 @@ export function fixtureClient(): KubeClient {
     listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
 
     listCertificates: async (namespace) => copy(inNamespace(store().certificates, namespace)),
+
+    listConfigMaps: async (namespace, labelSelector) =>
+      copy(
+        inNamespace(store().configMaps, namespace).filter(
+          // Only "label" and "label=value" selectors, which is all this
+          // app asks with
+          (each) => {
+            const [label = "", value] = labelSelector.split("=");
+            const found = each.metadata.labels?.[label];
+            return value === undefined ? found !== undefined : found === value;
+          },
+        ),
+      ),
+
+    listWorkloads: async (namespace) =>
+      copy([...store().workloads.values()].filter((each) => each.namespace === namespace)),
   };
 }

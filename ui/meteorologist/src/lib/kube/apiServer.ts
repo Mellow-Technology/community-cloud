@@ -15,6 +15,7 @@
  */
 import {
   ApiException,
+  AppsV1Api,
   CoreV1Api,
   CustomObjectsApi,
   KubeConfig,
@@ -32,12 +33,14 @@ import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
 import type {
   Certificate,
+  ConfigMap,
   LimitRange,
   Namespace,
   PostgresCluster,
   ResourceQuota,
   SecretSummary,
   ServiceAccount,
+  Workload,
 } from "./types";
 
 // Who server-side applies are made as, so Meteorologist owns only the
@@ -192,6 +195,7 @@ async function optional<T>(call: () => Promise<T>): Promise<T | undefined> {
  */
 function clientFor(config: KubeConfig): KubeClient {
   const core = config.makeApiClient(CoreV1Api);
+  const apps = config.makeApiClient(AppsV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
   const dns = { group: GROUP, version: VERSION, plural: DNS_PLURAL };
@@ -331,6 +335,38 @@ function clientFor(config: KubeConfig): KubeClient {
               : (secret.metadata?.creationTimestamp as string | undefined),
         })),
       ),
+
+    listConfigMaps: (namespace, labelSelector) =>
+      attempt(async () =>
+        (await core.listNamespacedConfigMap({ namespace, labelSelector })).items.map((configMap): ConfigMap => ({
+          metadata: { name: configMap.metadata?.name ?? "", namespace, labels: configMap.metadata?.labels },
+          data: configMap.data,
+        })),
+      ),
+
+    listWorkloads: (namespace) =>
+      attempt(async () => {
+        const [deployments, statefulSets] = await Promise.all([
+          apps.listNamespacedDeployment({ namespace }),
+          apps.listNamespacedStatefulSet({ namespace }),
+        ]);
+        return [
+          ...deployments.items.map((each): Workload => ({
+            kind: "deployment",
+            name: each.metadata?.name ?? "",
+            namespace,
+            ready: each.status?.readyReplicas ?? 0,
+            desired: each.spec?.replicas ?? 1,
+          })),
+          ...statefulSets.items.map((each): Workload => ({
+            kind: "statefulset",
+            name: each.metadata?.name ?? "",
+            namespace,
+            ready: each.status?.readyReplicas ?? 0,
+            desired: each.spec?.replicas ?? 1,
+          })),
+        ];
+      }),
 
     readSecretValue: async (namespace, name, key) => {
       const secret = await optional(() => core.readNamespacedSecret({ name, namespace }));

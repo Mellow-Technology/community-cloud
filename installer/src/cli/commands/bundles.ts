@@ -23,6 +23,7 @@ import { PreflightCommands } from "./Preflight.ts";
 import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
 import { HelmCommands, buildPackagesBundle, buildSinglePackageBundle } from "./Helm.ts";
+import { PackageRecordCommands } from "./PackageRecord.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
 import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
@@ -268,6 +269,11 @@ const builtInBundles: BundleDefinition[] = [
     name: "nebula-network",
     description: "Set up the Nebula network and the roles on it",
     commands: NebulaNetworkCommands,
+  },
+  {
+    name: "package-records",
+    description: "Record every enabled package as installed, for Meteorologist, without installing anything",
+    commands: PackageRecordCommands,
   },
   {
     name: "picoclaw",

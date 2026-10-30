@@ -112,6 +112,10 @@ import { CLUSTER_CLIENT_ID, METEOROLOGIST_CLIENT_ID } from "./ClusterSignIn.ts";
  *   no sign in of its own — see OAuth2Proxy.ts. Its Deployment, its
  *   credentials and its client in Authentik are all made from this;
  *   the package's own route has to point at it.
+ * - app: what people use it as, for a package with something to sign
+ *   in to. Written into the package's record (see PackageRecord.ts),
+ *   which is how Meteorologist lists the office applications and
+ *   shows an administrator the way in.
  */
 export interface PackageDefinition {
   name: string;
@@ -134,9 +138,43 @@ export interface PackageDefinition {
   mail?: boolean;
   mailSecurity?: MailSecurity[];
   gate?: GateDefinition;
+  app?: PackageApp;
 
   // Which plugin contributed this, when one did
   plugin?: string;
+}
+
+/**
+ * How people sign in to an application.
+ */
+export enum SignIn {
+  // Through Authentik, with the application's own client
+  Authentik = "authentik",
+  // Through the oauth2-proxy gate in front of it
+  Gate = "gate",
+  // With an account of its own, unrelated to Authentik
+  Own = "own",
+}
+
+/**
+ * What an application is to the people using it.
+ *
+ * - title: its name, as people know it
+ * - url: the value holding its hostname, as a path under "values"
+ * - signIn: how people get in
+ * - admin: the way in for an administrator. Either a credential the
+ *   install made, as a Secret in the package's namespace — "key"
+ *   defaulting to "password", and "login" the value that's the
+ *   account's name, when it has one — or, for an application whose
+ *   administrator nobody made, how to become one.
+ * - note: anything else an administrator should know
+ */
+export interface PackageApp {
+  title: string;
+  url: string;
+  signIn: SignIn;
+  admin?: { secret: string; key?: string; login?: string } | { how: string };
+  note?: string;
 }
 
 /**
@@ -310,6 +348,15 @@ const builtInPackages: PackageDefinition[] = [
     // everybody out, so it's the configuration's to keep rather than
     // made afresh
     values: ["domain.auth", "domain.storage", "authentik.secretKey"],
+
+    app: {
+      title: "Authentik",
+      url: "domain.auth",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The administrator, akadmin, is given a password on Authentik's initial setup page, /if/flow/initial-setup/, the first time it's opened. Anyone in the authentik Admins group administers it too.",
+      },
+    },
   },
   {
     name: "documenso",
@@ -391,6 +438,15 @@ const builtInPackages: PackageDefinition[] = [
     rollout: ["deployment/documenso"],
     mail: true,
     values: ["domain.signing", "domain.auth", "domain.main"],
+
+    app: {
+      title: "Documenso",
+      url: "domain.signing",
+      signIn: SignIn.Authentik,
+      admin: {
+        how: "Everyone gets an account the first time they sign in through Authentik. Its admin pages are for accounts given Documenso's admin role, which is set in its database.",
+      },
+    },
 
     authentik: {
       blueprint: "embed://apps/documenso/Documenso.blueprint.yaml",
@@ -595,6 +651,14 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
     values: ["domain.files", "domain.auth", "adminEmail"],
 
+    app: {
+      title: "ProjectSend",
+      url: "domain.files",
+      signIn: SignIn.Authentik,
+      admin: { secret: "projectsend-admin", login: "adminEmail" },
+      note: "The administrator can also sign in through Authentik, with an Authentik account that has the same address.",
+    },
+
     authentik: {
       blueprint: "embed://apps/projectsend/ProjectSend.blueprint.yaml",
       secret: "projectsend-oidc",
@@ -699,6 +763,13 @@ const builtInPackages: PackageDefinition[] = [
     mailSecurity: [MailSecurity.StartTls, MailSecurity.None],
 
     values: ["domain.billing", "domain.billingApi", "domain.main", "adminEmail"],
+
+    app: {
+      title: "Lago",
+      url: "domain.billing",
+      signIn: SignIn.Own,
+      admin: { secret: "lago-admin", login: "adminEmail" },
+    },
   },
   {
     name: "twenty",
@@ -755,6 +826,15 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
 
     values: ["domain.crm"],
+
+    app: {
+      title: "Twenty",
+      url: "domain.crm",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The first person to sign up makes the workspace, and administers it. They invite everyone else from its settings.",
+      },
+    },
   },
   {
     name: "plane",
@@ -843,6 +923,14 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
 
     values: ["domain.plane", "adminEmail"],
+
+    app: {
+      title: "Plane",
+      url: "domain.plane",
+      signIn: SignIn.Own,
+      admin: { secret: "plane-admin", login: "adminEmail" },
+      note: "The instance's own settings are at /god-mode/, for the same account.",
+    },
   },
   {
     name: "mattermost-operator",
@@ -897,6 +985,15 @@ const builtInPackages: PackageDefinition[] = [
     rollout: ["deployment/mattermost"],
 
     values: ["domain.mattermost"],
+
+    app: {
+      title: "Mattermost",
+      url: "domain.mattermost",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The first account made is the system administrator. Make it before telling anyone else the address.",
+      },
+    },
   },
   {
     name: "picoclaw",
@@ -941,6 +1038,14 @@ const builtInPackages: PackageDefinition[] = [
 
     rollout: ["deployment/picoclaw"],
     values: ["domain.agent"],
+
+    app: {
+      title: "Picoclaw",
+      url: "domain.agent",
+      signIn: SignIn.Gate,
+      // No account: once through the gate, the console asks for this
+      admin: { secret: "picoclaw-launcher" },
+    },
   },
   {
     name: "topolvm",

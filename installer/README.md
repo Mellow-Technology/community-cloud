@@ -550,6 +550,18 @@ client all made by the installer. See
 `installer/src/cli/commands/OAuth2Proxy.ts`. The `picoclaw` package is
 the one that does.
 
+Every package's install also leaves a record of it: a ConfigMap in
+`community-cloud` called `cc-package-<name>`, labelled
+`community-cloud.technology/package`, with what was installed, at
+which version, what it waits for and, for an application, where it's
+reached, how people sign in and how an administrator gets in, as JSON
+under `record.json`. An administrator's password is named by the
+Secret it's in, never copied into the record. Meteorologist's Office
+page is made from these. The `package-records` bundle writes them for
+every enabled package without installing anything, for a cluster
+installed before there were records. See
+`installer/src/cli/commands/PackageRecord.ts`.
+
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
 the working directory), `requires`, `enabled` and `description`.

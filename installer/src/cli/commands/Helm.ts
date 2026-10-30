@@ -26,6 +26,7 @@ import { buildKubeEnv } from "../../util/kube.ts";
 import { CLASSES_LABEL, STORAGE_ROLE_SELECTOR, readShape } from "../../util/storage.ts";
 import { field, readLines, readRecordsOfKind } from "./output.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
+import { buildRecordCommand } from "./PackageRecord.ts";
 import {
   buildCreateSecretCommand,
   buildVerifySecretsCommand,
@@ -811,6 +812,11 @@ export function buildPackageCommands(
       ),
     );
   }
+
+  // What was installed, for Meteorologist and whatever else asks.
+  // Ahead of the checks, so an install that's slow to come up is
+  // still on record as having been made.
+  commands.push(buildRecordCommand(definition));
 
   // Whether it's there at all, and the package's own checks only if
   // it is. The mail checks belong to the namespace rather than to the
