@@ -39,7 +39,7 @@ import {
   type GitLabProject,
 } from "./gitlab/connections";
 import { getKube } from "./kube";
-import { describeError, type KubeClient } from "./kube/client";
+import { describeError, isForbidden, type KubeClient } from "./kube/client";
 import {
   CREATED_BY,
   DEFAULT_SERVICE_ACCOUNT,
@@ -55,6 +55,7 @@ import {
   validateNamespaceForm,
   type NamespaceForm,
 } from "./namespace/settings";
+import { findAdminSecret, readPackageRecords } from "./office";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
 
 /**
@@ -444,4 +445,48 @@ export async function saveNamespaceSettings(form: NamespaceForm): Promise<Action
   });
   revalidatePath("/", "layout");
   return result;
+}
+
+/**
+ * An office application's administrator password, or console token,
+ * for someone allowed to read it.
+ *
+ * Only ever the Secret the package's record names, so the browser
+ * can't ask for any other. Read as the person asking: whether they
+ * see it is their RBAC's to decide, which for a Secret in cc-office
+ * means cluster admins. Read-only, and not logged.
+ *
+ * @param packageName
+ * @returns
+ */
+export async function revealAdminCredential(packageName: string): Promise<ActionResult<string>> {
+  if (typeof packageName !== "string" || !/^[a-z0-9-]+$/.test(packageName)) {
+    return { ok: false, error: "That isn't a package name." };
+  }
+
+  try {
+    const kube = await getKube();
+    const secret = findAdminSecret(await readPackageRecords(kube), packageName);
+    if (secret === undefined) {
+      return { ok: false, error: `${packageName} has no administrator's password on record.` };
+    }
+
+    const value = await kube.readSecretValue(secret.namespace, secret.name, secret.key);
+    if (value === undefined) {
+      return {
+        ok: false,
+        error: `There's no "${secret.key}" in the Secret ${secret.name} in ${secret.namespace}. Re-running ${packageName}'s install makes it.`,
+      };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    unstable_rethrow(error);
+    if (isForbidden(error)) {
+      return {
+        ok: false,
+        error: "Only people who can read Secrets in this application's namespace, cluster admins, can see this.",
+      };
+    }
+    return { ok: false, error: describeError(error) };
+  }
 }

@@ -138,9 +138,10 @@ export function getGateClient(gate: GateDefinition): Pick<AuthentikClient, "secr
  *
  * @param config
  * @param path
+ * @param needer what needs it, for the error when it isn't set
  * @returns
  */
-function readValue(config: CloudConfig, path: string): string {
+export function readValue(config: CloudConfig, path: string, needer: string = "The gate"): string {
   const value = path
     .split(".")
     .reduce(
@@ -149,7 +150,7 @@ function readValue(config: CloudConfig, path: string): string {
     );
 
   if (value === undefined || value === null || value === "") {
-    throw new Error(`The gate needs "values.${path}", and it isn't set.`);
+    throw new Error(`${needer} needs "values.${path}", and it isn't set.`);
   }
 
   return String(value);

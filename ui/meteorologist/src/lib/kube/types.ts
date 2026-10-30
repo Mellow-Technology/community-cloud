@@ -133,3 +133,25 @@ export interface Certificate {
   spec?: { secretName?: string; dnsNames?: string[]; issuerRef?: { name?: string; kind?: string } };
   status?: { conditions?: Condition[]; notAfter?: string; renewalTime?: string };
 }
+
+/**
+ * A ConfigMap, with its data as the strings it holds.
+ */
+export interface ConfigMap {
+  metadata: ObjectMeta;
+  data?: Record<string, string>;
+}
+
+/**
+ * A Deployment or a StatefulSet, as far as whether it's up.
+ *
+ * - ready: replicas ready to take requests
+ * - desired: replicas asked for
+ */
+export interface Workload {
+  kind: "deployment" | "statefulset";
+  name: string;
+  namespace: string;
+  ready: number;
+  desired: number;
+}

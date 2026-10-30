@@ -15,12 +15,14 @@
  */
 import type {
   Certificate,
+  ConfigMap,
   LimitRange,
   Namespace,
   PostgresCluster,
   ResourceQuota,
   SecretSummary,
   ServiceAccount,
+  Workload,
 } from "./types";
 import type { ClusterUsage } from "../cluster";
 import type { DnsProvider } from "../dns/types";
@@ -231,6 +233,25 @@ export interface KubeClient {
    * @param name
    */
   deleteDnsProvider(name: string): Promise<void>;
+
+  /**
+   * The ConfigMaps in a namespace with a label, such as the records
+   * the installer leaves of each package it installs.
+   *
+   * @param namespace
+   * @param labelSelector
+   * @returns
+   */
+  listConfigMaps(namespace: string, labelSelector: string): Promise<ConfigMap[]>;
+
+  /**
+   * The Deployments and StatefulSets in a namespace, as far as how
+   * many of each are ready.
+   *
+   * @param namespace
+   * @returns
+   */
+  listWorkloads(namespace: string): Promise<Workload[]>;
 
   /**
    * CloudNativePG Clusters, in one namespace or in all of them. Empty

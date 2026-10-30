@@ -69,6 +69,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             { href: "/", label: "Overview" },
             { href: "/namespaces", label: "Namespaces" },
             { href: "/apps", label: "Applications" },
+            { href: "/office", label: "Office" },
           ]}
           actions={
             <>

@@ -69,3 +69,9 @@
 .clusterStatus {
   margin: 0 0 var(--gm-space-4);
 }
+
+// An account's name, above what signs it in
+.login {
+  display: block;
+  margin-block-end: var(--gm-space-2);
+}

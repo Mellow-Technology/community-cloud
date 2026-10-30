@@ -113,6 +113,7 @@ cluster in service.
 | `postgres`, `redis`, `rabbitmq`, `mariadb` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
+| `package-records` | Records every enabled package as installed, for Meteorologist's Office page, without installing anything |
 
 These install one package on its own. Their checks
 are that package's, which `helm-charts` already asks for every
@@ -360,6 +361,11 @@ enabled and the `cluster-sign-in` bundle has run:
 | `Meteorologist.yaml` | Deployment and Service, with no ServiceAccount token, and the image pinned |
 | `Meteorologist.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 | `Meteorologist.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
+
+Its Office page lists the office applications from the record each
+package's install leaves in `community-cloud`, and shows a cluster
+admin each one's administrator password on request. See
+`ui/meteorologist/README.md`.
 
 #### Picoclaw (`apps/picoclaw/`)
 
