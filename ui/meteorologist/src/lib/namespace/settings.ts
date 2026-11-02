@@ -19,15 +19,17 @@
  *   on the namespace's default ServiceAccount, which Kubernetes adds
  *   to every pod that runs as it and doesn't name its own.
  *
- * And, optionally, the region it runs in, the same annotation the
- * installer's "placement" sets (installer/src/util/placement.ts).
+ * And, optionally, the region it runs in, as the same labels the
+ * installer's "placement" sets: the region, and whether pods must run
+ * there or only should. The installer's admission policy reads them
+ * when each pod is made (installer/src/util/placement.ts).
  *
  * The quota and the LimitRange are one of each, under one name, so
  * Meteorologist only ever changes its own and leaves any others a
  * person has made alone.
  */
 import { CAPABILITIES, capabilityLabelPatch } from "../capabilities";
-import type { LimitRange, ResourceQuota, ServiceAccount } from "../kube/types";
+import type { LimitRange, ObjectMeta, ResourceQuota, ServiceAccount } from "../kube/types";
 import { QUANTITY, parseQuantity } from "../quantity";
 
 // The ResourceQuota and LimitRange Meteorologist manages
@@ -39,9 +41,20 @@ export const CREATED_BY = { "app.kubernetes.io/created-by": "meteorologist" };
 // The namespace's ServiceAccount pods run as unless they say otherwise
 export const DEFAULT_SERVICE_ACCOUNT = "default";
 
-// What the PodNodeSelector admission plugin reads off a namespace, and
-// the node label it's set to select on
-export const PLACEMENT_ANNOTATION = "scheduler.alpha.kubernetes.io/node-selector";
+// What the installer's placement policy reads off a namespace
+export const NAMESPACE_REGION_LABEL = "placement.community-cloud.technology/region";
+export const NAMESPACE_AFFINITY_LABEL = "placement.community-cloud.technology/affinity";
+
+// Whether a placed namespace's pods must be in its region, or only
+// should be. Required is what a namespace without the label gets.
+export const AFFINITIES = ["required", "preferred"] as const;
+export type Affinity = (typeof AFFINITIES)[number];
+
+// What placed a namespace before the policy, for the PodNodeSelector
+// admission plugin, and the node label it selected on. Still read, so
+// a namespace placed that way shows its region, and taken off when
+// the namespace is saved.
+export const LEGACY_PLACEMENT_ANNOTATION = "scheduler.alpha.kubernetes.io/node-selector";
 export const REGION_LABEL = "topology.kubernetes.io/region";
 
 // The type of Secret Kubernetes reads registry credentials from
@@ -71,6 +84,7 @@ export interface NamespaceForm {
   // Only when creating; afterwards they're switches of their own
   capabilities: Record<string, boolean>;
   region: string;
+  affinity: Affinity;
 
   quotaCpu: string;
   quotaMemory: string;
@@ -101,6 +115,7 @@ export function emptyNamespaceForm(): NamespaceForm {
     name: "",
     capabilities: Object.fromEntries(CAPABILITIES.map((capability) => [capability.id, false])),
     region: "",
+    affinity: "required",
     quotaCpu: "",
     quotaMemory: "",
     quotaStorage: "",
@@ -114,23 +129,56 @@ export function emptyNamespaceForm(): NamespaceForm {
 }
 
 /**
- * The region a namespace is placed in, from its annotation.
+ * The region a namespace was placed in for PodNodeSelector.
  *
  * @param annotations
- * @returns the region, or "" when it isn't placed or is placed by
+ * @returns the region, or "" when there's no selector or it's on
  *   something other than region
  */
-export function regionOf(annotations: Record<string, string> | undefined): string {
-  const selector = annotations?.[PLACEMENT_ANNOTATION] ?? "";
+function legacyRegionOf(annotations: Record<string, string> | undefined): string {
+  const selector = annotations?.[LEGACY_PLACEMENT_ANNOTATION] ?? "";
   const prefix = `${REGION_LABEL}=`;
   return selector.startsWith(prefix) && !selector.includes(",") ? selector.slice(prefix.length) : "";
+}
+
+/**
+ * Where a namespace is placed, from its labels, or from the annotation
+ * it was placed with before them.
+ *
+ * @param metadata the namespace's
+ * @returns the region, "" when it isn't placed, and the affinity
+ */
+export function placementOf(metadata: Pick<ObjectMeta, "labels" | "annotations">): {
+  region: string;
+  affinity: Affinity;
+} {
+  const region = metadata.labels?.[NAMESPACE_REGION_LABEL];
+  if (region !== undefined && region !== "") {
+    return { region, affinity: metadata.labels?.[NAMESPACE_AFFINITY_LABEL] === "preferred" ? "preferred" : "required" };
+  }
+  // PodNodeSelector's was always strict
+  return { region: legacyRegionOf(metadata.annotations), affinity: "required" };
+}
+
+/**
+ * Where a namespace is placed, said briefly.
+ *
+ * @param metadata the namespace's
+ * @returns
+ */
+export function describePlacement(metadata: Pick<ObjectMeta, "labels" | "annotations">): string {
+  const { region, affinity } = placementOf(metadata);
+  if (region === "") {
+    return "Anywhere";
+  }
+  return affinity === "preferred" ? `${region}, preferred` : region;
 }
 
 /**
  * The form for an existing namespace, from what's in the cluster.
  *
  * @param name
- * @param annotations
+ * @param metadata the namespace's, for where it's placed
  * @param quota Meteorologist's quota, if there is one
  * @param limitRange Meteorologist's LimitRange, if there is one
  * @param serviceAccount the default ServiceAccount, if it's there yet
@@ -138,7 +186,7 @@ export function regionOf(annotations: Record<string, string> | undefined): strin
  */
 export function toNamespaceForm(
   name: string,
-  annotations: Record<string, string> | undefined,
+  metadata: Pick<ObjectMeta, "labels" | "annotations">,
   quota: ResourceQuota | undefined,
   limitRange: LimitRange | undefined,
   serviceAccount: ServiceAccount | undefined,
@@ -148,7 +196,7 @@ export function toNamespaceForm(
   return {
     ...emptyNamespaceForm(),
     name,
-    region: regionOf(annotations),
+    ...placementOf(metadata),
     quotaCpu: hard["requests.cpu"] ?? "",
     quotaMemory: hard["limits.memory"] ?? "",
     quotaStorage: hard["requests.storage"] ?? "",
@@ -237,23 +285,37 @@ export function initialLabels(form: NamespaceForm): Record<string, string> {
 }
 
 /**
- * The annotations part of a merge patch placing the namespace, or
- * un-placing it. Un-placing only removes a selector this form could
- * have set, so one written by hand on some other label survives.
+ * The merge patches placing a namespace, or un-placing it.
+ *
+ * PodNodeSelector's annotation comes off either way, so a namespace
+ * placed before the labels is moved over to them; but only one on
+ * region, which this form could have set, so a selector written by
+ * hand on some other label survives.
  *
  * @param form
- * @param current the namespace's annotations now
- * @returns
+ * @param current the namespace's metadata now, if it exists
+ * @returns the labels and annotations parts, each empty when there's
+ *   nothing to change
  */
 export function placementPatch(
   form: NamespaceForm,
-  current: Record<string, string> | undefined,
-): Record<string, string | null> {
+  current: Pick<ObjectMeta, "labels" | "annotations"> | undefined,
+): { labels: Record<string, string | null>; annotations: Record<string, string | null> } {
   const region = form.region.trim();
+  const annotations: Record<string, string | null> =
+    legacyRegionOf(current?.annotations) !== "" ? { [LEGACY_PLACEMENT_ANNOTATION]: null } : {};
+
   if (region !== "") {
-    return { [PLACEMENT_ANNOTATION]: `${REGION_LABEL}=${region}` };
+    return { labels: { [NAMESPACE_REGION_LABEL]: region, [NAMESPACE_AFFINITY_LABEL]: form.affinity }, annotations };
   }
-  return regionOf(current) !== "" ? { [PLACEMENT_ANNOTATION]: null } : {};
+
+  const placed =
+    current?.labels !== undefined &&
+    (NAMESPACE_REGION_LABEL in current.labels || NAMESPACE_AFFINITY_LABEL in current.labels);
+  return {
+    labels: placed ? { [NAMESPACE_REGION_LABEL]: null, [NAMESPACE_AFFINITY_LABEL]: null } : {},
+    annotations,
+  };
 }
 
 /**
@@ -325,6 +387,10 @@ export function validateNamespaceForm(form: NamespaceForm, creating: boolean): N
 
   if (form.region.trim() !== "" && !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(form.region.trim())) {
     errors.region = "A region code, such as sea.";
+  }
+
+  if (!(AFFINITIES as readonly string[]).includes(form.affinity)) {
+    errors.affinity = "Required or preferred.";
   }
 
   const quantities = [

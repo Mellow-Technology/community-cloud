@@ -212,8 +212,10 @@ function seed(): FixtureStore {
       ...capabilityLabels("gateway", "buckets"),
       "app.kubernetes.io/managed-by": "community-cloud",
     }),
-    namespace("team-shop", capabilityLabels("gateway"), {
-      "scheduler.alpha.kubernetes.io/node-selector": "topology.kubernetes.io/region=sea",
+    namespace("team-shop", {
+      ...capabilityLabels("gateway"),
+      "placement.community-cloud.technology/region": "sea",
+      "placement.community-cloud.technology/affinity": "required",
     }),
     namespace("sandbox"),
     namespace("kube-system"),

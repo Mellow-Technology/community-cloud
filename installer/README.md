@@ -267,10 +267,13 @@ lowered. See
 
 ### `placement`
 
-Which region each namespace's pods run in:
+Which region each namespace's pods run in, and how firmly:
 
 ```json
-"placement": { "cc-office": "sea" }
+"placement": {
+  "cc-office": "sea",
+  "team-shop": { "region": "sea", "affinity": "preferred" }
+}
 ```
 
 A cluster can span regions and stay one cluster, but workloads that
@@ -279,27 +282,46 @@ querying its database in another pays the distance on every query —
 Plane's API in Germany, against cc-postgres in Thailand, took six
 seconds for a simple request.
 
-The `placement` bundle annotates each namespace listed for Kubernetes'
-`PodNodeSelector` admission plugin, which the `k3s` bundle turns on for
-the API server when anything is placed. Every pod made in the
-namespace then gets a node selector on `topology.kubernetes.io/region`,
-including the ones operators make — Postgres, Redis, RabbitMQ — so
-nothing in an application's manifests has to know. A region comes from
-each node's `region`, which `nodeLabels` puts on the node.
+The `placement` bundle applies a MutatingAdmissionPolicy,
+`community-cloud-placement`, and labels each namespace listed with
+`placement.community-cloud.technology/region` and `/affinity`. Every
+pod made in a labelled namespace then gets a node affinity for
+`topology.kubernetes.io/region`, including the ones operators make —
+Postgres, Redis, RabbitMQ — so nothing in an application's manifests
+has to know. A region comes from each node's `region`, which
+`nodeLabels` puts on the node. The policy is applied on every install,
+placed or not, since Meteorologist can place a namespace too.
 
-It's strict: with no node in the region up, a pod waits rather than
-starting somewhere else. And it only applies to pods made after it, so
-placing a namespace that already has workloads leaves them where they
-are until they're restarted. The doctor lists any running outside
-their region. On a cluster that's already running:
+The affinity is `required` unless it says otherwise: with no node in
+the region up, a pod waits rather than starting somewhere else.
+`preferred` puts pods in the region when there's room and elsewhere
+when there isn't.
+
+A pod can be an exception to its namespace. One labelled
+`placement.community-cloud.technology/exempt: "true"` is left alone,
+and so is one whose `nodeSelector` names a region of its own. The label
+has to be on the pod, so for one an operator makes it goes wherever
+that operator takes pod labels from — a chart's `podLabels`,
+CloudNativePG's `inheritedMetadata`.
+
+An affinity is only given to pods as they're made, so placing a
+namespace that already has workloads leaves them where they are until
+they're restarted. The doctor lists any running outside a required
+region, and mentions them for a preferred one.
+
+Placement used to be done by the `PodNodeSelector` admission plugin,
+which had no way to make exceptions. The bundle takes its annotation
+off each namespace it places; running the `k3s` bundle again turns the
+plugin off. On a cluster that's already running:
 
 ```bash
-community-cloud run-bundle k3s <server> cc.config.json   # turns the plugin on; restarts K3s
+community-cloud run-bundle k3s <server> cc.config.json   # drops PodNodeSelector; restarts K3s
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle placement <server> cc.config.json
 ```
 
-Preflight reports a namespace placed in a region no node is in.
+Preflight reports a namespace placed in a region no node is in, or
+with an affinity that isn't `required` or `preferred`.
 
 ### `packages`
 

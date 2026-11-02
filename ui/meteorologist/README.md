@@ -24,10 +24,13 @@ know about:
   address, as `?tab=dns` or `?tab=integration`. The settings are all
   made the way Kubernetes itself does them, so they hold for
   everything in the namespace, not just what Cirrus makes:
-  - **Region**: the `scheduler.alpha.kubernetes.io/node-selector`
-    annotation that the installer's `placement` also sets. It pins
-    every pod in the namespace, Postgres included, to the region's
-    nodes.
+  - **Region**: the `placement.community-cloud.technology/region`
+    and `/affinity` labels that the installer's `placement` also
+    sets. The installer's admission policy gives every pod in the
+    namespace, Postgres included, an affinity for the region's nodes,
+    required or preferred. A namespace placed with the old
+    `scheduler.alpha.kubernetes.io/node-selector` annotation is shown
+    with its region, and moved to the labels when it's saved.
   - **Limits**: a ResourceQuota (`requests.cpu`, `limits.memory`,
     `requests.storage`) for the namespace's totals. There's also a
     LimitRange with each container's defaults, which a quota needs:
