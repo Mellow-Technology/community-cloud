@@ -22,7 +22,13 @@ import { Switch } from "gui-mellow/Switch";
 
 import { createNamespace, saveNamespaceSettings } from "@/lib/actions";
 import { CAPABILITIES } from "@/lib/capabilities";
-import { pullSecretName, validateNamespaceForm, type NamespaceForm, type RegistryRow } from "@/lib/namespace/settings";
+import {
+  pullSecretName,
+  validateNamespaceForm,
+  type Affinity,
+  type NamespaceForm,
+  type RegistryRow,
+} from "@/lib/namespace/settings";
 import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresStorageProblem } from "@/lib/postgres";
 import styles from "./WebApplicationForm.module.scss";
 
@@ -148,11 +154,25 @@ export function NamespaceSettingsForm({ initial, existing, regions }: NamespaceS
           ) : (
             <TextField label="Region" placeholder="sea" {...text("region")} />
           )}
+          {form.region.trim() !== "" && (
+            <SelectField
+              label="Keeping to it"
+              value={form.affinity}
+              error={shownErrors.affinity}
+              onChange={(event) => set("affinity", event.target.value as Affinity)}
+              options={[
+                { value: "required", label: "Required — pods wait for a node in the region" },
+                { value: "preferred", label: "Preferred — pods run elsewhere when the region is full or down" },
+              ]}
+            />
+          )}
           <p className={styles.note}>
             Every pod in the namespace runs on a node in this region — applications, and the Postgres and anything else
-            made for them, so they&apos;re never a region apart. It&apos;s strict: with no node in the region up, pods
-            wait. It needs the API server&apos;s PodNodeSelector plugin, which the installer turns on once anything is
-            placed. Pods already running stay where they are until they restart.
+            made for them, so they&apos;re never a region apart. Required is strict: with no node in the region up, pods
+            wait. Preferred keeps them there when it can. A pod labelled
+            placement.community-cloud.technology/exempt=true is left to run anywhere. It needs the installer&apos;s
+            placement admission policy, which every install applies. Pods already running stay where they are until they
+            restart.
           </p>
         </div>
       ),

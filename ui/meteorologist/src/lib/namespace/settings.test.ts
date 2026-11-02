@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  PLACEMENT_ANNOTATION,
+  LEGACY_PLACEMENT_ANNOTATION,
+  NAMESPACE_AFFINITY_LABEL,
+  NAMESPACE_REGION_LABEL,
+  describePlacement,
   defaultPullSecrets,
   dockerConfigJson,
   emptyNamespaceForm,
@@ -54,10 +57,16 @@ describe("the container defaults", () => {
 
 describe("reading back", () => {
   test("gives the form that wrote it", () => {
-    const written = form({ quotaCpu: "2", quotaStorage: "50Gi", region: "sea", pullSecrets: ["pull-ghcr-io"] });
+    const written = form({
+      quotaCpu: "2",
+      quotaStorage: "50Gi",
+      region: "sea",
+      affinity: "preferred",
+      pullSecrets: ["pull-ghcr-io"],
+    });
     const read = toNamespaceForm(
       "team-shop",
-      { [PLACEMENT_ANNOTATION]: "topology.kubernetes.io/region=sea" },
+      { labels: placementPatch(written, undefined).labels as Record<string, string> },
       toResourceQuota(written),
       toLimitRange(written),
       { metadata: { name: "default" }, imagePullSecrets: [{ name: "pull-ghcr-io" }] },
@@ -65,24 +74,67 @@ describe("reading back", () => {
     expect(read).toEqual(written);
   });
 
+  test("reads a namespace placed with PodNodeSelector's annotation, as required", () => {
+    const read = toNamespaceForm(
+      "x",
+      { annotations: { [LEGACY_PLACEMENT_ANNOTATION]: "topology.kubernetes.io/region=sea" } },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(read.region).toBe("sea");
+    expect(read.affinity).toBe("required");
+  });
+
   test("doesn't take a hand-written selector on other labels for a region", () => {
-    const read = toNamespaceForm("x", { [PLACEMENT_ANNOTATION]: "disk=ssd" }, undefined, undefined, undefined);
+    const read = toNamespaceForm(
+      "x",
+      { annotations: { [LEGACY_PLACEMENT_ANNOTATION]: "disk=ssd" } },
+      undefined,
+      undefined,
+      undefined,
+    );
     expect(read.region).toBe("");
+  });
+
+  test("says where it runs", () => {
+    expect(describePlacement({})).toBe("Anywhere");
+    expect(describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "sea" } })).toBe("sea");
+    expect(
+      describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "sea", [NAMESPACE_AFFINITY_LABEL]: "preferred" } }),
+    ).toBe("sea, preferred");
   });
 });
 
 describe("placement", () => {
-  test("sets the region", () => {
-    expect(placementPatch(form({ region: "sea" }), undefined)).toEqual({
-      [PLACEMENT_ANNOTATION]: "topology.kubernetes.io/region=sea",
+  test("labels the region and affinity", () => {
+    expect(placementPatch(form({ region: "sea", affinity: "preferred" }), undefined)).toEqual({
+      labels: { [NAMESPACE_REGION_LABEL]: "sea", [NAMESPACE_AFFINITY_LABEL]: "preferred" },
+      annotations: {},
     });
   });
 
-  test("removes only a region it could have set", () => {
-    expect(placementPatch(form(), { [PLACEMENT_ANNOTATION]: "topology.kubernetes.io/region=sea" })).toEqual({
-      [PLACEMENT_ANNOTATION]: null,
+  test("moves a namespace off PodNodeSelector's annotation", () => {
+    const current = { annotations: { [LEGACY_PLACEMENT_ANNOTATION]: "topology.kubernetes.io/region=sea" } };
+    expect(placementPatch(form({ region: "sea" }), current)).toEqual({
+      labels: { [NAMESPACE_REGION_LABEL]: "sea", [NAMESPACE_AFFINITY_LABEL]: "required" },
+      annotations: { [LEGACY_PLACEMENT_ANNOTATION]: null },
     });
-    expect(placementPatch(form(), { [PLACEMENT_ANNOTATION]: "disk=ssd" })).toEqual({});
+  });
+
+  test("un-places by taking the labels off", () => {
+    const current = { labels: { [NAMESPACE_REGION_LABEL]: "sea", [NAMESPACE_AFFINITY_LABEL]: "required" } };
+    expect(placementPatch(form(), current)).toEqual({
+      labels: { [NAMESPACE_REGION_LABEL]: null, [NAMESPACE_AFFINITY_LABEL]: null },
+      annotations: {},
+    });
+  });
+
+  test("leaves a hand-written selector on other labels alone", () => {
+    expect(placementPatch(form(), { annotations: { [LEGACY_PLACEMENT_ANNOTATION]: "disk=ssd" } })).toEqual({
+      labels: {},
+      annotations: {},
+    });
   });
 });
 

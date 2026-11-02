@@ -30,7 +30,7 @@ import {
   DEFAULT_SERVICE_ACCOUNT,
   PULL_SECRET_TYPE,
   SETTINGS_NAME,
-  regionOf,
+  describePlacement,
   toNamespaceForm,
 } from "@/lib/namespace/settings";
 import { namespaceTab } from "@/lib/namespace/tabs";
@@ -154,9 +154,7 @@ export default async function NamespacePage({
                       ),
                     }))}
                   />
-                  <DetailList
-                    items={[{ label: "Region", value: regionOf(namespace.metadata.annotations) || "Anywhere" }]}
-                  />
+                  <DetailList items={[{ label: "Region", value: describePlacement(namespace.metadata) }]} />
                 </Card>
 
                 <Card title="Postgres server" level={2}>
@@ -234,13 +232,7 @@ export default async function NamespacePage({
                 <h2 className={styles.heading}>Settings</h2>
                 {settingsReadable ? (
                   <NamespaceSettingsForm
-                    initial={toNamespaceForm(
-                      name,
-                      namespace.metadata.annotations,
-                      ours,
-                      limitRange.value,
-                      serviceAccount.value,
-                    )}
+                    initial={toNamespaceForm(name, namespace.metadata, ours, limitRange.value, serviceAccount.value)}
                     existing={{
                       pullSecrets: secrets.ok
                         ? secrets.value

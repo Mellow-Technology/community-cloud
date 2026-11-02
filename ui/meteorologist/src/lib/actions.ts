@@ -407,7 +407,15 @@ export async function createNamespace(form: NamespaceForm): Promise<ActionResult
   const kube = await getKube();
 
   const created = await run(() =>
-    kube.createNamespace(name, initialLabels(form), placementPatch(form, undefined) as Record<string, string>),
+    kube.createNamespace(
+      name,
+      {
+        ...initialLabels(form),
+        // A new namespace has nothing to take off, so nothing's null
+        ...(placementPatch(form, undefined).labels as Record<string, string>),
+      },
+      {},
+    ),
   );
   if (!created.ok) {
     return created;
@@ -436,9 +444,12 @@ export async function saveNamespaceSettings(form: NamespaceForm): Promise<Action
   const result = await run(async () => {
     const kube = await getKube();
     const namespace = await kube.getNamespace(form.name.trim());
-    const placement = placementPatch(form, namespace.metadata.annotations);
-    if (Object.keys(placement).length > 0) {
-      await kube.patchNamespaceAnnotations(namespace.metadata.name, placement);
+    const placement = placementPatch(form, namespace.metadata);
+    if (Object.keys(placement.labels).length > 0) {
+      await kube.patchNamespaceLabels(namespace.metadata.name, placement.labels);
+    }
+    if (Object.keys(placement.annotations).length > 0) {
+      await kube.patchNamespaceAnnotations(namespace.metadata.name, placement.annotations);
     }
     await applyNamespaceSettings(kube, form);
     return undefined;

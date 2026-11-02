@@ -81,8 +81,11 @@ const NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
  * - credentials: environment variables the provider reads its
  *   credentials from, as the provider's own documentation names them —
  *   CF_API_TOKEN for Cloudflare, AWS_ACCESS_KEY_ID and
- *   AWS_SECRET_ACCESS_KEY for Route 53. Kept in a Secret beside the
- *   instances.
+ *   AWS_SECRET_ACCESS_KEY for Route 53. A provider whose credentials
+ *   ExternalDNS only takes as flags takes them as the variables it
+ *   reads those flags from instead: EXTERNAL_DNS_GODADDY_API_KEY and
+ *   EXTERNAL_DNS_GODADDY_API_SECRET for GoDaddy. Kept in a Secret
+ *   beside the instances.
  * - args: further ExternalDNS flags, for provider settings like
  *   "--cloudflare-proxied"
  * - target: what the records point at, in place of "dns.target"

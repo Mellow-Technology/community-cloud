@@ -118,6 +118,14 @@ describe("the form for a new provider", () => {
     expect(validateDnsForm(form({ provider: "other", customProvider: "" }), [], "team").customProvider).toBeDefined();
   });
 
+  test("puts GoDaddy's key and secret where ExternalDNS reads its flags from", () => {
+    expect(credentialsFor(form(), "godaddy").map((row) => row.name)).toEqual([
+      "EXTERNAL_DNS_GODADDY_API_KEY",
+      "EXTERNAL_DNS_GODADDY_API_SECRET",
+    ]);
+    expect(fromDnsForm(form({ provider: "godaddy" }), "team").spec.provider).toBe("godaddy");
+  });
+
   test("keeps credentials already typed when the provider changes back", () => {
     const typed = form({ credentials: [{ name: "CF_API_TOKEN", value: "kept" }] });
     expect(credentialsFor(typed, "aws").map((row) => row.name)).toEqual(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]);
