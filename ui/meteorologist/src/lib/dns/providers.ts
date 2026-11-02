@@ -63,6 +63,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     credentials: ["OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY"],
     hint: "An application's keys and a consumer key allowed to manage the zones.",
   },
+  {
+    // GoDaddy's key and secret have no names of their own, so they're
+    // the ones ExternalDNS reads its "--godaddy-api-*" flags from
+    id: "godaddy",
+    label: "GoDaddy",
+    credentials: ["EXTERNAL_DNS_GODADDY_API_KEY", "EXTERNAL_DNS_GODADDY_API_SECRET"],
+    hint: "A production API key and its secret, from developer.godaddy.com. A test (OTE) key won't reach real domains.",
+  },
 ];
 
 export const OTHER_PROVIDER = "other";
