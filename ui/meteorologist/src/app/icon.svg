@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-3.3 1.3 31.3 31.3">
+  <!--
+    Meteorologist's mark: a weathervane at 37°, pointing into the wind,
+    with two streaks coming off its tail. GUI Mellow's blue and red,
+    lighter on dark tabs. The viewBox is fitted to what's painted, so the
+    vane fills the icon at 16px.
+  -->
+  <style>
+    svg { --blue: #0568e2; --red: #d4163a; }
+    @media (prefers-color-scheme: dark) {
+      svg { --blue: #3d92ee; --red: #ff3552; }
+    }
+    .blue { stop-color: var(--blue); }
+    .red { stop-color: var(--red); }
+  </style>
+  <defs>
+    <linearGradient id="shaft" gradientUnits="userSpaceOnUse" x1="-12" y1="0" x2="7" y2="0">
+      <stop offset="0" class="blue" stop-opacity="0.45"/>
+      <stop offset="1" class="blue"/>
+    </linearGradient>
+    <linearGradient id="tail" gradientUnits="userSpaceOnUse" x1="-14" y1="0" x2="-6" y2="0">
+      <stop offset="0" class="blue" stop-opacity="0.3"/>
+      <stop offset="1" class="blue" stop-opacity="0.75"/>
+    </linearGradient>
+    <linearGradient id="head" gradientUnits="userSpaceOnUse" x1="6" y1="0" x2="14" y2="0">
+      <stop offset="0" class="red" stop-opacity="0.85"/>
+      <stop offset="1" class="red"/>
+    </linearGradient>
+    <linearGradient id="wind" gradientUnits="userSpaceOnUse" x1="-22" y1="0" x2="-9" y2="0">
+      <stop offset="0" class="blue" stop-opacity="0"/>
+      <stop offset="1" class="blue" stop-opacity="0.55"/>
+    </linearGradient>
+  </defs>
+  <path d="M16 13 V28 M11 28 H21" style="stroke: var(--blue)" stroke-width="2.6" stroke-linecap="round"/>
+  <g transform="translate(16 13) rotate(-37)">
+    <path d="M-9.5 -6.6 H-21" stroke="url(#wind)" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M-11 6.6 H-22.5" stroke="url(#wind)" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M-11 0 H7" stroke="url(#shaft)" stroke-width="2.6" stroke-linecap="round"/>
+    <path d="M-14 -4.6 H-9.4 L-6.6 0 L-9.4 4.6 H-14 L-11.4 0 Z" fill="url(#tail)" stroke="url(#tail)" stroke-width="0.8" stroke-linejoin="round"/>
+    <path d="M14 0 L6 -5 V5 Z" fill="url(#head)" stroke="url(#head)" stroke-width="1" stroke-linejoin="round"/>
+    <path d="M14 0 L6 -5 V0 Z" fill="#ffffff" fill-opacity="0.28"/>
+  </g>
+  <circle cx="16" cy="13" r="2.2" style="fill: var(--blue)"/>
+</svg>

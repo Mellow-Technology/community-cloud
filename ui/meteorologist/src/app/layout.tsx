@@ -18,6 +18,7 @@ import { ThemeScript, ThemeToggle } from "gui-mellow/ThemeToggle";
 import "gui-mellow/styles.scss";
 
 import { ViewerMenu } from "@/components/ViewerMenu";
+import { WeathervaneMark } from "@/components/WeathervaneMark";
 import { getViewer } from "@/lib/kube";
 import styles from "./layout.module.scss";
 
@@ -62,6 +63,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <SiteHeader
           brand={
             <Link href="/" className={styles.brand}>
+              <WeathervaneMark />
               Meteorologist
             </Link>
           }

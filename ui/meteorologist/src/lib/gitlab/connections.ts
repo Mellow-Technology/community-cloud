@@ -132,20 +132,22 @@ export function tokenPages(url: string): { personal: string; groups: string } {
 }
 
 /**
- * The image repository to run for a project: one of the repositories
- * its registry already has, when it has exactly one or one named like
- * the project, or else the registry's prefix for the project itself,
- * which is where a pipeline's first image goes by default.
+ * The image repository to run for a project: the registry's only
+ * repository, or the one named like the project among several. With
+ * none yet, it's the registry's prefix for the project, which is where a
+ * pipeline's first image goes by default. Among several, none named like
+ * the project, there's no telling which, so it's left to be chosen.
  *
  * @param project
  * @param repositories locations of the project's registry repositories
  * @returns
  */
 export function imageFor(project: GitLabProject, repositories: string[]): string | undefined {
+  if (repositories.length === 0) {
+    return project.registryPrefix;
+  }
   if (repositories.length === 1) {
     return repositories[0];
   }
-  return (
-    repositories.find((location) => location === project.registryPrefix) ?? project.registryPrefix ?? repositories[0]
-  );
+  return repositories.find((location) => location === project.registryPrefix);
 }
