@@ -894,7 +894,7 @@ export function buildPackageCommands(
  * @returns
  */
 export function buildPackageInventoryCommand(config: CloudConfig): CommandSpec {
-  const enabled = new Set(resolveInstallOrder(config).map((definition) => definition.name));
+  const enabled = new Set(resolveInstallOrder(config, true).map((definition) => definition.name));
   const selections = getPackageSelections(config);
 
   const others = packageCatalogue
@@ -1068,11 +1068,32 @@ function buildRequirementCommand(
  * configuration knows which packages a cluster wants — and, through
  * their dependencies, which others come with them.
  *
+ * A run can ask for only some of them ("packages" in the context, from
+ * --packages), to upgrade a few at a time. They keep their place in
+ * the order, and what they need isn't installed with them: it's
+ * checked for instead, as a package's own bundle does, since a
+ * staggered upgrade is of a cluster that already has it.
+ *
  * @param config
+ * @param context
  * @returns
  */
-export function HelmCommands(config: CloudConfig): CommandSpec[] {
-  const ordered = resolveInstallOrder(config);
+export function HelmCommands(config: CloudConfig, context: any = {}): CommandSpec[] {
+  const only: string[] | undefined = Array.isArray(context?.packages) ? context.packages : undefined;
+  const everything = resolveInstallOrder(config, only !== undefined);
+
+  if (only !== undefined) {
+    const known = everything.map((entry) => entry.name);
+    const unknown = only.filter((name) => !known.includes(name));
+
+    if (unknown.length > 0) {
+      throw new Error(
+        `${unknown.map((name) => `"${name}"`).join(", ")} ${unknown.length === 1 ? "isn't a package" : "aren't packages"} this configuration installs. It installs: ${known.join(", ")}.`,
+      );
+    }
+  }
+
+  const ordered = only !== undefined ? everything.filter((entry) => only.includes(entry.name)) : everything;
 
   // Credentials are identified by where they go, not by who asked for
   // them, so two packages naming the same one mean one secret and not
@@ -1096,7 +1117,11 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     ];
   }
 
-  console.log(`Packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`);
+  console.log(
+    only !== undefined
+      ? `Only these packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`
+      : `Packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`,
+  );
 
   const commands: CommandSpec[] = [
     checkHelmAvailableCommand,
@@ -1104,6 +1129,20 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   ];
 
   for (const definition of ordered) {
+    // What it needs and isn't being installed alongside it has to be
+    // there already
+    if (only !== undefined) {
+      const missing = (definition.requires ?? [])
+        .filter((name) => !only.includes(name))
+        .map((name) => everything.find((entry) => entry.name === name))
+        .filter((entry): entry is PackageDefinition => entry !== undefined);
+
+      const requirement = buildRequirementCommand(definition, missing);
+      if (requirement !== undefined) {
+        commands.push(requirement);
+      }
+    }
+
     commands.push(...buildPackageCommands(definition, madeSecrets));
   }
 

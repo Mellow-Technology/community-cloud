@@ -266,7 +266,10 @@ serving is recorded on the node by `nodeLabels`, and the TopoLVM values
 are rendered from those labels so that a node is never offered a volume
 group it hasn't got — which lvmd treats as fatal. That means running
 `lvm` and `nodeLabels` before `helm-charts`, and re-running
-`helm-charts` when a node's disks change. See
+`helm-charts` when a node's disks change; `--packages topolvm` (see
+[Running part of it](#running-part-of-it)) re-renders TopoLVM alone.
+A volume group made by hand under one of TopoLVM's names is taken as
+serving its class and tagged as the installer's own. See
 [Nodes that can't serve every class](../k8s/storage/README.md#nodes-that-cant-serve-every-class).
 
 `allocations` is about the volumes rather than the disks. The
@@ -1029,6 +1032,7 @@ community-cloud run-pipeline lvm phoenix cc.config.json
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle k3s phoenix cc.config.json --dry-run
 community-cloud run-pipeline new-node node-4 cc.config.json   # one named in "pipelines"
+community-cloud run-bundle helm-charts server-1 cc.config.json --packages topolvm
 community-cloud list-bundles                                  # every bundle there is
 community-cloud list-bundles k3s -c cc.config.json            # the commands in one
 ```
@@ -1042,6 +1046,15 @@ needs the configuration for bundles whose commands are built from it.
 node is a cluster of one rather than a separate code path — the
 interesting multi-node bugs are the ones that only appear with more
 than one machine, and a separate path is how those hide.
+
+`--packages` narrows `helm-charts` to some of the configured
+packages, comma separated, for upgrading a few at a time. They're
+installed in their usual order whatever order they're named in, after
+the steps every package relies on (finding Helm, reading the storage
+shapes). What they need isn't installed with them: it's checked for,
+and the run stops if it's missing. A name the configuration doesn't
+install is refused, as is `--packages` on a pipeline without
+`helm-charts` in it.
 
 `run-bundle` is `run-pipeline` with one bundle in it, and it is the
 same code: the barrier between steps, the refusal to start when two
