@@ -15,6 +15,30 @@ config:
   featureGates:
     ListenerSets: true
 
+  # Where cert-manager looks a hostname up for its HTTP-01 self check,
+  # the request it makes to the challenge URL itself before asking
+  # Let's Encrypt to. Public resolvers rather than the cluster's DNS.
+  #
+  # A certificate is asked for the moment its ListenerSet exists,
+  # which is usually before the hostname's DNS record does, so the
+  # first lookup is told the name doesn't exist. Through the cluster's
+  # DNS that answer is kept by the nodes' resolver for as long as the
+  # zone says to keep a "no" — half an hour on DigitalOcean — and the
+  # self check fails for all of it with "no such host", long after the
+  # record is there. These resolvers keep a "no" too, if they were
+  # asked before the record existed, so this narrows the problem
+  # rather than ending it: it takes the nodes' resolver, and whatever
+  # it was asked earlier, out of the way. Solving with DNS-01 instead
+  # would end it.
+  #
+  # Only the self check: Let's Encrypt does its own lookups, and the
+  # solver pod and everything else in the cluster still use the
+  # cluster's DNS.
+  acmeHTTP01Config:
+    solverNameservers:
+      - "1.1.1.1:53"
+      - "8.8.8.8:53"
+
 # Install the custom resources as part of the release.
 #
 # The chart leaves this off by default, and without it cert-manager
