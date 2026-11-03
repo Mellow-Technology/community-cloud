@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import CloudConfig from "../util/CloudConfig.ts";
 import {
   DiskState,
+  LvmCommands,
   OWNER_TAG,
   StorageClass,
   classTag,
@@ -298,12 +299,54 @@ describe("ownership by tag rather than by name", () => {
     assert.equal(ours?.volumeGroup, "cc-ssd-vg");
   });
 
-  it("does not claim an untagged one in a group with our name", () => {
-    assert.equal(theirs?.state, DiskState.Unusable);
+  it("takes an untagged one in a group TopoLVM expects as already serving, since lvmd goes by the name", () => {
+    assert.equal(theirs?.state, DiskState.Claimed);
+    assert.equal(theirs?.volumeGroup, "cc-ssd-sata-vg");
+    assert.equal(theirs?.storageClass, StorageClass.SsdSata);
+    assert.ok(groupServingDisks(disks)[StorageClass.SsdSata]?.some((disk) => disk.name === "sdj"));
   });
 
-  it("leaves it alone with a reason", () => {
-    assert.ok(theirs?.unusableBecause?.includes("physical volume"));
+  it("and says which tags it's missing, so they can be added", () => {
+    assert.deepEqual(theirs?.missingTags, [OWNER_TAG, classTag("ssd-sata")]);
+    assert.equal(ours?.missingTags, undefined);
+  });
+
+  it("never offers one up to be wiped", () => {
+    assert.ok(!Object.values(groupUsableDisks(disks)).flat().some((disk) => disk.name === "sdj"));
+  });
+
+  it("still leaves alone an untagged one in a group TopoLVM doesn't use", () => {
+    const other = readDisks(
+      commandOutput(asPhysicalVolumes("sdj"), ["/dev/sdj|data-vg|"], ["data-vg|"]),
+      makeConfig(),
+      { node: {} },
+    ).find((disk) => disk.name === "sdj");
+
+    assert.equal(other?.state, DiskState.Unusable);
+    assert.ok(other?.unusableBecause?.includes("physical volume"));
+  });
+
+  it("adds a class tag that's missing from a group that has ours", () => {
+    const partly = readDisks(
+      commandOutput(asPhysicalVolumes("nvme0n1"), [`/dev/nvme0n1|cc-ssd-vg|${OWNER_TAG}`], [`cc-ssd-vg|${OWNER_TAG}`]),
+      makeConfig(),
+      { node: {} },
+    ).find((disk) => disk.name === "nvme0n1");
+
+    assert.deepEqual(partly?.missingTags, [classTag("ssd")]);
+  });
+
+  it("tags the group and its volumes, and nothing else", () => {
+    const tag = LvmCommands.find((command) => command.name === "tag-volume-groups") as any;
+    const context = { node: {}, storageDisks: disks };
+
+    assert.notEqual(tag.skipWhen?.(makeConfig(), context, {}), true);
+    const script = (tag.command as Function)(makeConfig(), context).join("\n");
+
+    assert.match(script, /vgchange --addtag community-cloud --addtag cc-class-ssd-sata 'cc-ssd-sata-vg'|vgchange --addtag community-cloud --addtag cc-class-ssd-sata cc-ssd-sata-vg/);
+    assert.match(script, /pvchange --addtag community-cloud --addtag cc-class-ssd-sata '?\/dev\/sdj'?/);
+    assert.doesNotMatch(script, /nvme0n1|pvcreate|vgcreate|vgextend/);
+    assert.equal(tag.skipWhen?.(makeConfig(), { node: {}, storageDisks: [ours] }, {}), true);
   });
 
   it("still counts a claimed disk as serving its class", () => {

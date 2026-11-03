@@ -98,6 +98,10 @@ interface OwnedGroup {
  * is a thing this installer put there, and a name is a thing anybody
  * could have chosen.
  *
+ * That includes a group made by hand under one of TopoLVM's names:
+ * the lvm bundle tags those, since TopoLVM is using them, so after
+ * that clean treats them as the cluster's like any other.
+ *
  * @param output
  * @returns
  */
