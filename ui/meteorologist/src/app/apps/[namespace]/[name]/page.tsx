@@ -28,7 +28,7 @@ import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
 import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
 import { deletionSummary } from "@/lib/webapp/deletion";
 import { appHealth } from "@/lib/webapp/health";
-import { requestedServices, specImage } from "@/lib/webapp/present";
+import { portLabel, requestedServices, specImage } from "@/lib/webapp/present";
 
 interface Params {
   namespace: string;
@@ -139,7 +139,7 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
               },
               { label: "Migration job", value: status?.migrationJob && <code>{status.migrationJob}</code> },
               { label: "Replicas", value: String(app.spec.replicas ?? 1) },
-              { label: "Port", value: String(app.spec.port ?? 8080) },
+              { label: "Port", value: portLabel(app) },
               { label: "Health check", value: app.spec.healthCheck?.path && <code>{app.spec.healthCheck.path}</code> },
               { label: "Last checked", value: when(status?.lastChecked) },
             ]}

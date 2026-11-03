@@ -385,7 +385,13 @@ export function WebApplicationForm({
         <div className={styles.fields}>
           <div className={styles.row}>
             <TextField label="Replicas" inputMode="numeric" {...text("replicas")} />
-            <TextField label="Port" inputMode="numeric" hint="Where it listens for HTTP." {...text("port")} />
+            <TextField
+              label="Port"
+              inputMode="numeric"
+              placeholder="From the image"
+              hint="Where it listens for HTTP. Leave blank to use the port the image EXPOSEs."
+              {...text("port")}
+            />
           </div>
           <TextField
             label="Health check path"

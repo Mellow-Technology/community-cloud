@@ -2,7 +2,8 @@
 # hostname over HTTPS, with nothing behind it.
 #
 # No source, so Cirrus runs exactly the image named here; change the
-# tag to roll out. Its namespace needs the label the cluster Gateway
+# tag to roll out. No port either, so it's read from the image, which
+# EXPOSEs 80. Its namespace needs the label the cluster Gateway
 # looks for, whereWereGoing: "weDontNeedRoads", or the hostname is
 # refused and Provisioned says so.
 apiVersion: community-cloud.technology/v1alpha1
@@ -14,7 +15,6 @@ spec:
   image:
     repository: ghcr.io/acme/brochure
     tag: "2.4.1"
-  port: 80
   hostnames:
     - acme.example
     - www.acme.example

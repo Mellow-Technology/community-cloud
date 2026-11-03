@@ -19,6 +19,7 @@ pub mod error;
 pub mod forge;
 pub mod naming;
 pub mod reconcile;
+pub mod registry;
 pub mod resources;
 pub mod settings;
 pub mod webhook;
