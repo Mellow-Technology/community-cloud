@@ -1,0 +1,41 @@
+// The mark's blue is GUI Mellow's primary, lightened on dark backgrounds
+// as the favicon does; its red is the accent, which already does. The
+// selectors follow GUI Mellow's own: the system's setting, overridden by
+// a data-theme the toggle sets.
+
+.mark {
+  --mark-blue: #0568e2;
+  --mark-red: var(--gm-color-accent);
+  flex: none;
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mark {
+    --mark-blue: #3d92ee;
+  }
+}
+
+:global([data-theme="light"]) .mark {
+  --mark-blue: #0568e2;
+}
+
+:global([data-theme="dark"]) .mark {
+  --mark-blue: #3d92ee;
+}
+
+.blue {
+  stop-color: var(--mark-blue);
+}
+
+.red {
+  stop-color: var(--mark-red);
+}
+
+.stroke {
+  stroke: var(--mark-blue);
+}
+
+.fill {
+  fill: var(--mark-blue);
+}

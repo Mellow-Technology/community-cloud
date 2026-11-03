@@ -39,7 +39,9 @@ know about:
     left alone.
   - **Private registries**: `kubernetes.io/dockerconfigjson` Secrets,
     named on the namespace's `default` ServiceAccount, so every pod
-    pulls with them unless it names its own.
+    pulls with them unless it names its own. Each one made here
+    records its registry in the `community-cloud.technology/registry`
+    annotation.
   - **GitLab connections** (the Integration tab): GitLab
     tokens kept in the namespace, apart from any one application. Each
     is an Opaque Secret labelled
@@ -75,12 +77,16 @@ know about:
   namespace's connections, from the projects its token can see, with
   the image taken from the project's container registry. "Update
   automatically on image builds" then has Cirrus roll out each image a
-  successful pipeline builds. Deleting asks first, listing what goes
-  and what stays, and takes the application's name typed to confirm.
-  Cirrus's finalizer removes the RabbitMQ vhost and GitLab webhook,
-  and Kubernetes the rest it made; the database and the bucket's
-  contents are kept. An application waiting on that shows as
-  Deleting.
+  successful pipeline builds. Registry credentials follow the image:
+  of the namespace's pull Secrets, the ones for the image's registry
+  are chosen, read from the `community-cloud.technology/registry`
+  annotation Meteorologist puts on those it makes, or from the
+  Secret's own `.dockerconfigjson` for those it didn't. Deleting asks
+  first, listing what goes and what stays, and takes the
+  application's name typed to confirm. Cirrus's finalizer removes the
+  RabbitMQ vhost and GitLab webhook, and Kubernetes the rest it made;
+  the database and the bucket's contents are kept. An application
+  waiting on that shows as Deleting.
 
 - **Office**: the office applications the installer put on the
   cluster, such as ProjectSend, Plane and Twenty, each with its
