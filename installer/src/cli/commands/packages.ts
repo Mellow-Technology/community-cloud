@@ -1387,12 +1387,14 @@ export function valuesFileIsFromConfig(selection: PackageSelection = {}): boolea
  * nothing is installed before the things it depends on — or before
  * anything it asked to come "after" that is also enabled. A package
  * pulled in as a dependency is reported as such, since being installed
- * without having been asked for is worth saying out loud.
+ * without having been asked for is worth saying out loud, unless the
+ * caller is only installing some of them and it wouldn't be true.
  *
  * @param config
+ * @param quiet don't report dependencies
  * @returns
  */
-export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
+export function resolveInstallOrder(config: CloudConfig, quiet = false): PackageDefinition[] {
   const selections = getPackageSelections(config);
 
   const enabled = Object.entries(selections)
@@ -1418,7 +1420,7 @@ export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
 
     const definition = resolvePackage(name, selections[name]);
     for (const required of definition.requires !== undefined ? definition.requires : []) {
-      if (!enabled.includes(required) && !done.has(required)) {
+      if (!quiet && !enabled.includes(required) && !done.has(required)) {
         console.log(`  ${required} will be installed because ${name} requires it`);
       }
 

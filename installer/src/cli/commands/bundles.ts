@@ -26,7 +26,7 @@ import { HelmCommands, buildPackagesBundle, buildSinglePackageBundle } from "./H
 import { PackageRecordCommands } from "./PackageRecord.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
-import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
+import { NebulaNetworkCommands, usesNebula } from "./NebulaNetwork.ts";
 import { DrainCommands } from "./Drain.ts";
 import { K3sUninstallCommands, NodeRemovedCommands } from "./Uninstall.ts";
 import { CleanCommands, StorageRemoveCommands } from "./Clean.ts";
@@ -263,7 +263,9 @@ const builtInBundles: BundleDefinition[] = [
   {
     name: "nebula",
     description: "Join a node to the cluster's Nebula network",
-    commands: NebulaCommands,
+    // Nothing at all without a network, so a plan for a cluster without
+    // a mesh doesn't list steps it would only skip
+    commands: (config: CloudConfig) => (usesNebula(config) ? NebulaCommands : []),
   },
   {
     name: "nebula-network",

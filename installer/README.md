@@ -216,15 +216,26 @@ the address of the default route — on a machine behind a router at
 home, its LAN address, which a node at another site can't reach. Pods
 on the two would never meet.
 
-So on a cluster using Nebula, the `k3s` bundle first finds each
-node's address on the mesh (`find-node-ip`, on its `defined*`
-interface) and installs K3s with `--node-ip` set to it. A node that
-isn't on the mesh stops the install there rather than registering on
-its LAN address; run the `nebula` bundle on it first. `nodeIp` on a
-node overrides the mesh address, and is checked to be one the node
+A cluster uses Nebula when `network.nebula` names a network
+(`network` or `networkID`); a Defined Networking key in the
+environment isn't enough on its own. Then `install` and `add-node`
+put every node on the mesh before K3s: `nebula-network` makes the
+configured roles, once for the cluster (install only, since the roles
+belong to it), and `nebula` enrols each node and waits for its mesh
+address to come up.
+
+The `k3s` bundle then finds each node's address on the mesh
+(`find-node-ip`, on its `defined*` interface) and installs K3s with
+`--node-ip` set to it. A node that isn't on the mesh by then stops the
+install there rather than registering on its LAN address. `nodeIp` on
+a node overrides the mesh address, and is checked to be one the node
 has. Afterwards `verify-node-ip` asks the cluster which addresses it
 actually has the node on — the doctor asks too, so a node registered
 somewhere else is found.
+
+On a cluster that names no network, both Nebula bundles have no steps
+at all. Preflight stops a configuration that names a network with no
+key to enrol nodes with, or has Nebula settings and no network.
 
 The server is joined at its `apiAddress`, or its `address`, so on a
 cluster across sites that should be an address on the mesh as well.
@@ -255,7 +266,10 @@ serving is recorded on the node by `nodeLabels`, and the TopoLVM values
 are rendered from those labels so that a node is never offered a volume
 group it hasn't got — which lvmd treats as fatal. That means running
 `lvm` and `nodeLabels` before `helm-charts`, and re-running
-`helm-charts` when a node's disks change. See
+`helm-charts` when a node's disks change; `--packages topolvm` (see
+[Running part of it](#running-part-of-it)) re-renders TopoLVM alone.
+A volume group made by hand under one of TopoLVM's names is taken as
+serving its class and tagged as the installer's own. See
 [Nodes that can't serve every class](../k8s/storage/README.md#nodes-that-cant-serve-every-class).
 
 `allocations` is about the volumes rather than the disks. The
@@ -958,6 +972,10 @@ community-cloud install cc.config.json -n node-4  # one node only
 To add a machine to a cluster that's already running, use
 [`add-node`](#adding-a-node) rather than `-n`.
 
+On a cluster that uses Nebula, the install puts every node on the mesh
+before K3s, and K3s registers each on its mesh address. See
+[Nodes across sites](#nodes-across-sites).
+
 These flags work the same on `install`, `add-node`, `uninstall`,
 `clean`, `run-bundle` and `run-pipeline`:
 
@@ -1014,6 +1032,7 @@ community-cloud run-pipeline lvm phoenix cc.config.json
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle k3s phoenix cc.config.json --dry-run
 community-cloud run-pipeline new-node node-4 cc.config.json   # one named in "pipelines"
+community-cloud run-bundle helm-charts server-1 cc.config.json --packages topolvm
 community-cloud list-bundles                                  # every bundle there is
 community-cloud list-bundles k3s -c cc.config.json            # the commands in one
 ```
@@ -1027,6 +1046,15 @@ needs the configuration for bundles whose commands are built from it.
 node is a cluster of one rather than a separate code path — the
 interesting multi-node bugs are the ones that only appear with more
 than one machine, and a separate path is how those hide.
+
+`--packages` narrows `helm-charts` to some of the configured
+packages, comma separated, for upgrading a few at a time. They're
+installed in their usual order whatever order they're named in, after
+the steps every package relies on (finding Helm, reading the storage
+shapes). What they need isn't installed with them: it's checked for,
+and the run stops if it's missing. A name the configuration doesn't
+install is refused, as is `--packages` on a pipeline without
+`helm-charts` in it.
 
 `run-bundle` is `run-pipeline` with one bundle in it, and it is the
 same code: the barrier between steps, the refusal to start when two
@@ -1066,9 +1094,15 @@ configuration has moved on since. What's left is everything that makes
 one machine a member:
 
 ```
-cluster-online → preflight → base → network → gpu
+cluster-online → preflight → base → network → nebula → gpu
               → registries → lvm → k3s → nodeLabels → node-joined
 ```
+
+`nebula` puts the node on the cluster's mesh when it has one, so K3s
+registers it on its mesh address (see
+[Nodes across sites](#nodes-across-sites)); on a cluster without one
+it has nothing to do. The mesh's roles were made when the cluster was
+installed, so `nebula-network` isn't run again.
 
 `cluster-online` fails first if there is no cluster to join, which is
 worth catching early — every step after it would fail in a way that

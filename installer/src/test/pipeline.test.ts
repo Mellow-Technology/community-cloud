@@ -826,3 +826,21 @@ describe("a package that isn't installed", () => {
     assert.equal(outcome("verify-smtp-cc-office"), "ok");
   });
 });
+
+describe("the progress bar", () => {
+  it("starts again for a second plan through the same reporter, as verification does", () => {
+    const written: string[] = [];
+    const stream = { write: (text: string) => written.push(text), columns: 80 } as any;
+    const reporter = new ConsoleReporter(stream, true, false);
+
+    reporter.planned(["one"], 40, ["base"]);
+    reporter.stepFinished("last", 39, 40);
+
+    // A shorter plan of checks after a longer run, which used to draw
+    // a bar 40 steps into 5 and throw on a negative repeat
+    reporter.planned(["one"], 5, ["add-node"]);
+    assert.doesNotThrow(() => reporter.bundleStarted("add-node", "Join the node"));
+    // eslint-disable-next-line no-control-regex
+    assert.match(written.join("").replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""), /0\/5/);
+  });
+});

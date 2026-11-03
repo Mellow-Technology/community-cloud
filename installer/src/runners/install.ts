@@ -9,24 +9,28 @@
  *
  * The order, and why:
  *
- *  1. preflight   — say what would stop this before anything changes
- *  2. base        — the packages every later step assumes
- *  3. network     — kernel networking, before anything uses the network
- *  4. gpu         — detect hardware, so the labels later can describe it
- *  5. registries  — credentials, before K3s starts and reads them
- *  6. lvm         — volume groups, before anything wants storage
- *  7. k3s         — servers, then agents; the cluster starts existing
- *  8. nodeLabels  — every node described, including what lvm and gpu found
- *  9. cilium      — the network the pods actually use
- * 10. gateway     — a way in from outside
- * 11. helm        — Helm itself, on the control plane
- * 12. helm-charts — storage classes, databases, applications
- * 13. dns         — publish the applications' names, now they're routed
- * 14. cluster     — record what this cluster was built from
+ *  1. preflight      — say what would stop this before anything changes
+ *  2. base           — the packages every later step assumes
+ *  3. network        — kernel networking, before anything uses the network
+ *  4. nebula-network — the mesh's roles, once for the cluster
+ *  5. nebula         — every node on the mesh, before K3s registers it
+ *  6. gpu            — detect hardware, so the labels later can describe it
+ *  7. registries     — credentials, before K3s starts and reads them
+ *  8. lvm            — volume groups, before anything wants storage
+ *  9. k3s            — servers, then agents; the cluster starts existing
+ * 10. nodeLabels     — every node described, including what lvm and gpu found
+ * 11. placement      — namespaces put in their regions, before anything runs in them
+ * 12. cilium         — the network the pods actually use
+ * 13. gateway        — a way in from outside
+ * 14. helm           — Helm itself, on the control plane
+ * 15. helm-charts    — storage classes, databases, applications
+ * 16. dns            — publish the applications' names, now they're routed
+ * 17. cluster        — record what this cluster was built from
  *
- * Nebula is not here. A mesh is a decision about how sites reach each
- * other rather than a step in building one cluster, and a
- * configuration that wants it should run it deliberately.
+ * The two Nebula bundles do nothing unless the configuration names a
+ * Defined Networking network. When it does, every node is enrolled
+ * before K3s, and K3s registers each one on its address on the mesh,
+ * so nodes at different sites reach each other's pods.
  */
 import chalk from "chalk";
 
@@ -43,6 +47,8 @@ export const INSTALL_PIPELINE = [
   "preflight",
   "base",
   "network",
+  "nebula-network",
+  "nebula",
   "gpu",
   "registries",
   "lvm",

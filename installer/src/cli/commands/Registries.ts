@@ -335,9 +335,14 @@ export const RegistryCommands: CommandSpec[] = [
       const service = context.k3sService;
 
       return [
-        `sudo systemctl restart ${service} || { echo "Couldn't restart ${service}" >&2; exit 1; }`,
+        // Without --no-block, systemctl waits for K3s to say it's ready,
+        // and its units never give up waiting: an agent that can't reach
+        // the server holds this command, and the SSH connection under
+        // it, open with nothing said for as long as that takes. The
+        // wait below is the one with a limit.
+        `sudo systemctl restart --no-block ${service} || { echo "Couldn't restart ${service}" >&2; exit 1; }`,
         waitUntil(`systemctl is-active --quiet ${service}`, RESTART_TIMEOUT_SECONDS),
-        `systemctl is-active --quiet ${service} || { echo "${service} didn't come back within ${RESTART_TIMEOUT_SECONDS}s" >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
+        `systemctl is-active --quiet ${service} || { echo "${service} didn't come back within ${RESTART_TIMEOUT_SECONDS}s. An agent only finishes starting once it reaches the server, so check it can (journalctl -u ${service})." >&2; systemctl status ${service} --no-pager --lines=20 >&2; exit 1; }`,
         `echo "${service} restarted and running"`,
       ];
     },

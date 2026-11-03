@@ -100,10 +100,14 @@ export function getRunningBundles(plan: Plan): string[] {
  *   questions — one unanswerable bundle shouldn't cost you the answer
  *   to the other fourteen — and wrong for an install, where a bundle
  *   that won't build is a configuration to fix before starting.
+ * - packages: only these of the configured packages, for a bundle
+ *   built from them ("helm-charts"). Handed to it in the planning
+ *   context, since that's how anything reaches a bundle as it's built.
  */
 export interface PlanOptions {
   purposes?: CommandPurpose[];
   tolerant?: boolean;
+  packages?: string[];
 }
 
 /**
@@ -160,7 +164,10 @@ export function buildPlan(
     let commands: CommandSpec[];
 
     try {
-      commands = getBundleCommands(definition, config, buildPlanningContext(fleet));
+      commands = getBundleCommands(definition, config, {
+        ...buildPlanningContext(fleet),
+        ...(options.packages !== undefined ? { packages: options.packages } : {}),
+      });
     } catch (error: any) {
       if (options.tolerant !== true) {
         throw error;

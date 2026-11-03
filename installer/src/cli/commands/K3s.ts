@@ -574,7 +574,7 @@ export const K3sCommands: CommandSpec[] = [
 
       return [
         `address=$(ip -o -4 addr show | awk '$2 ~ /^${NEBULA_INTERFACE_PREFIX}/ { split($4, a, "/"); print a[1]; exit }')`,
-        `[ -n "$address" ] || { echo "The cluster is on a Nebula network and this node has no address on it — no ${NEBULA_INTERFACE_PREFIX}* interface with an IPv4 address. Registered on its local address instead, it couldn't reach nodes at other sites. Run the nebula bundle on it, or set \\"nodeIp\\" on it to say which address to use." >&2; exit 1; }`,
+        `[ -n "$address" ] || { echo "The cluster is on a Nebula network and this node has no address on it — no ${NEBULA_INTERFACE_PREFIX}* interface with an IPv4 address. Registered on its local address instead, it couldn't reach nodes at other sites. The nebula steps should have put it there: check dnclient on it (sudo dnclient info), or set \\"nodeIp\\" on it to say which address to use." >&2; exit 1; }`,
         'echo "$address"',
       ];
     },
