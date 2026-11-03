@@ -294,7 +294,14 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             if let Some(problem) = &port_problem {
                 // Not migrated for either: the schema shouldn't move
                 // ahead of an image that can't be run
-                conditions::set(&mut conditions, ROLLED_OUT, false, "PortUnknown", problem.clone(), generation);
+                conditions::set(
+                    &mut conditions,
+                    ROLLED_OUT,
+                    false,
+                    "PortUnknown",
+                    problem.clone(),
+                    generation,
+                );
             } else if app.spec.migrations.is_some() {
                 let (job, state) = migrations::ensure(ctx, app, &desired, &provided.env_from, &provided.env).await?;
                 match state {
@@ -333,7 +340,10 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             if image == desired {
                 desired_port.as_ref().ok().copied()
             } else {
-                app.spec.port.or_else(|| port::cached(&image_ports, image)).or(previous.port)
+                app.spec
+                    .port
+                    .or_else(|| port::cached(&image_ports, image))
+                    .or(previous.port)
             }
         });
 
@@ -408,13 +418,15 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     // A failed forge check is tried again within minutes, not at the
     // settled pace, since the rollout may be on a stale tag until it
     // works
-    Ok(if !problems.is_empty() || found.problem.is_some() || port_problem.is_some() {
-        Action::requeue(BLOCKED_REQUEUE)
-    } else if !ready {
-        Action::requeue(PENDING_REQUEUE)
-    } else {
-        Action::requeue(SETTLED_REQUEUE)
-    })
+    Ok(
+        if !problems.is_empty() || found.problem.is_some() || port_problem.is_some() {
+            Action::requeue(BLOCKED_REQUEUE)
+        } else if !ready {
+            Action::requeue(PENDING_REQUEUE)
+        } else {
+            Action::requeue(SETTLED_REQUEUE)
+        },
+    )
 }
 
 #[cfg(test)]

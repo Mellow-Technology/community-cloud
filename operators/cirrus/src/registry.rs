@@ -33,7 +33,12 @@ use crate::error::{Error, Result};
 // Docker Hub, as an image names it and as its API is reached
 const DOCKER_HUB: &str = "docker.io";
 const DOCKER_HUB_API: &str = "registry-1.docker.io";
-const DOCKER_HUB_ALIASES: [&str; 4] = ["docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com"];
+const DOCKER_HUB_ALIASES: [&str; 4] = [
+    "docker.io",
+    "index.docker.io",
+    "registry-1.docker.io",
+    "registry.hub.docker.com",
+];
 
 // Every kind of manifest worth reading: the OCI and Docker forms of a
 // single image and of an index of them
@@ -158,7 +163,9 @@ pub struct Credentials {
 // Kept out of logs and errors
 impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Credentials").field("username", &self.username).finish_non_exhaustive()
+        f.debug_struct("Credentials")
+            .field("username", &self.username)
+            .finish_non_exhaustive()
     }
 }
 
@@ -187,8 +194,13 @@ pub fn credentials_for(docker_config: &[u8], registry: &str) -> Option<Credentia
     if let (Some(username), Some(password)) = (entry.username, entry.password) {
         return Some(Credentials { username, password });
     }
-    let decoded = base64::engine::general_purpose::STANDARD.decode(entry.auth?.trim()).ok()?;
-    let (username, password) = String::from_utf8(decoded).ok()?.split_once(':').map(|(user, pass)| (user.to_string(), pass.to_string()))?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(entry.auth?.trim())
+        .ok()?;
+    let (username, password) = String::from_utf8(decoded)
+        .ok()?
+        .split_once(':')
+        .map(|(user, pass)| (user.to_string(), pass.to_string()))?;
     Some(Credentials { username, password })
 }
 
@@ -208,7 +220,10 @@ impl std::fmt::Display for ExposedPort {
 /// Read `config.ExposedPorts` out of an image config: keys like
 /// "3000/tcp", or a bare "3000", which Docker takes as TCP.
 pub fn read_exposed_ports(config: &serde_json::Value) -> Vec<ExposedPort> {
-    let Some(ports) = config.pointer("/config/ExposedPorts").and_then(|value| value.as_object()) else {
+    let Some(ports) = config
+        .pointer("/config/ExposedPorts")
+        .and_then(|value| value.as_object())
+    else {
         return Vec::new();
     };
     let mut found: Vec<ExposedPort> = ports
@@ -305,12 +320,15 @@ impl Registry {
             ))
         })?;
         let blob = self.get(&format!("blobs/{}", config.digest), None).await?;
-        let config: serde_json::Value = serde_json::from_slice(&blob).map_err(|_| self.problem("has a config that isn't JSON"))?;
+        let config: serde_json::Value =
+            serde_json::from_slice(&blob).map_err(|_| self.problem("has a config that isn't JSON"))?;
         Ok(read_exposed_ports(&config))
     }
 
     async fn manifest(&mut self, reference: &str) -> Result<Manifest> {
-        let body = self.get(&format!("manifests/{reference}"), Some(MANIFEST_TYPES)).await?;
+        let body = self
+            .get(&format!("manifests/{reference}"), Some(MANIFEST_TYPES))
+            .await?;
         serde_json::from_slice(&body).map_err(|_| self.problem("has a manifest Cirrus can't read"))
     }
 
@@ -342,7 +360,10 @@ impl Registry {
         if let Some(authorization) = &self.authorization {
             request = request.header(AUTHORIZATION, authorization);
         }
-        request.send().await.map_err(|error| self.problem(&format!("couldn't be reached: {error}")))
+        request
+            .send()
+            .await
+            .map_err(|error| self.problem(&format!("couldn't be reached: {error}")))
     }
 
     // Work out an Authorization header from a 401's challenge
@@ -361,7 +382,10 @@ impl Registry {
                     .as_ref()
                     .ok_or_else(|| self.problem("needs credentials, and no pull Secret has any for it"))?;
                 let pair = format!("{}:{}", credentials.username, credentials.password);
-                Ok(format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(pair)))
+                Ok(format!(
+                    "Basic {}",
+                    base64::engine::general_purpose::STANDARD.encode(pair)
+                ))
             }
             "bearer" => {
                 let realm = parameters
@@ -466,7 +490,12 @@ pub fn parse_challenge(header: &str) -> (String, BTreeMap<String, String>) {
             }
             value
         } else {
-            chars.by_ref().take_while(|c| *c != ',').collect::<String>().trim().to_string()
+            chars
+                .by_ref()
+                .take_while(|c| *c != ',')
+                .collect::<String>()
+                .trim()
+                .to_string()
         };
         parameters.insert(key.trim().to_lowercase(), value);
     }
@@ -494,8 +523,14 @@ mod tests {
             read("registry.gitlab.com/acme/shop@sha256:feed"),
             ("registry.gitlab.com".into(), "acme/shop".into(), "sha256:feed".into())
         );
-        assert_eq!(read("nginx"), ("docker.io".into(), "library/nginx".into(), "latest".into()));
-        assert_eq!(read("bitnami/redis:7"), ("docker.io".into(), "bitnami/redis".into(), "7".into()));
+        assert_eq!(
+            read("nginx"),
+            ("docker.io".into(), "library/nginx".into(), "latest".into())
+        );
+        assert_eq!(
+            read("bitnami/redis:7"),
+            ("docker.io".into(), "bitnami/redis".into(), "7".into())
+        );
         assert_eq!(
             read("registry.local:5000/team/app"),
             ("registry.local:5000".into(), "team/app".into(), "latest".into())
@@ -605,7 +640,10 @@ mod tests {
             username: "deploy".into(),
             password: "secret".into(),
         };
-        let ports = Registry::new(image_on(&server), Some(credentials)).exposed_ports().await.unwrap();
+        let ports = Registry::new(image_on(&server), Some(credentials))
+            .exposed_ports()
+            .await
+            .unwrap();
         assert_eq!(
             ports,
             [ExposedPort {
@@ -618,7 +656,10 @@ mod tests {
     #[tokio::test]
     async fn says_when_it_needs_credentials_it_hasnt_got() {
         let server = registry().await;
-        let error = Registry::new(image_on(&server), None).exposed_ports().await.unwrap_err();
+        let error = Registry::new(image_on(&server), None)
+            .exposed_ports()
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("no pull Secret has any"), "{error}");
     }
 }

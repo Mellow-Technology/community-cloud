@@ -171,6 +171,9 @@ mod tests {
         };
         let mut known = vec![entry("a"), entry("b"), entry("c"), entry("c")];
         prune(&mut known, &[Some("b"), Some("c")]);
-        assert_eq!(known.iter().map(|entry| entry.image.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+        assert_eq!(
+            known.iter().map(|entry| entry.image.as_str()).collect::<Vec<_>>(),
+            ["b", "c"]
+        );
     }
 }
