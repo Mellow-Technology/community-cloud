@@ -306,6 +306,18 @@ export interface KubeClient {
   replaceWebApplication(app: WebApplication): Promise<WebApplication>;
 
   /**
+   * Asks for a WebApplication to be deleted. Cirrus's finalizer holds
+   * it until it has cleaned up what lives outside the namespace, and
+   * Kubernetes removes everything it owns after. One already gone
+   * counts as deleted.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  deleteWebApplication(namespace: string, name: string): Promise<void>;
+
+  /**
    * Makes a Secret from plain strings.
    *
    * @param namespace

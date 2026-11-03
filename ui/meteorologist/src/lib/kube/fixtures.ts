@@ -730,6 +730,11 @@ export function fixtureClient(): KubeClient {
       return copy(replaced);
     },
 
+    // Gone at once, as if Cirrus had already cleaned up
+    deleteWebApplication: async (namespace, name) => {
+      store().webapps.delete(key(namespace, name));
+    },
+
     createSecret: async (namespace, name, data, labels, type = "Opaque", annotations) => {
       requireNamespace(namespace);
       const id = key(namespace, name);

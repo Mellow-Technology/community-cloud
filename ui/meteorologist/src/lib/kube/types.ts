@@ -18,6 +18,9 @@ export interface ObjectMeta {
   resourceVersion?: string;
   generation?: number;
   creationTimestamp?: string;
+  // Set once deletion is asked for, while finalizers still hold it
+  deletionTimestamp?: string;
+  finalizers?: string[];
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
 }

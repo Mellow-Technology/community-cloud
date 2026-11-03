@@ -65,7 +65,7 @@ know about:
   storage quota has no room for its 20Gi volume. That size mirrors
   Cirrus's default in `src/lib/postgres.ts`.
 
-- **Applications**: list, view, create and edit `WebApplication`
+- **Applications**: list, view, create, edit and delete `WebApplication`
   resources (`community-cloud.technology/v1alpha1`), which the Cirrus
   operator turns into a Deployment, its database, bucket, queue, routes
   and rollouts. Creating and editing go through a guided form. The form
@@ -75,7 +75,12 @@ know about:
   namespace's connections, from the projects its token can see, with
   the image taken from the project's container registry. "Update
   automatically on image builds" then has Cirrus roll out each image a
-  successful pipeline builds.
+  successful pipeline builds. Deleting asks first, listing what goes
+  and what stays, and takes the application's name typed to confirm.
+  Cirrus's finalizer removes the RabbitMQ vhost and GitLab webhook,
+  and Kubernetes the rest it made; the database and the bucket's
+  contents are kept. An application waiting on that shows as
+  Deleting.
 
 - **Office**: the office applications the installer put on the
   cluster, such as ProjectSend, Plane and Twenty, each with its
