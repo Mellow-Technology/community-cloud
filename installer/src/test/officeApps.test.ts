@@ -42,7 +42,7 @@ import { configFrom, loadFixtureConfig, withoutConsole } from "./helpers.ts";
 import { parseAllDocuments } from "yaml";
 import { execFileSync } from "node:child_process";
 
-const APPLICATIONS = ["documenso", "projectsend"];
+const APPLICATIONS = ["documenso", "methods", "projectsend"];
 
 /**
  * The names of a package's install commands, in order.

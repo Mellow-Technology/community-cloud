@@ -470,6 +470,10 @@
               "type": "string",
               "description": "Headlamp, signed into through Authentik."
             },
+            "methods": {
+              "type": "string",
+              "description": "Methods: its web app, API and the MCP endpoint bots connect to, on the one hostname."
+            },
             "plane": {
               "type": "string",
               "description": "Plane, its web app, admin pages and API on the one hostname."

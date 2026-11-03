@@ -355,7 +355,7 @@ In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
 `mariadb-operator-crds`, `mariadb-operator`, `mattermost-operator`,
 `headlamp`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
-`mattermost`, `picoclaw`, `plane`, `projectsend`, `cirrus`,
+`mattermost`, `picoclaw`, `plane`, `methods`, `projectsend`, `cirrus`,
 `meteorologist`.
 Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
@@ -442,8 +442,8 @@ its first administrator with `values.adminEmail` and the password in
 the `plane-admin` Secret, before anyone else can claim its admin
 pages.
 
-`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`, `plane` and
-`projectsend` are applications in `cc-office`, each with a ListenerSet of its own on the
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`, `plane`,
+`methods` and `projectsend` are applications in `cc-office`, each with a ListenerSet of its own on the
 cluster Gateway. Any of them can be installed on its own, into a
 cluster that already has the rest:
 
@@ -530,6 +530,17 @@ Secret; signing in through Authentik with the same address is the
 same account. Anyone else Authentik lets through gets a client account
 of their own, so as with Documenso, who may sign in is decided by what
 is bound to the application in Authentik.
+
+Methods is projects and work items, for people and their bots, on
+`values.domain.methods`. It's one small process — the web app, its API
+and the MCP endpoint bots connect to at `/mcp` — with its database in
+cc-postgres and the files attached to work items in a bucket in
+SeaweedFS, which it serves itself. People sign in through Authentik
+only, waiting for it as Documenso does: passwords and sign up are
+off, and an account is made the first time someone signs in, so who
+may use it is what's bound to the application in Authentik. Whoever
+makes a workspace owns it and adds the others. Bots don't sign in;
+their owners make them access tokens under Settings → Bots & MCP.
 
 Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
 through Authentik too, and then talks to the Kubernetes API as

@@ -261,6 +261,12 @@ const builtInBundles: BundleDefinition[] = [
     checkedBy: "helm-charts",
   },
   {
+    name: "methods",
+    description: "Install Methods into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("methods"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "nebula",
     description: "Join a node to the cluster's Nebula network",
     // Nothing at all without a network, so a plan for a cluster without

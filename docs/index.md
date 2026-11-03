@@ -106,7 +106,7 @@ cluster in service.
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
-| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane`, `projectsend` | One application on its own, into a cluster that has the rest |
+| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane`, `methods`, `projectsend` | One application on its own, into a cluster that has the rest |
 | `cirrus` | Cirrus, the operator that runs WebApplications |
 | `meteorologist` | Meteorologist, the web interface, signed into through Authentik |
 | `cluster-sign-in` | The API server's sign in settings on each server, without reinstalling K3s |
@@ -168,6 +168,7 @@ k8s/
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
 │   ├── meteorologist/           # Meteorologist, the web interface, signed into through Authentik
+│   ├── methods/                 # Methods projects, for people and bots, on cc-postgres and SeaweedFS
 │   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis, RabbitMQ and MariaDB
 │   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
 │   ├── plane/                   # Plane projects, on cc-postgres, Redis, RabbitMQ and SeaweedFS
@@ -294,6 +295,22 @@ installs it:
 | `Documenso.config.yaml` | Its environment |
 | `Documenso.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
 | `Documenso.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+
+#### Methods (`apps/methods/`)
+
+Projects and work items, for people and their bots, signed into
+through Authentik over OpenID Connect with passwords switched off.
+Bots connect to its MCP endpoint with access tokens. The `methods`
+package or bundle installs it:
+
+| File | Purpose |
+|---|---|
+| `Methods.yaml` | The application (1 replica): its web app, API and MCP endpoint on one port |
+| `Methods.database.yaml` | Its CloudNative-PG role and `Database` |
+| `Methods.storage.yaml` | Its SeaweedFS bucket, user and keys, for attachments |
+| `Methods.config.yaml` | Its environment |
+| `Methods.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `Methods.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 
 #### ProjectSend (`apps/projectsend/`)
 
