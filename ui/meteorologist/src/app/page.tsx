@@ -56,7 +56,10 @@ export default async function OverviewPage() {
       <Grid min="180px" gap={4} className={styles.stats}>
         <Stat label="Applications" value={total ?? "—"} />
         <Stat label="Healthy" value={counts?.healthy ?? "—"} total={total} separator="of" />
-        <Stat label="Need attention" value={counts && total !== undefined ? total - counts.healthy : "—"} />
+        <Stat
+          label="Need attention"
+          value={counts && total !== undefined ? total - counts.healthy - counts.deleting : "—"}
+        />
         <Stat label="Namespaces" value={namespaces.ok ? namespaces.value.length : "—"} />
       </Grid>
 
@@ -68,7 +71,7 @@ export default async function OverviewPage() {
         <section className={styles.section}>
           <h2 className={styles.heading}>Health</h2>
           <ul className={styles.healthRow}>
-            {HEALTH_ORDER.map((state) => {
+            {HEALTH_ORDER.filter((state) => state !== "deleting" || counts.deleting > 0).map((state) => {
               const { tone, label } = presentHealth(state);
               return (
                 <li key={state}>

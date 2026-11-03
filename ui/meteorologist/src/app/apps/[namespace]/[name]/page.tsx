@@ -7,7 +7,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Disclosure } from "gui-mellow/Accordion";
 import { Alert } from "gui-mellow/Alert";
-import { Button } from "gui-mellow/Button";
 import { Card } from "gui-mellow/Card";
 import { CodeBlock } from "gui-mellow/CodeBlock";
 import { Grid } from "gui-mellow/Grid";
@@ -16,6 +15,7 @@ import { Table } from "gui-mellow/Table";
 import { TagList } from "gui-mellow/Tag";
 import { stringify } from "yaml";
 
+import { AppActions } from "@/components/AppActions";
 import { DetailList } from "@/components/DetailList";
 import { CertificateBadge } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
@@ -26,6 +26,7 @@ import { getKube } from "@/lib/kube";
 import { describeError, isNotFound, settle } from "@/lib/kube/client";
 import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
 import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
+import { deletionSummary } from "@/lib/webapp/deletion";
 import { appHealth } from "@/lib/webapp/health";
 import { requestedServices, specImage } from "@/lib/webapp/present";
 
@@ -95,14 +96,14 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
         title={app.metadata.name}
         back={{ href: "/apps", label: "Applications" }}
         actions={
-          <>
-            {status?.url && (
-              <Button href={status.url} variant="secondary" target="_blank" rel="noreferrer">
-                Open
-              </Button>
-            )}
-            <Button href={editHref}>Edit</Button>
-          </>
+          <AppActions
+            namespace={app.metadata.namespace ?? decodeURIComponent(namespace)}
+            name={app.metadata.name}
+            url={status?.url}
+            editHref={editHref}
+            summary={deletionSummary(app)}
+            deleting={health.state === "deleting"}
+          />
         }
       />
 

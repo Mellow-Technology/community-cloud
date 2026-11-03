@@ -1,0 +1,70 @@
+// SegmentedControl's look (gui-mellow/src/components/SegmentedControl),
+// for actions rather than options: nothing is ever shown selected
+
+.group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: var(--gm-border-width) solid var(--gm-color-border-strong);
+  border-radius: var(--gm-radius-pill);
+  background: var(--gm-color-surface);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-space-2);
+  margin: 0;
+  border: 0;
+  border-radius: var(--gm-radius-pill);
+  background: transparent;
+  color: var(--gm-color-text-subtle);
+  font: inherit;
+  font-weight: var(--gm-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: var(--gm-cursor-pointer);
+  transition:
+    background-color var(--gm-duration) var(--gm-ease),
+    color var(--gm-duration) var(--gm-ease);
+
+  &:hover {
+    background: var(--gm-color-primary);
+    color: var(--gm-color-on-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--gm-color-focus);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: transparent;
+    color: var(--gm-color-text-subtle);
+  }
+}
+
+.danger {
+  color: var(--gm-color-danger);
+
+  &:hover {
+    background: var(--gm-color-danger);
+    color: var(--gm-color-on-primary);
+  }
+}
+
+.sm .item {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.md .item {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.875rem;
+}

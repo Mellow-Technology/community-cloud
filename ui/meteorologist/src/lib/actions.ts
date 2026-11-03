@@ -56,6 +56,7 @@ import {
   type NamespaceForm,
 } from "./namespace/settings";
 import { findAdminSecret, readPackageRecords } from "./office";
+import { confirmsDeletion } from "./webapp/deletion";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
 
 /**
@@ -138,6 +139,30 @@ export async function saveWebApplication(
     current.metadata.resourceVersion = resourceVersion;
     const saved = await kube.replaceWebApplication(fromForm(form, current));
     return { namespace: saved.metadata.namespace ?? form.namespace, name: saved.metadata.name };
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Deletes a WebApplication, once its name has been typed to confirm.
+ *
+ * The name is checked here too, so nothing but the confirm dialog can
+ * delete through this. Only the WebApplication is deleted; Cirrus and
+ * Kubernetes take what it made with it (see lib/webapp/deletion.ts).
+ *
+ * @param namespace
+ * @param name
+ * @param typed what was typed to confirm
+ * @returns
+ */
+export async function deleteWebApplication(namespace: string, name: string, typed: string): Promise<ActionResult> {
+  if (!confirmsDeletion(typed, name)) {
+    return { ok: false, error: `Type ${name} to delete it.` };
+  }
+  const result = await run(async () => {
+    await (await getKube()).deleteWebApplication(namespace, name);
+    return undefined;
   });
   revalidatePath("/", "layout");
   return result;

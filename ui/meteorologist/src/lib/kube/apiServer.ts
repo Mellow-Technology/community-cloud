@@ -473,6 +473,11 @@ function clientFor(config: KubeConfig): KubeClient {
         })) as WebApplication;
       }),
 
+    deleteWebApplication: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteNamespacedCustomObject({ ...webapps, namespace, name }));
+      }),
+
     createSecret: (namespace, name, data, labels, type = "Opaque", annotations) =>
       attempt(async () => {
         await core.createNamespacedSecret({

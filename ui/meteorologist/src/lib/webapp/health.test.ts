@@ -34,6 +34,15 @@ describe("application health", () => {
     expect(appHealth({ ...app([]), status: undefined }).state).toBe("pending");
   });
 
+  test("is deleting once deletion is asked for, whatever it said before", () => {
+    const ready = app([["Ready", true, "Ready"]]);
+    const leaving: WebApplication = {
+      ...ready,
+      metadata: { ...ready.metadata, deletionTimestamp: "2026-11-03T00:00:00Z" },
+    };
+    expect(appHealth(leaving).state).toBe("deleting");
+  });
+
   test("is pending while Cirrus is behind the spec", () => {
     expect(appHealth(app([["Ready", true, "Ready"]], [2, 1])).state).toBe("pending");
   });
@@ -100,6 +109,6 @@ describe("application health", () => {
 
   test("counts by state", () => {
     const counts = countHealth([app([["Ready", true, "Ready"]]), app([["Provisioned", false, "Blocked"]])]);
-    expect(counts).toEqual({ healthy: 1, degraded: 0, progressing: 0, failing: 1, pending: 0 });
+    expect(counts).toEqual({ healthy: 1, degraded: 0, progressing: 0, failing: 1, pending: 0, deleting: 0 });
   });
 });
