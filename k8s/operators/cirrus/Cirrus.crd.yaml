@@ -211,9 +211,11 @@ spec:
                 - command
                 type: object
               port:
-                default: 8080
-                description: The port the application listens on for HTTP.
+                description: |-
+                  The port the application listens on for HTTP. Left out, it's
+                  read from the image: the one TCP port its Dockerfile EXPOSEs.
                 format: int32
+                nullable: true
                 type: integer
               postgres:
                 description: |-
@@ -353,6 +355,22 @@ spec:
                 description: The image the Deployment runs.
                 nullable: true
                 type: string
+              imagePorts:
+                description: |-
+                  The ports read from images, for the images deployed and about
+                  to be, so a registry is asked once per image.
+                items:
+                  properties:
+                    image:
+                      type: string
+                    port:
+                      format: int32
+                      type: integer
+                  required:
+                  - image
+                  - port
+                  type: object
+                type: array
               lastChecked:
                 description: |-
                   When the forge was last asked for the newest pipeline, as
@@ -365,6 +383,13 @@ spec:
                 type: string
               observedGeneration:
                 format: int64
+                nullable: true
+                type: integer
+              port:
+                description: |-
+                  The port the application is served on: the spec's, or the one
+                  read from the image.
+                format: int32
                 nullable: true
                 type: integer
               release:

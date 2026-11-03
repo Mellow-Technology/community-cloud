@@ -52,9 +52,10 @@ pub struct WebApplicationSpec {
     #[serde(default = "default_replicas")]
     pub replicas: i32,
 
-    /// The port the application listens on for HTTP.
-    #[serde(default = "default_port")]
-    pub port: i32,
+    /// The port the application listens on for HTTP. Left out, it's
+    /// read from the image: the one TCP port its Dockerfile EXPOSEs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<i32>,
 
     /// Environment variables, added after the ones Cirrus provides,
     /// so one set here wins.
@@ -105,10 +106,6 @@ pub struct WebApplicationSpec {
 
 fn default_replicas() -> i32 {
     1
-}
-
-fn default_port() -> i32 {
-    8080
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
@@ -243,6 +240,21 @@ pub struct WebApplicationStatus {
     /// RFC 3339.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_checked: Option<String>,
+    /// The port the application is served on: the spec's, or the one
+    /// read from the image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<i32>,
+    /// The ports read from images, for the images deployed and about
+    /// to be, so a registry is asked once per image.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_ports: Vec<ImagePort>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImagePort {
+    pub image: String,
+    pub port: i32,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
@@ -375,7 +387,7 @@ mod tests {
         let spec: WebApplicationSpec =
             serde_json::from_value(serde_json::json!({"image": {"repository": "r"}})).unwrap();
         assert_eq!(spec.replicas, 1);
-        assert_eq!(spec.port, 8080);
+        assert_eq!(spec.port, None, "left out, the port is read from the image");
         assert_eq!(spec.image.tag, "latest");
     }
 }

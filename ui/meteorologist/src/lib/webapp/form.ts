@@ -25,7 +25,6 @@ import {
   DEFAULT_GITLAB_REF,
   DEFAULT_GITLAB_URL,
   DEFAULT_IMAGE_TAG,
-  DEFAULT_PORT,
   DEFAULT_REPLICAS,
   DEFAULT_TAG,
   DEFAULT_TOKEN_KEY,
@@ -114,7 +113,8 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     tag: DEFAULT_TAG,
     imagePullSecrets: "",
     replicas: String(DEFAULT_REPLICAS),
-    port: String(DEFAULT_PORT),
+    // Blank: read from the image
+    port: "",
     healthCheckPath: "",
     cpuRequest: "",
     memoryRequest: "",
@@ -210,7 +210,7 @@ export function toForm(app: WebApplication): WebApplicationForm {
     tag: spec.image.tag ?? DEFAULT_TAG,
     imagePullSecrets: (spec.imagePullSecrets ?? []).join(", "),
     replicas: String(spec.replicas ?? DEFAULT_REPLICAS),
-    port: String(spec.port ?? DEFAULT_PORT),
+    port: spec.port !== undefined ? String(spec.port) : "",
     healthCheckPath: spec.healthCheck?.path ?? "",
     cpuRequest: spec.resources?.requests?.cpu ?? "",
     memoryRequest: spec.resources?.requests?.memory ?? "",
@@ -341,7 +341,13 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
 
   spec.image = { ...spec.image, repository: form.repository.trim(), tag: nonEmpty(form.tag) ?? DEFAULT_TAG };
   spec.replicas = toInteger(form.replicas) ?? DEFAULT_REPLICAS;
-  spec.port = toInteger(form.port) ?? DEFAULT_PORT;
+  // Left out, Cirrus reads it from the image
+  const port = toInteger(form.port);
+  if (port === undefined) {
+    delete spec.port;
+  } else {
+    spec.port = port;
+  }
 
   const env: EnvVar[] = [
     ...form.env.filter((row) => row.name.trim() !== "").map((row) => ({ name: row.name.trim(), value: row.value })),
@@ -463,9 +469,10 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     errors.replicas = "A whole number, zero or more.";
   }
 
+  // Blank is fine: Cirrus reads it from the image
   const port = toInteger(form.port);
-  if (port === undefined || port < 1 || port > 65535) {
-    errors.port = "A port number, from 1 to 65535.";
+  if (form.port.trim() !== "" && (port === undefined || port < 1 || port > 65535)) {
+    errors.port = "A port number, from 1 to 65535, or blank to use the image's.";
   }
 
   if (form.healthCheckPath.trim() !== "" && !form.healthCheckPath.trim().startsWith("/")) {

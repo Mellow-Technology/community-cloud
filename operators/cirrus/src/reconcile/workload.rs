@@ -70,12 +70,14 @@ pub fn pull_secrets(app: &WebApplication) -> Option<Vec<LocalObjectReference>> {
     })
 }
 
-pub fn deployment(app: &WebApplication, image: &str, env_from: &[String], env: &[EnvVar]) -> Deployment {
+/// The Deployment running `image`, listening on `port`: the spec's,
+/// or the one read from that image.
+pub fn deployment(app: &WebApplication, image: &str, port: i32, env_from: &[String], env: &[EnvVar]) -> Deployment {
     let (namespace, name) = super::identity(app);
     let mut main = container(app, image, env_from, env);
     main.ports = Some(vec![ContainerPort {
         name: Some("http".to_string()),
-        container_port: app.spec.port,
+        container_port: port,
         ..Default::default()
     }]);
     if let Some(check) = &app.spec.health_check {
@@ -120,7 +122,11 @@ pub fn deployment(app: &WebApplication, image: &str, env_from: &[String], env: &
     }
 }
 
-pub fn service(app: &WebApplication) -> Service {
+/// The Service in front of it. Its port is the application's, so
+/// other applications reach it where it says it listens; it forwards
+/// to the container's named port, so the two can differ for a moment
+/// while a new image with a new port rolls out.
+pub fn service(app: &WebApplication, port: i32) -> Service {
     let (namespace, name) = super::identity(app);
     Service {
         metadata: ObjectMeta {
@@ -134,7 +140,7 @@ pub fn service(app: &WebApplication) -> Service {
             selector: Some(selector(&name)),
             ports: Some(vec![ServicePort {
                 name: Some("http".to_string()),
-                port: app.spec.port,
+                port,
                 target_port: Some(IntOrString::String("http".to_string())),
                 ..Default::default()
             }]),
@@ -179,7 +185,7 @@ mod tests {
             value: Some("us-east-1".into()),
             value_from: None,
         }];
-        let built = deployment(&app, "img@sha256:1", &["shop-postgres".into()], &provided);
+        let built = deployment(&app, "img@sha256:1", 8080, &["shop-postgres".into()], &provided);
         let pod = built.spec.unwrap().template.spec.unwrap();
         let env = pod.containers[0].env.clone().unwrap();
         assert_eq!(env.last().unwrap().value.as_deref(), Some("eu"));
@@ -190,7 +196,7 @@ mod tests {
 
     #[test]
     fn defaults_to_256mi() {
-        let built = deployment(&app(), "img", &[], &[]);
+        let built = deployment(&app(), "img", 8080, &[], &[]);
         let container = &built.spec.unwrap().template.spec.unwrap().containers[0];
         let limits = container.resources.as_ref().unwrap().limits.as_ref().unwrap();
         assert_eq!(limits["memory"].0, "256Mi");

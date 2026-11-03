@@ -238,6 +238,7 @@ name = "cirrus"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "futures",
  "k8s-openapi",
  "kube",

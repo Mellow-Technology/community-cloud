@@ -22,8 +22,8 @@ export const PLURAL = "webapplications";
 
 // The defaults serde fills in, in crd.rs. Repeated here so the form
 // can show what leaving a field empty will mean.
+// The port has no default: left out, Cirrus reads it from the image.
 export const DEFAULT_REPLICAS = 1;
-export const DEFAULT_PORT = 8080;
 export const DEFAULT_TAG = "latest";
 export const DEFAULT_GITLAB_URL = "https://gitlab.com";
 export const DEFAULT_GITLAB_REF = "main";
@@ -116,6 +116,15 @@ export interface WebApplicationStatus {
   url?: string;
   webhook?: WebhookStatus;
   lastChecked?: string;
+  // The port the Service is on: the spec's, or the one read from the
+  // image
+  port?: number;
+  imagePorts?: ImagePort[];
+}
+
+export interface ImagePort {
+  image: string;
+  port: number;
 }
 
 export interface WebApplication {

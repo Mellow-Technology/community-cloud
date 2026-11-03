@@ -7,11 +7,15 @@
 //! 1. What the application depends on — Postgres, a bucket, RabbitMQ.
 //!    Until every one of them is ready there's nothing to roll out,
 //!    since an application started without its database only crashes.
-//! 2. How it's reached, through the cluster Gateway.
-//! 3. The forge: its webhook, and a poll for a release it missed.
-//! 4. The rollout. When the image to run differs from the one
+//! 2. The forge: its webhook, and a poll for a release it missed,
+//!    which settles the image to run.
+//! 3. The port it listens on: the spec's, or the one the image
+//!    declares (see port.rs).
+//! 4. How it's reached, through the cluster Gateway.
+//! 5. The rollout. When the image to run differs from the one
 //!    deployed, migrations run first, and the Deployment is only
-//!    given the new image once they've finished.
+//!    given the new image once they've finished. An image whose port
+//!    can't be worked out isn't rolled out, nor migrated for.
 //!
 //! Problems a person has to fix — a service not installed, a
 //! namespace missing a label, a migration that failed — are written
@@ -27,6 +31,7 @@ pub mod bucket;
 pub mod cleanup;
 pub mod migrations;
 pub mod network;
+pub mod port;
 pub mod postgres;
 pub mod rabbitmq;
 pub mod source;
@@ -206,27 +211,7 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
         )?;
     }
 
-    // 2. How it's reached
-    let url = match network::ensure(ctx, app).await {
-        Ok(url) => url,
-        Err(Error::MissingService(message) | Error::NotPermitted(message)) => {
-            problems.push(message);
-            None
-        }
-        Err(error) => return Err(error),
-    };
-
-    let provisioned = problems.is_empty() && pending.is_empty();
-    let (reason, message) = if !problems.is_empty() {
-        ("Blocked", problems.join("; "))
-    } else if !pending.is_empty() {
-        ("Waiting", pending.join("; "))
-    } else {
-        ("Provisioned", String::new())
-    };
-    conditions::set(&mut conditions, PROVISIONED, provisioned, reason, message, generation);
-
-    // 3. The forge
+    // 2. The forge
     let found = source::sync(ctx, app).await;
     if app.gitlab().is_some() {
         match &found.webhook_problem {
@@ -259,21 +244,65 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     current.status.get_or_insert_with(Default::default).release = release;
     let desired = current.desired_image();
 
-    // 4. The rollout
+    // 3. The port, for the image about to run. The Service and the
+    // route follow it, or keep the port they had while it isn't known.
+    let mut image_ports = previous.image_ports.clone();
+    let desired_port = port::resolve(ctx, app, &desired, &mut image_ports).await?;
+    let port_problem = desired_port.as_ref().err().cloned();
+    let service_port = desired_port.as_ref().ok().copied().or(previous.port);
+
+    // 4. How it's reached
+    let url = match service_port {
+        Some(port) => match network::ensure(ctx, app, port).await {
+            Ok(url) => url,
+            Err(Error::MissingService(message) | Error::NotPermitted(message)) => {
+                problems.push(message);
+                None
+            }
+            Err(error) => return Err(error),
+        },
+        // Nothing to point a route at until there's a port
+        None => previous.url.clone(),
+    };
+
+    let provisioned = problems.is_empty() && pending.is_empty();
+    let (reason, message) = if !problems.is_empty() {
+        ("Blocked", problems.join("; "))
+    } else if !pending.is_empty() {
+        ("Waiting", pending.join("; "))
+    } else {
+        ("Provisioned", String::new())
+    };
+    conditions::set(&mut conditions, PROVISIONED, provisioned, reason, message, generation);
+
+    // 5. The rollout
     let mut deployed = previous.deployed_image.clone();
     let mut migration_job = None;
     let mut rolled_out = false;
     if provisioned {
-        resources::apply(
-            &Api::<Service>::namespaced(ctx.client.clone(), &namespace),
-            &name,
-            &workload::service(app),
-        )
-        .await?;
+        if let Some(port) = service_port {
+            resources::apply(
+                &Api::<Service>::namespaced(ctx.client.clone(), &namespace),
+                &name,
+                &workload::service(app, port),
+            )
+            .await?;
+        }
 
         let mut run = deployed.clone();
         if deployed.as_deref() != Some(desired.as_str()) {
-            if app.spec.migrations.is_some() {
+            if let Some(problem) = &port_problem {
+                // Not migrated for either: the schema shouldn't move
+                // ahead of an image that can't be run
+                conditions::set(
+                    &mut conditions,
+                    ROLLED_OUT,
+                    false,
+                    "PortUnknown",
+                    problem.clone(),
+                    generation,
+                );
+            } else if app.spec.migrations.is_some() {
                 let (job, state) = migrations::ensure(ctx, app, &desired, &provided.env_from, &provided.env).await?;
                 match state {
                     migrations::JobState::Succeeded => run = Some(desired.clone()),
@@ -305,17 +334,30 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             }
         }
 
-        if let Some(image) = run {
+        // The port of the image actually running, which is the old
+        // image's own while migrations run for a new one
+        let run_port = run.as_deref().and_then(|image| {
+            if image == desired {
+                desired_port.as_ref().ok().copied()
+            } else {
+                app.spec
+                    .port
+                    .or_else(|| port::cached(&image_ports, image))
+                    .or(previous.port)
+            }
+        });
+
+        if let (Some(image), Some(port)) = (run, run_port) {
             let deployments = Api::<Deployment>::namespaced(ctx.client.clone(), &namespace);
             let applied = resources::apply(
                 &deployments,
                 &name,
-                &workload::deployment(app, &image, &provided.env_from, &provided.env),
+                &workload::deployment(app, &image, port, &provided.env_from, &provided.env),
             )
             .await?;
             rolled_out = workload::rolled_out(&applied, app.spec.replicas) && image == desired;
             deployed = Some(image);
-            if migration_job.is_none() {
+            if migration_job.is_none() && port_problem.is_none() {
                 let (reason, message) = if rolled_out {
                     ("RolledOut", String::new())
                 } else {
@@ -345,12 +387,16 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
         generation,
     );
 
+    // Only the images still in play; the spec's own port needs none
+    port::prune(&mut image_ports, &[deployed.as_deref(), Some(desired.as_str())]);
     let mut status = json!({
         "observedGeneration": generation,
         "conditions": conditions,
         "deployedImage": deployed,
         "migrationJob": migration_job,
         "url": url,
+        "port": service_port,
+        "imagePorts": image_ports,
     });
     if let Some(webhook) = &found.webhook {
         status["webhook"] = json!(webhook);
@@ -372,13 +418,15 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     // A failed forge check is tried again within minutes, not at the
     // settled pace, since the rollout may be on a stale tag until it
     // works
-    Ok(if !problems.is_empty() || found.problem.is_some() {
-        Action::requeue(BLOCKED_REQUEUE)
-    } else if !ready {
-        Action::requeue(PENDING_REQUEUE)
-    } else {
-        Action::requeue(SETTLED_REQUEUE)
-    })
+    Ok(
+        if !problems.is_empty() || found.problem.is_some() || port_problem.is_some() {
+            Action::requeue(BLOCKED_REQUEUE)
+        } else if !ready {
+            Action::requeue(PENDING_REQUEUE)
+        } else {
+            Action::requeue(SETTLED_REQUEUE)
+        },
+    )
 }
 
 #[cfg(test)]
@@ -395,7 +443,7 @@ pub mod tests {
                     tag: "main".into(),
                 },
                 replicas: 1,
-                port: 8080,
+                port: Some(8080),
                 ..Default::default()
             },
         );

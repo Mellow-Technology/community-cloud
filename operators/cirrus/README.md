@@ -33,7 +33,6 @@ spec:
   image:
     repository: registry.gitlab.com/acme/shop
     tag: main
-  port: 3000
   healthCheck:
     path: /up
   hostnames: [shop.acme.example]
@@ -73,6 +72,25 @@ what each is waiting on. `ReleaseChecked` is false when Cirrus couldn't
 ask GitLab for the newest release; it tries again within a couple of
 minutes, and until then runs the last release it found, or
 `spec.image.tag` if it never found one.
+
+### Its port
+
+Left out, `port` is read from the image: the one TCP port its
+Dockerfile `EXPOSE`s, from the image's config in its registry. Cirrus
+reads it once per image, with the pull Secrets the pods use
+(`imagePullSecrets`, or the namespace's defaults), and records it in
+`status.imagePorts`. `status.port` is the port the Service is on.
+
+An image that declares no port, or several, isn't guessed at:
+`RolledOut` is False with reason `PortUnknown`, names the ports it
+found, and asks for `spec.port`. So is one whose registry can't be
+read, which is retried. Either way the image isn't migrated for or
+rolled out, and what's running keeps running. Setting `port` skips all
+of this.
+
+A new image that declares a different port is rolled out on it. The
+Service and route move to the new port with it, and other
+applications reaching it by `<app>:<port>` have to follow.
 
 ### What the application is given
 

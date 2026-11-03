@@ -283,8 +283,8 @@ function seed(): FixtureStore {
       kind: KIND,
       metadata: { name: "plane", namespace: "cc-office", generation: 1, creationTimestamp: CREATED, uid: "fixture-2" },
       spec: {
+        // No port: Cirrus reads it from the image
         image: { repository: "makeplane/plane-backend", tag: "v1.2.0" },
-        port: 8000,
         hostnames: ["plane.example.org"],
         postgres: {},
         bucket: { quota: "20Gi" },
@@ -298,6 +298,8 @@ function seed(): FixtureStore {
           condition("RolledOut", false, "Migrating", "running plane-migrate-7c1d for makeplane/plane-backend:v1.2.0"),
           condition("Ready", false, "NotReady"),
         ],
+        port: 8000,
+        imagePorts: [{ image: "makeplane/plane-backend:v1.2.0", port: 8000 }],
         deployedImage: "makeplane/plane-backend:v1.1.4",
         migrationJob: "plane-migrate-7c1d",
         url: "https://plane.example.org",
