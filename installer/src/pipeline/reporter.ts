@@ -198,6 +198,11 @@ export class ConsoleReporter implements Reporter {
   ) {}
 
   planned(nodes: string[], steps: number, bundles: string[]) {
+    // A reporter can see more than one plan: add-node's and install's
+    // checks run after the main one, through the same reporter, and
+    // start counting again from nothing
+    this.done = 0;
+    this.current = "";
     this.total = steps;
     this.bundles = bundles;
     this.width = Math.max(...nodes.map((name) => this.display(name).length), 4);
@@ -365,7 +370,7 @@ export class ConsoleReporter implements Reporter {
 
     const columns = this.stream.columns ?? 80;
     const width = Math.max(10, Math.min(30, columns - 40));
-    const filled = Math.round((this.done / this.total) * width);
+    const filled = Math.min(width, Math.max(0, Math.round((this.done / this.total) * width)));
 
     const bar = `${chalk.cyan("█".repeat(filled))}${chalk.dim("░".repeat(width - filled))}`;
     const counter = `${this.done}/${this.total}`;
