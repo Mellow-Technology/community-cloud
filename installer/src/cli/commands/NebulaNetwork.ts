@@ -7,6 +7,10 @@
  * the roles exist on it. Enrolling a node is the other half and lives
  * in Nebula.ts, which reuses the lookups here.
  *
+ * An install runs it, once for the whole cluster rather than once per
+ * node, so two nodes never race to create the same role. It does
+ * nothing on a cluster whose configuration names no network.
+ *
  * A note on scope: the API has no endpoint that creates a network.
  * Networks can be listed, edited, deleted and given another CIDR, but
  * making one happens in the admin console at admin.defined.net. So
@@ -17,7 +21,7 @@
  * Requires:
  * - an API key with the roles:create, roles:list and networks:list scopes
  */
-import { CommandPurpose, CommandSpec, WebCommandSpec } from "./Command.ts";
+import { CommandPurpose, CommandScope, CommandSpec, WebCommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // Where the API lives
@@ -87,24 +91,37 @@ export function getNebulaConfig(config: CloudConfig): NebulaConfig {
 }
 
 /**
- * Whether this cluster uses Nebula at all.
+ * Whether this cluster uses Nebula at all: its configuration names the
+ * network.
  *
  * A cluster whose nodes all sit on one network doesn't need a mesh,
- * and nothing about that is a problem. Worth being able to tell apart
- * from a cluster that wants one and hasn't been given a key, which is.
+ * and nothing about that is a problem. The configuration is what says
+ * so, and nothing else: install and add-node enrol every node when
+ * this is true, so a Defined Networking key sitting in the environment
+ * of whoever runs the installer mustn't be enough to turn it on. A key
+ * without a network, or a network without a key, is for preflight to
+ * point out.
  *
  * @param config
  * @returns
  */
 export function usesNebula(config: CloudConfig): boolean {
-  const { apiKey, network, networkID } = getNebulaConfig(config);
+  const { network, networkID } = getNebulaConfig(config) ?? {};
 
-  return (
-    (apiKey !== undefined && apiKey !== "") ||
-    process.env[API_KEY_ENV] !== undefined ||
-    network !== undefined ||
-    networkID !== undefined
-  );
+  return (typeof network === "string" && network !== "") || (typeof networkID === "string" && networkID !== "");
+}
+
+/**
+ * Whether there's a Defined Networking API key to use, in the
+ * configuration or the environment.
+ *
+ * @param config
+ * @returns
+ */
+export function hasApiKey(config: CloudConfig): boolean {
+  const { apiKey } = getNebulaConfig(config) ?? {};
+  const key = apiKey !== undefined && apiKey !== "" ? apiKey : process.env[API_KEY_ENV];
+  return key !== undefined && key !== "";
 }
 
 /**
@@ -238,10 +255,12 @@ function buildCreateRoleCommand(role: NebulaRole): WebCommandSpec {
     headers: buildApiHeaders,
     explainStatus: DEFINED_API_ERRORS,
 
+    scope: CommandScope.Cluster,
+
     // A role that's already there is the state we wanted, so there's
     // nothing to do and nothing to report
-    skipWhen: (_config: CloudConfig, context: any) =>
-      getRoleID(context, role.name) !== undefined,
+    skipWhen: (config: CloudConfig, context: any) =>
+      !usesNebula(config) || getRoleID(context, role.name) !== undefined,
 
     body: (_config: CloudConfig, context: any) => ({
       name: role.name,
@@ -381,11 +400,20 @@ export function getDefaultRoleName(config: CloudConfig): string {
  * @returns
  */
 export function NebulaNetworkCommands(config: CloudConfig): CommandSpec[] {
+  // Nothing at all without a network, so a plan for a cluster without a
+  // mesh doesn't list steps it would only skip
+  if (!usesNebula(config)) {
+    return [];
+  }
+
+  // Once for the cluster. The lookups are shared with enrolment, which
+  // runs them per node, so they're given the scope here rather than on
+  // the shared definitions.
   return [
-    findNetworkCommand,
-    listRolesCommand,
+    { ...findNetworkCommand, scope: CommandScope.Cluster },
+    { ...listRolesCommand, scope: CommandScope.Cluster },
     ...getConfiguredRoles(config).map(buildCreateRoleCommand),
-    verifyRolesCommand,
+    { ...verifyRolesCommand, scope: CommandScope.Cluster },
   ];
 }
 

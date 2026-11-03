@@ -24,6 +24,11 @@
  * the network and role lookups from there are reused so both bundles
  * agree on what they're pointing at.
  *
+ * Install and add-node run it on every node before K3s, which then
+ * registers each node on its mesh address (find-node-ip, in K3s.ts).
+ * On a cluster whose configuration names no network, every step is
+ * skipped.
+ *
  * Requires:
  * - an API key with the hosts:create, hosts:enroll, hosts:list,
  *   roles:list and networks:list scopes
@@ -256,7 +261,7 @@ const createEnrollmentCodeCommand: WebCommandSpec = {
   },
 };
 
-export const NebulaCommands: CommandSpec[] = [
+const ENROLMENT_COMMANDS: CommandSpec[] = [
   /**
    * Find out whether this node is already on the mesh, before
    * anything is created for it.
@@ -401,3 +406,27 @@ export const NebulaCommands: CommandSpec[] = [
     output: OutputType.Raw,
   },
 ];
+
+/**
+ * A step that only does anything on a cluster using Nebula, on top of
+ * whatever else would skip it.
+ *
+ * @param spec
+ * @returns
+ */
+function onlyOnNebula(spec: CommandSpec): CommandSpec {
+  const { skipWhen } = spec;
+  return {
+    ...spec,
+    skipWhen: (config: CloudConfig, context: any, results: any) =>
+      !usesNebula(config) || (skipWhen !== undefined && skipWhen(config, context, results) === true),
+  };
+}
+
+/**
+ * Enrolling a node, every step of it skipped unless the configuration
+ * names a network. Install and add-node run this on every node, so on
+ * a cluster without a mesh it has to be nothing at all: no API calls,
+ * and no dnclient.
+ */
+export const NebulaCommands: CommandSpec[] = ENROLMENT_COMMANDS.map(onlyOnNebula);

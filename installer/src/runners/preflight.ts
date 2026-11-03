@@ -36,6 +36,7 @@ import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail
 import { checkDnsConfig } from "../util/dns.ts";
 import { checkProjectSendConfig } from "../util/projectsend.ts";
 import { checkSchema } from "../util/configSchema.ts";
+import { API_KEY_ENV, hasApiKey, usesNebula } from "../cli/commands/NebulaNetwork.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
@@ -330,6 +331,17 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     } catch (error: any) {
       say(error.message);
     }
+  }
+
+  // Nebula is on when the configuration names a network, and install
+  // enrols every node then, which needs a key. Settings without a
+  // network turn nothing on, which is worth saying in case they were
+  // meant to.
+  const nebula = config.getNetworkSection("nebula");
+  if (usesNebula(config) && !hasApiKey(config)) {
+    say(`"network.nebula" names a network, so every node is enrolled on it, and there's no Defined Networking API key to do that with. Set "network.nebula.apiKey", or ${API_KEY_ENV} in the environment.`);
+  } else if (!usesNebula(config) && ["apiKey", "defaultRole", "roles"].some((key) => nebula[key] !== undefined)) {
+    say('"network.nebula" has settings but no "network" or "networkID", so nodes won\'t be put on a mesh. Name the network, or remove the section.');
   }
 
   // Placing a namespace in a region with no nodes in it, or none that

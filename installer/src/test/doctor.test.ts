@@ -317,7 +317,8 @@ describe("how a failure is put right", () => {
   });
 
   it("suggests nothing when the check's explanation is the remedy", async () => {
-    const config = await loadFixtureConfig();
+    // The Nebula bundles only have steps on a cluster that names a network
+    const config = await loadFixtureConfig({ network: { nebula: { network: "prime", apiKey: "k" } } });
     const step = stepOf("nebula", commandOf(config, "nebula", "find-nebula-network"));
 
     assert.equal(getRemedy(step, failed("nebula", "find-nebula-network", DEFINED_API_ERRORS[401]), config), undefined);
