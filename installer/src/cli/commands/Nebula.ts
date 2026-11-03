@@ -20,6 +20,11 @@
  * any node whose local dnclient state was lost while the network still
  * has its registration.
  *
+ * On a dual-stack network the v2 API only gives a host an IPv4 address
+ * when asked for one, and the cluster runs over IPv4: K3s registers each
+ * node on its mesh IPv4 address. So hosts are created asking for one,
+ * and a host found without one, enrolled or not, is given one.
+ *
  * Setting the network up in the first place is NebulaNetwork.ts, and
  * the network and role lookups from there are reused so both bundles
  * agree on what they're pointing at.
@@ -31,7 +36,7 @@
  *
  * Requires:
  * - an API key with the hosts:create, hosts:enroll, hosts:list,
- *   roles:list and networks:list scopes
+ *   hosts:update, roles:list and networks:list scopes
  * - a Debian or Ubuntu node, since dnclient comes from an apt repository
  * - sudo
  */
@@ -118,11 +123,38 @@ function getHostName(context: any): string {
 }
 
 /**
+ * The network's IPv4 range, if it has one.
+ *
+ * @param context
+ * @returns
+ */
+function getIPv4Cidr(context: any): string | undefined {
+  const cidrs = Array.isArray(context.nebulaNetworkCidrs) ? context.nebulaNetworkCidrs : [];
+  return cidrs.find((cidr: unknown) => typeof cidr === "string" && !cidr.includes(":"));
+}
+
+/**
+ * The host's IPv4 address on the mesh, if it has one.
+ *
+ * @param context
+ * @returns
+ */
+function getIPv4Address(context: any): string | undefined {
+  const addresses = Array.isArray(context.nebulaIPAddresses) ? context.nebulaIPAddresses : [];
+  return addresses.find((address: unknown) => typeof address === "string" && !address.includes(":"));
+}
+
+/**
  * Look for a registration this host already has.
  *
  * The API rejects a host whose name is already on the network, so we
  * have to know before we ask rather than after. There's no filter for
- * a name, so the network's hosts are listed and matched here.
+ * a name, so the network's hosts are listed and matched here, ignoring
+ * case: hosts made in the dashboard tend to be "Guandi" where the
+ * configuration says "guandi".
+ *
+ * It runs on nodes that are already enrolled too, so a host enrolled
+ * with no IPv4 address can be given one.
  */
 const findHostCommand: WebCommandSpec = {
   name: "find-nebula-host",
@@ -136,9 +168,6 @@ const findHostCommand: WebCommandSpec = {
   headers: buildApiHeaders,
   explainStatus: DEFINED_API_ERRORS,
 
-  // Nothing to look up for a node that's already on the mesh
-  skipWhen: (_config: CloudConfig, context: any) => context.dnclientEnrolled === true,
-
   saveToContext: (output: any, context: any) => {
     const hosts = output.parsed !== undefined && output.parsed !== null
       ? output.parsed.data
@@ -146,7 +175,7 @@ const findHostCommand: WebCommandSpec = {
 
     const wanted = getHostName(context);
     const existing = (Array.isArray(hosts) ? hosts : []).find(
-      (host: any) => host.name === wanted,
+      (host: any) => typeof host.name === "string" && host.name.toLowerCase() === wanted.toLowerCase(),
     );
 
     if (existing === undefined) {
@@ -161,7 +190,11 @@ const findHostCommand: WebCommandSpec = {
       );
     }
 
-    console.log(`"${wanted}" is already registered as ${existing.id}, so it will be issued a fresh enrollment code`);
+    console.log(
+      context.dnclientEnrolled === true
+        ? `"${wanted}" is enrolled as ${existing.id}`
+        : `"${wanted}" is already registered as ${existing.id}, so it will be issued a fresh enrollment code`,
+    );
 
     return {
       nebulaHostID: existing.id,
@@ -203,12 +236,16 @@ const createHostCommand: WebCommandSpec = {
 
     const { listenPort, staticAddresses, isLighthouse, isRelay } = getNodeNebulaConfig(context);
 
+    // An IPv6 address comes regardless; an IPv4 one only if asked for
+    const ipv4Cidr = getIPv4Cidr(context);
+
     // Only send what the node actually asked for, so the API keeps
     // applying its own defaults to the rest
     return {
       name: getHostName(context),
       networkID: context.nebulaNetworkID,
       roleID,
+      ...(ipv4Cidr !== undefined ? { ipAddresses: [ipv4Cidr] } : {}),
       ...(listenPort !== undefined ? { listenPort } : {}),
       ...(staticAddresses !== undefined ? { staticAddresses } : {}),
       ...(isLighthouse !== undefined ? { isLighthouse } : {}),
@@ -261,6 +298,37 @@ const createEnrollmentCodeCommand: WebCommandSpec = {
   },
 };
 
+/**
+ * Give a host that has no IPv4 address one from the network's range.
+ *
+ * Hosts this installer created before it asked for one have only an
+ * IPv6 address, which K3s can't use to register the node. dnclient
+ * picks the new address up with its next configuration, which
+ * refresh-nebula-config makes it fetch.
+ */
+const addIPv4AddressCommand: WebCommandSpec = {
+  name: "add-nebula-ipv4-address",
+  description: "Give the host an IPv4 address on the mesh",
+  url: (_config: CloudConfig, context: any) =>
+    `${DEFINED_API_URL}/v2/hosts/${context.nebulaHostID}/ip-addresses`,
+  method: "POST",
+  headers: buildApiHeaders,
+  explainStatus: DEFINED_API_ERRORS,
+
+  skipWhen: (_config: CloudConfig, context: any) =>
+    context.nebulaHostID === undefined
+    || getIPv4Cidr(context) === undefined
+    || getIPv4Address(context) !== undefined,
+
+  body: (_config: CloudConfig, context: any) => ({ ipAddress: getIPv4Cidr(context) }),
+
+  saveToContext: (output: any) => {
+    const addresses = output.parsed?.data?.ipAddresses;
+    console.log(`The host now has ${Array.isArray(addresses) ? addresses.join(", ") : "a new address"}`);
+    return { nebulaIPAddresses: addresses, nebulaIPv4Added: true };
+  },
+};
+
 const ENROLMENT_COMMANDS: CommandSpec[] = [
   /**
    * Find out whether this node is already on the mesh, before
@@ -294,6 +362,7 @@ const ENROLMENT_COMMANDS: CommandSpec[] = [
   findHostCommand,
   createHostCommand,
   createEnrollmentCodeCommand,
+  addIPv4AddressCommand,
 
   /**
    * Install dnclient from the Defined Networking apt repository.
@@ -361,6 +430,22 @@ const ENROLMENT_COMMANDS: CommandSpec[] = [
   },
 
   /**
+   * Have an enrolled node pick up an address just added to its host.
+   *
+   * It would on its own, the next time it fetches its configuration,
+   * but restarting makes it fetch now. A node that has only just
+   * enrolled was given the address with its first configuration.
+   */
+  {
+    name: "refresh-nebula-config",
+    description: "Restart dnclient so it picks up its new address",
+    skipWhen: (_config: CloudConfig, context: any) =>
+      context.nebulaIPv4Added !== true || context.dnclientEnrolled !== true,
+    command: `sudo systemctl restart ${SERVICE} || { echo "Couldn't restart ${SERVICE} to pick up its new address" >&2; exit 1; }`,
+    output: OutputType.Raw,
+  },
+
+  /**
    * Check the node is actually on the mesh.
    *
    * The service being up says nothing about whether enrolment worked,
@@ -392,12 +477,16 @@ const ENROLMENT_COMMANDS: CommandSpec[] = [
         return checks;
       }
 
-      const address = quoteForShell(addresses[0]);
+      // The IPv4 address is the one the cluster uses, so that's the one
+      // that has to be there
+      const expected = getIPv4Address(context) ?? addresses[0];
+      const address = quoteForShell(expected);
+
       checks.push(
-        waitUntil(`ip -o addr show | grep -q ${address}`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
-        `ip -o addr show | grep -q ${address} || { echo "The address ${addresses[0]} the network assigned never appeared on an interface, so the tunnel isn't up" >&2; exit 1; }`,
-        `echo "on the mesh at ${addresses[0]}"`,
-        `ip -o addr show | grep ${address}`,
+        waitUntil(`ip -o addr show | grep -qF ${address}`, getWaitSeconds(context, READY_TIMEOUT_SECONDS)),
+        `ip -o addr show | grep -qF ${address} || { echo "The address ${expected} the network assigned never appeared on an interface, so the tunnel isn't up" >&2; exit 1; }`,
+        `echo "on the mesh at ${expected}"`,
+        `ip -o addr show | grep -F ${address}`,
         `sudo ${SERVICE} info || true`,
       );
 

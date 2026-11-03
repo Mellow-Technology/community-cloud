@@ -192,3 +192,68 @@ describe("what preflight says about the mesh", () => {
     assert.ok(!found.some((what) => what.includes("nebula")), found.join("\n"));
   });
 });
+
+describe("the addresses a host gets on a dual-stack mesh", () => {
+  const config = configFrom(ON_NEBULA);
+  const step = (name: string) => NebulaCommands.find((command) => command.name === name) as any;
+  const dualStack = {
+    node: NODES[2],
+    nebulaNetworkID: "network-1",
+    nebulaNetworkCidrs: ["100.100.0.0/20", "fdef:c0:c0:6fc6:8f18::/80"],
+    nebulaRoleIDs: { "Cluster Access": "role-1" },
+  };
+
+  it("asks for an IPv4 address when creating a host, since the API only gives IPv6 otherwise", () => {
+    const body = step("create-nebula-host").body(config, dualStack);
+    assert.deepEqual(body.ipAddresses, ["100.100.0.0/20"]);
+  });
+
+  it("asks for nothing in particular on an IPv6-only network", () => {
+    const body = step("create-nebula-host").body(config, {
+      ...dualStack,
+      nebulaNetworkCidrs: ["fdef:c0:c0:93a0:a309::/80"],
+    });
+    assert.equal(body.ipAddresses, undefined);
+  });
+
+  it("gives an existing host with only IPv6 an IPv4 address, enrolled or not", () => {
+    const add = step("add-nebula-ipv4-address");
+    const ipv6Only = { ...dualStack, nebulaHostID: "host-1", nebulaIPAddresses: ["fdef:c0:c0:6fc6:8f18::1"] };
+
+    assert.equal(add.skipWhen(config, ipv6Only, {}), false);
+    assert.equal(add.skipWhen(config, { ...ipv6Only, dnclientEnrolled: true }, {}), false);
+    assert.deepEqual(add.body(config, ipv6Only), { ipAddress: "100.100.0.0/20" });
+    assert.equal(add.url(config, ipv6Only), "https://api.defined.net/v2/hosts/host-1/ip-addresses");
+  });
+
+  it("leaves a host that already has IPv4 alone, and one that doesn't exist yet", () => {
+    const add = step("add-nebula-ipv4-address");
+    assert.equal(add.skipWhen(config, { ...dualStack, nebulaHostID: "host-1", nebulaIPAddresses: ["100.100.0.4", "fdef::4"] }, {}), true);
+    assert.equal(add.skipWhen(config, dualStack, {}), true);
+  });
+
+  it("restarts dnclient only on an enrolled node that was just given an address", () => {
+    const refresh = step("refresh-nebula-config");
+    assert.equal(refresh.skipWhen(config, { nebulaIPv4Added: true, dnclientEnrolled: true }, {}), false);
+    assert.equal(refresh.skipWhen(config, { nebulaIPv4Added: true, dnclientEnrolled: false }, {}), true);
+    assert.equal(refresh.skipWhen(config, { dnclientEnrolled: true }, {}), true);
+  });
+
+  it("finds an enrolled node's host whatever case its name is in", () => {
+    const find = step("find-nebula-host");
+    assert.notEqual(find.skipWhen(config, { ...dualStack, dnclientEnrolled: true }, {}), true);
+
+    const found = find.saveToContext(
+      { parsed: { data: [{ id: "host-3", name: "Three", ipAddresses: ["fdef::3"] }] } },
+      { ...dualStack, dnclientEnrolled: true },
+      config,
+    );
+    assert.equal(found.nebulaHostID, "host-3");
+  });
+
+  it("waits for the IPv4 address, the one K3s registers on", () => {
+    const command = step("verify-nebula-host").command(config, { ...dualStack, nebulaIPAddresses: ["fdef::3", "100.100.0.9"] });
+    const script = Array.isArray(command) ? command.join("\n") : command;
+    assert.match(script, /on the mesh at 100\.100\.0\.9/);
+  });
+});

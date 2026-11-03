@@ -99,8 +99,9 @@ export const networkingSection: ConfigSection = {
 
       console.log(`
   The API key needs the networks:list, roles:list, roles:create,
-  hosts:list, hosts:create and hosts:enroll scopes. Leave it blank to
-  keep it out of the configuration file and supply it through the
+  hosts:list, hosts:create, hosts:enroll and hosts:update scopes. Leave
+  it blank to keep it out of the configuration file and supply it
+  through the
   ${API_KEY_ENV} environment variable instead.
 `);
 
