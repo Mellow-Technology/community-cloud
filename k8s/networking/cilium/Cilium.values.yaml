@@ -35,9 +35,9 @@ operator:
 # long before the resource type they're written in exists.
 #
 # These listen on 9962 and 9963 on every interface of every node: the
-# pods share the node's network, and Cilium won't bind to one address
-# per node. Hubble's metrics stay off, since they label traffic by what
-# it's going between.
+# pods share the node's network, and this chart writes the one address
+# for every node into a ConfigMap. Hubble's metrics stay off, since
+# they label traffic by what it's going between.
 prometheus:
   enabled: true
 dashboards:
@@ -70,6 +70,10 @@ l2announcements:
 envoy:
   enabled: true
   useOriginalSourceAddress: false
+  # Nothing scrapes it, and it's on by default, on 9964 on every
+  # interface of every node, with no setting for the address
+  prometheus:
+    enabled: false
   securityContext:
     capabilities:
       # Allow for port binding

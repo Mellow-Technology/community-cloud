@@ -234,6 +234,11 @@ describe("what Prometheus does", async () => {
   it("keeps node-exporter off public addresses", () => {
     assert.equal(values["prometheus-node-exporter"].service.listenOnAllInterfaces, false);
   });
+
+  it("leaves Envoy's metrics off, which nothing scrapes and nothing can narrow", () => {
+    const [cilium] = render(config, "embed://networking/cilium/Cilium.values.yaml");
+    assert.equal(cilium.envoy.prometheus.enabled, false);
+  });
 });
 
 describe("reaching it", async () => {

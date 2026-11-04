@@ -45,9 +45,11 @@ agents one node at a time when the `cilium` bundle is next run. Until
 then its monitors find nothing to scrape, which does no harm.
 
 Those metrics listen on ports 9962 and 9963 on every interface of every
-node. node-exporter is told to use the node's internal address, but
-Cilium has no such setting, so block those two ports on any node with a
-public address.
+node, over plain HTTP. node-exporter is told to use the node's internal
+address, but Cilium's chart has no such setting, so make sure those two
+ports can't be reached on any node with a public address. Envoy's
+metrics, on 9964, have the same problem and nothing scrapes them, so
+they're switched off.
 
 ## Upgrading the chart
 
