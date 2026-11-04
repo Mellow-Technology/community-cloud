@@ -34,6 +34,13 @@
  * networking/cilium/gateway/Gateway.yaml. It's the one every
  * application attaches its listeners to, with a ListenerSet in its own
  * namespace, so it's made here, before any application is installed.
+ * It listens on every configured address that is a single address
+ * (see getListenAddresses), so a second gateway node with an address
+ * of its own is a second way in to the same applications.
+ *
+ * Adding a gateway node changes both the pool and the Gateway, so
+ * add-node runs GatewayAddressCommands: this bundle without the parts
+ * that are about the nodes rather than the addresses.
  *
  * Every command runs on the control plane, since all of this is done
  * to the cluster rather than to a node.
@@ -61,6 +68,16 @@ import {
 import { getNodeName } from "./K3s.ts";
 import { CLUSTER_NAMESPACE } from "./packages.ts";
 import { renderInstallerFile } from "../../util/template.ts";
+import {
+  AddressBlock,
+  getAddresses,
+  getGatewayConfig,
+  getGatewayNodes,
+  getListenAddresses,
+  getNodeAddresses,
+  hasGateway,
+  parseAddress,
+} from "../../util/gateway.ts";
 
 // What the pool and the policy are called when the configuration
 // doesn't say. One name for both, since they describe one thing.
@@ -92,96 +109,6 @@ const DEFAULT_INTERFACES = asRegularExpressions(InterfaceKind.Local);
 const POOL_TIMEOUT_SECONDS = 60;
 
 /**
- * The gateway section of a Community Cloud configuration.
- *
- * - mode: which of the two shapes above this cluster is. Worked out
- *   from the addresses when it isn't given.
- * - addresses: what a LoadBalancer Service may be given. Single
- *   addresses, CIDRs, or "first-last" ranges.
- * - interfaces: port-forward only, the interfaces to answer ARP on as
- *   regular expressions
- * - name: what to call the pool and the policy, for a cluster that
- *   wants more than one or has its own naming
- */
-interface GatewayConfiguration {
-  mode?: GatewayMode;
-  addresses?: string[];
-  interfaces?: string[];
-  name?: string;
-}
-
-/**
- * One range of addresses a Service can be given.
- *
- * Cilium takes either a CIDR or a first and last address, so a single
- * address is written as a CIDR covering only itself.
- */
-interface AddressBlock {
-  cidr?: string;
-  start?: string;
-  stop?: string;
-}
-
-/**
- * Read the gateway section of the configuration.
- *
- * @param config
- * @returns
- */
-function getGatewayConfig(config: CloudConfig): GatewayConfiguration {
-  return config.getNetworkSection("gateway");
-}
-
-/**
- * Addresses a particular node holds, from "network.externalIPs".
- *
- * This is the floating case written per node: the configuration says
- * which machine the provider routes an address to. The addresses end
- * up in the same pool either way, and knowing whose they are is what
- * lets us say so when one is pinned to a node that isn't a gateway.
- *
- * @param config
- * @returns
- */
-function getNodeAddresses(config: CloudConfig): Record<string, string[]> {
-  const external = config.getNetworkSection("externalIPs");
-
-  const addresses: Record<string, string[]> = {};
-  for (const [name, value] of Object.entries(external)) {
-    const list = Array.isArray(value) ? value : [value];
-    const usable = list.filter((entry): entry is string => typeof entry === "string" && entry !== "");
-
-    if (usable.length > 0) {
-      addresses[name] = usable;
-    }
-  }
-
-  return addresses;
-}
-
-/**
- * The nodes that have a way out.
- *
- * Either said outright with "gateway": true, or by giving the node the
- * gateway role. Both mean the same thing, and a configuration written
- * either way should work.
- *
- * @param config
- * @returns
- */
-function getGatewayNodes(config: CloudConfig): any[] {
-  const { nodes } = config.getConfig();
-
-  return (Array.isArray(nodes) ? nodes : []).filter((node: any) => {
-    if (node.gateway === true) {
-      return true;
-    }
-
-    return Array.isArray(node.roles) && node.roles.includes(NodeRole.Gateway);
-  });
-}
-
-/**
  * What a node is called in the cluster.
  *
  * The same derivation K3s registers a node under, so the name used
@@ -200,21 +127,6 @@ function getClusterName(node: any): string {
   }
 
   return name;
-}
-
-/**
- * Every address that should end up in the pool.
- *
- * @param config
- * @returns
- */
-function getAddresses(config: CloudConfig): string[] {
-  const { addresses } = getGatewayConfig(config);
-
-  const configured = Array.isArray(addresses) ? addresses : [];
-  const perNode = Object.values(getNodeAddresses(config)).flat();
-
-  return [...new Set([...configured, ...perNode])];
 }
 
 /**
@@ -318,20 +230,6 @@ function getAddressesForNode(config: CloudConfig, context: any): string[] {
 }
 
 /**
- * Whether there's anything to do at all.
- *
- * A cluster that nothing reaches from outside is a perfectly ordinary
- * cluster — a private one, or one still being built — so this stands
- * down rather than complaining.
- *
- * @param config
- * @returns
- */
-function hasGateway(config: CloudConfig): boolean {
-  return getAddresses(config).length > 0 && getGatewayNodes(config).length > 0;
-}
-
-/**
  * Explain what's missing, when something is.
  *
  * Both halves are needed and each is useless alone, so a configuration
@@ -358,73 +256,6 @@ function describeGap(config: CloudConfig): string | undefined {
   }
 
   return undefined;
-}
-
-// What an address looks like. Deliberately loose about the contents of
-// an IPv6 address, since the point is to tell the three forms apart
-// and hand the rest to Cilium, which has a real parser.
-const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
-const IPV6 = /^[0-9a-fA-F:]+$/;
-
-/**
- * Turn a configured address into a block Cilium understands.
- *
- * @param address
- * @returns
- */
-function parseAddress(address: string): AddressBlock {
-  const value = address.trim();
-
-  // A range, written the way people write one
-  if (value.includes("-")) {
-    const [start, stop] = value.split("-").map((part) => part.trim());
-
-    if (start === undefined || stop === undefined || start === "" || stop === "") {
-      throw new Error(
-        `The gateway address range "${address}" is missing one of its ends. Expected something like "192.168.1.240-192.168.1.250".`,
-      );
-    }
-
-    checkAddress(start, address);
-    checkAddress(stop, address);
-
-    return { start, stop };
-  }
-
-  // A CIDR, passed through as it is
-  if (value.includes("/")) {
-    const [network] = value.split("/");
-    checkAddress(network !== undefined ? network : "", address);
-    return { cidr: value };
-  }
-
-  // A single address, as the smallest CIDR that holds it. Cilium takes
-  // a bare start on its own, but a prefix covering one address says
-  // the same thing with nothing left to interpret.
-  checkAddress(value, address);
-  return { cidr: `${value}/${IPV4.test(value) ? 32 : 128}` };
-}
-
-/**
- * Check something is recognisably an address.
- *
- * @param value
- * @param address the whole entry, for saying where the problem is
- */
-function checkAddress(value: string, address: string) {
-  if (IPV4.test(value)) {
-    const octets = value.split(".").map(Number);
-    if (octets.every((octet) => octet <= 255)) {
-      return;
-    }
-  }
-  else if (IPV6.test(value) && value.includes(":")) {
-    return;
-  }
-
-  throw new Error(
-    `"${address}" isn't an address this understands. Expected an address, a CIDR, or a "first-last" range, e.g. "203.0.113.10", "203.0.113.0/29" or "192.168.1.240-192.168.1.250".`,
-  );
 }
 
 /**
@@ -755,6 +586,13 @@ export const GatewayCommands: CommandSpec[] = [
       console.log(`  Gateway nodes: ${nodes.join(", ")}`);
       console.log(`  Addresses: ${addresses.join(", ")}`);
 
+      const listening = getListenAddresses(config);
+      console.log(
+        listening.length > 0
+          ? `  ${CLUSTER_GATEWAY} listens on: ${listening.join(", ")}`
+          : `  ${CLUSTER_GATEWAY} takes whichever address Cilium gives it, since none is configured as a single address`,
+      );
+
       // A pinned address on a node with no way out is a configuration
       // that can't work, and it fails as a timeout rather than as
       // anything that names the cause
@@ -976,3 +814,22 @@ export const GatewayCommands: CommandSpec[] = [
     output: OutputType.Raw,
   },
 ];
+
+// The steps that are about the node rather than the addresses: its
+// interfaces, which preflight already checks, and the role label,
+// which nodeLabels already adds. Labelling every gateway node would
+// also fail an add-node for a gateway still waiting to be added.
+const NODE_STEPS = ["check-gateway-interfaces", "label-gateway-nodes"];
+
+/**
+ * Bring the pool and the cluster Gateway up to date with the
+ * configuration, for add-node.
+ *
+ * A new gateway node usually comes with an address of its own, and
+ * until it's in the pool and on the Gateway nothing reaches the
+ * cluster through it. Everything here is an apply of what the
+ * configuration says, so it's the same whichever node is being added.
+ */
+export const GatewayAddressCommands: CommandSpec[] = GatewayCommands.filter(
+  (command) => !NODE_STEPS.includes(command.name),
+);

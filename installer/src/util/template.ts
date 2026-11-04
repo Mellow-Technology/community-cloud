@@ -21,6 +21,7 @@ import { parse as parseYaml } from "yaml";
 import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
+import { getListenAddresses } from "./gateway.ts";
 import { buildAllocationValues } from "./allocations.ts";
 import { buildObjectStorageValues } from "./objectStorage.ts";
 import { buildProjectSendValues } from "./projectsend.ts";
@@ -365,6 +366,13 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   // one renders as nothing and leaves Helm an empty setting.
   if (values.l2Announcements === undefined) {
     values.l2Announcements = announcesGatewayAddresses(rawConfig);
+  }
+
+  // The addresses the cluster Gateway listens on, from the same
+  // reading of the configuration as the pool they're taken from. See
+  // gateway.ts.
+  if (values.gatewayAddresses === undefined) {
+    values.gatewayAddresses = getListenAddresses(config);
   }
 
   // Which interfaces Cilium's datapath attaches to. Taken from the one
