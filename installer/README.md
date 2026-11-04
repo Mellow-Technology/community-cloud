@@ -179,6 +179,15 @@ How the outside world reaches the cluster. The `gateway` bundle turns
 this into a Cilium address pool, and on a home network an ARP
 announcement policy as well.
 
+The cluster Gateway, `cc-letsencrypt-web-gateway`, listens on every
+address here and in `network.externalIPs` that is a single address
+(`"203.0.113.10"`, a `/32` or `/128`, or a range that starts and stops
+in the same place), so each gateway node with an address of its own is
+another way in to the same applications. Give each one an A record.
+A wider CIDR or range is left to Cilium: the Gateway takes one address
+from it, and the rest go to any other LoadBalancer Service. With no
+single address at all, the Gateway takes whichever Cilium gives it.
+
 | Key | Meaning |
 |---|---|
 | `mode` | `floating` — the address is already on an interface of a gateway node, routed there by a provider. `port-forward` — a router maps ports to a LAN address nothing holds, and Cilium answers ARP for it. |
@@ -1095,8 +1104,17 @@ one machine a member:
 
 ```
 cluster-online → preflight → base → network → nebula → gpu
-              → registries → lvm → k3s → nodeLabels → node-joined
+              → registries → lvm → k3s → nodeLabels
+              → gateway-addresses → node-joined
 ```
+
+`gateway-addresses` is the one exception, because a gateway node
+usually comes with an address of its own and nothing reaches the
+cluster through it until it's in the address pool and on the cluster
+Gateway. It's the `gateway` bundle without the steps about nodes —
+the interface check is in `preflight`, and `nodeLabels` gives the node
+its gateway role — and it applies whatever the configuration says, so
+it changes nothing when no address was added.
 
 `nebula` puts the node on the cluster's mesh when it has one, so K3s
 registers it on its mesh address (see

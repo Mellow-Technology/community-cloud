@@ -97,6 +97,7 @@ cluster in service.
 | `k3s` | K3s, as a server or an agent depending on the node |
 | `cilium` | The Gateway API resources, then Cilium as the CNI |
 | `gateway` | A way into the cluster from outside |
+| `gateway-addresses` | The address pool and the cluster Gateway brought up to date, run by add-node |
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
 | `nodeLabels` | Roles, labels, region and zone, and what was detected |

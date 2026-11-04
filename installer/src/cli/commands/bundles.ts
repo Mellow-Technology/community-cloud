@@ -18,7 +18,7 @@ import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
-import { GatewayCommands } from "./GatewayNodes.ts";
+import { GatewayAddressCommands, GatewayCommands } from "./GatewayNodes.ts";
 import { PreflightCommands } from "./Preflight.ts";
 import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
@@ -201,6 +201,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "gateway",
     description: "Give the cluster a way in from outside, from the control plane",
     commands: GatewayCommands,
+  },
+  {
+    name: "gateway-addresses",
+    description: "Bring the gateway's address pool and the cluster Gateway up to date, from the control plane",
+    commands: GatewayAddressCommands,
+    checkedBy: "gateway",
   },
   {
     name: "gpu",

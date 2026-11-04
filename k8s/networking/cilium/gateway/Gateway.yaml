@@ -16,6 +16,19 @@ metadata:
 spec:
   # We use the default Cilium gateway
   gatewayClassName: cilium
+  # The addresses to listen on: every gateway address in the
+  # configuration that is a single address, from gatewayAddresses (see
+  # installer/src/util/gateway.ts). Each has to be in Cilium's pool,
+  # which the gateway bundle makes from the same list, or Cilium marks
+  # the Gateway as not programmed. With none, Cilium picks one from
+  # the pool.
+{{ if .Values.gatewayAddresses }}
+  addresses:
+{{ range .Values.gatewayAddresses }}
+    - type: IPAddress
+      value: "{{ . }}"
+{{ end }}
+{{ end }}
   # A Gateway has to have a listener of its own. This one matches no
   # real hostname; everything served is on a ListenerSet's.
   listeners:
