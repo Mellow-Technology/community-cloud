@@ -71,6 +71,16 @@ describe("with nothing configured", () => {
     assert.match(await build("install-cilium", config), /--version '1\.20\.1'/);
   });
 
+  it("upgrades a Cilium that's already there, at the same version", async () => {
+    const command = await build("install-cilium", config);
+    assert.match(command, /then cilium upgrade --version '1\.20\.1' --values /);
+    assert.match(command, /else cilium install --version '1\.20\.1' --values /);
+  });
+
+  it("stops if it can't tell whether Cilium is there", async () => {
+    assert.match(await build("install-cilium", config), /get secret -l owner=helm,name=cilium -o name\) \|\| \{/);
+  });
+
   it("pins the Gateway API", async () => {
     assert.match(await build("install-gateway-api", config), /\/v1\.6\.1\//);
   });

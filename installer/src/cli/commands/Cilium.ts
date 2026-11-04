@@ -108,6 +108,10 @@ const GATEWAY_API_CHANNEL = "standard";
 // reads it, and it holds nothing secret.
 const REMOTE_VALUES_PATH = "/tmp/cc-cilium-values.yaml";
 
+// Where the CLI puts Cilium, and what it calls the Helm release
+const CILIUM_NAMESPACE = "kube-system";
+const CILIUM_RELEASE = "cilium";
+
 // How long to wait for Cilium to report itself healthy
 const READY_TIMEOUT = "10m";
 
@@ -349,15 +353,30 @@ export const CiliumCommands: CommandSpec[] = [
   },
 
   /**
-   * Install Cilium itself.
+   * Install Cilium itself, or bring an installed one up to date.
+   *
+   * "cilium install" refuses a release that's already there, and
+   * running this bundle again is how a change to the values reaches a
+   * cluster. An upgrade keeps the last release's values and lays these
+   * over them, so what the CLI worked out for itself at install time
+   * stays as it was.
+   *
+   * Asking first rather than trying one and falling back, because a
+   * failed upgrade shouldn't be taken for a missing release. The
+   * failure to ask is its own exit for the same reason.
    */
   {
     name: "install-cilium",
-    description: "Install Cilium with the configured values",
+    description: "Install Cilium with the configured values, or upgrade it if it's there",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     command: (config: CloudConfig) => {
-      return `cilium install --version ${quoteForShell(getCiliumVersion(config))} --values ${REMOTE_VALUES_PATH}`;
+      const flags = `--version ${quoteForShell(getCiliumVersion(config))} --values ${REMOTE_VALUES_PATH}`;
+
+      return [
+        `releases=$(kubectl -n ${CILIUM_NAMESPACE} get secret -l owner=helm,name=${CILIUM_RELEASE} -o name) || { echo "Couldn't ask the cluster whether Cilium is installed" >&2; exit 1; }`,
+        `if [ -n "$releases" ]; then cilium upgrade ${flags}; else cilium install ${flags}; fi`,
+      ];
     },
     output: OutputType.Raw,
   },
