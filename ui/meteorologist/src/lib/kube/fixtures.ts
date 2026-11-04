@@ -844,6 +844,8 @@ export function fixtureClient(): KubeClient {
       return copy(created);
     },
 
+    whoAmI: async () => ({ username: "fixtures", groups: [] }),
+
     listRegions: async () => [...store().regions],
 
     getClusterUsage: async () => ({
