@@ -48,6 +48,7 @@ k8s/
 │   ├── lago/          # Billing
 │   ├── mattermost/    # Team chat
 │   ├── meteorologist/ # Community Cloud's web interface
+│   ├── methods/       # Projects, for people and bots
 │   ├── office/        # The cc-office namespace and its shared pieces
 │   ├── picoclaw/      # AI agent
 │   ├── plane/         # Projects

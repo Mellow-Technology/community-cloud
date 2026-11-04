@@ -44,6 +44,8 @@ domain:
   signing: "sign.example.com"
   # Plane hostname (derived: plane.<main>)
   plane: "plane.example.com"
+  # Methods, its API and its MCP endpoint (derived: methods.<main>)
+  methods: "methods.example.com"
   # Headlamp, signed into through Authentik (derived: headlamp.<main>)
   headlamp: "headlamp.example.com"
   # SeaweedFS's S3, for links to files in buckets (derived: s3.<main>)

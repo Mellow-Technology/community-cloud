@@ -216,6 +216,30 @@ no account. Documents are kept in the database, so it needs no volume,
 and completed ones are signed with a self-signed certificate the
 installer generates.
 
+## Methods (`methods/`)
+
+[Methods](https://github.com/Mellow-Technology/methods) is projects
+and work items, for people and the bots working with them. Install it
+with the `methods` package; it's reached at `values.domain.methods`.
+
+| File | What it is |
+|---|---|
+| `Methods.yaml` | The application: its web app, API and MCP endpoint, on one port. |
+| `Methods.database.yaml` | Its role and database in cc-postgres. |
+| `Methods.storage.yaml` | Its bucket in SeaweedFS, and the keys to it. |
+| `Methods.config.yaml` | Its configuration. |
+| `Methods.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+| `Methods.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+
+It signs in through Authentik with OpenID Connect, and only that way:
+passwords and sign up are off, and an account is made for whoever
+Authentik lets through. Whoever makes a workspace owns it. Bots
+connect to `/mcp` with access tokens their owners make in its
+settings. It migrates its own database on start, and serves the files
+in its bucket itself, so SeaweedFS stays inside the cluster. The route
+has no request time limit, since each browser holds its live updates
+open as one long request.
+
 ## ProjectSend (`projectsend/`)
 
 [ProjectSend](https://projectsend.org) is file sharing with clients.

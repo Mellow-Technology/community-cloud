@@ -933,6 +933,67 @@ const builtInPackages: PackageDefinition[] = [
     },
   },
   {
+    name: "methods",
+    description: "Projects and work items, for people and their bots, signed into through Authentik",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, and its files in a bucket in
+    // SeaweedFS. Nothing else: one process, with no queue or cache.
+    requires: ["cloudnative-pg", "seaweedfs"],
+    after: ["authentik"],
+
+    // No chart; the image is the whole application
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/methods/Methods.database.yaml",
+        "embed://apps/methods/Methods.storage.yaml",
+        "embed://apps/methods/Methods.config.yaml",
+        "embed://apps/methods/Methods.yaml",
+        "embed://apps/methods/Methods.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres, brought with it as Documenso's is
+      {
+        name: "methods-db",
+        description: "the Methods database role",
+        username: "methods",
+        labels: { "cnpg.io/reload": "true" },
+      },
+      {
+        name: "methods-oidc",
+        description: "the client Methods signs in to Authentik as",
+      },
+    ],
+
+    // Its bucket, then its own
+    ready: ["buckets.seaweed.seaweedfs.com/methods", "s3credentials.seaweed.seaweedfs.com/methods"],
+    rollout: ["deployment/methods"],
+
+    values: ["domain.methods", "domain.auth"],
+
+    app: {
+      title: "Methods",
+      url: "domain.methods",
+      signIn: SignIn.Authentik,
+      admin: {
+        how: "Everyone gets an account the first time they sign in through Authentik. Whoever makes a workspace owns it, and adds the others from its settings.",
+      },
+      note: "Bots connect to /mcp with access tokens made under Settings → Bots & MCP.",
+    },
+
+    authentik: {
+      blueprint: "embed://apps/methods/Methods.blueprint.yaml",
+      secret: "methods-oidc",
+      slug: "methods",
+    },
+  },
+  {
     name: "mattermost-operator",
     description: "The Mattermost operator, which runs Mattermost installations in any namespace",
     chart: { repo: "https://helm.mattermost.com", name: "mattermost-operator" },

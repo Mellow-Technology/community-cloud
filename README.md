@@ -94,7 +94,7 @@ community-cloud/
 │   └── package.json
 ├── k8s/                # Kubernetes manifests & Helm values
 │   ├── ai/             # vLLM GPU inference (AMD MI300), applied by hand
-│   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Headlamp, etc.)
+│   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Methods, Headlamp, etc.)
 │   ├── certs/          # cert-manager values and the cluster's Let's Encrypt issuer
 │   ├── crd/            # The Site CRD draft, not yet applied by anything
 │   ├── database/       # PostGIS
@@ -180,6 +180,7 @@ Webapp draft.
 | Twenty CRM | `cc-office` | `twenty` package — server and worker, on cc-postgres, Redis and a SeaweedFS bucket |
 | Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
 | Plane | `cc-office` | `plane` package — projects, on cc-postgres, Redis, RabbitMQ and a SeaweedFS bucket |
+| Methods | `cc-office` | `methods` package — projects, for people and bots, on cc-postgres and a SeaweedFS bucket, through Authentik |
 | Documenso | `cc-office` | `documenso` package — document signing, through Authentik |
 | ProjectSend | `cc-office` | `projectsend` package — file sharing with clients, through Authentik, on cc-mariadb, Redis and a volume or SeaweedFS bucket |
 | Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
