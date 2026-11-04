@@ -59,6 +59,7 @@ k8s/
 ├── database/Postgres/ # CloudNativePG clusters
 ├── k3s-config/        # Placeholder: the installer generates K3s's configuration
 ├── operators/         # Community Cloud's own operators: Cirrus
+├── monitoring/        # Prometheus, Alertmanager and Grafana
 ├── mq/                # Message queues: the RabbitMQ operators, and a placeholder for NATS
 ├── networking/        # CNI, the Gateway API, the mesh
 │   ├── cilium/        # Cilium, and gateway/ with the cluster Gateway

@@ -1,0 +1,56 @@
+# Alerts of Community Cloud's own, for what the chart's rules don't
+# know about.
+#
+# The descriptions say what's wrong in general rather than naming the
+# certificate or the node. Prometheus's own templating uses the same
+# double braces as the installer's, which would take it for one of
+# its own, and the alert's labels carry those names into the email
+# anyway.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: community-cloud
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  groups:
+    - name: certificates
+      rules:
+        # A month before Let's Encrypt's certificates run out is when
+        # cert-manager renews them, so one with two weeks left has
+        # already been failing for two
+        - alert: CertificateExpiringSoon
+          expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 24 * 3600
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: A certificate expires in less than two weeks
+            description: cert-manager should have renewed this certificate by now. Look at its CertificateRequest and Challenge for the reason.
+
+        # Long enough for a new hostname's DNS to settle. A certificate
+        # waiting on a "no such host" answer the resolvers have kept
+        # shows up here, and nowhere else: nothing has failed, so
+        # nothing else complains.
+        - alert: CertificateNotReady
+          expr: certmanager_certificate_ready_status{condition="False"} == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: A certificate has not been ready for an hour
+            description: Whatever uses this certificate may be unreachable. If it's a new hostname, look at whether its Challenge is stuck on a DNS lookup.
+
+    - name: storage
+      rules:
+        # TopoLVM volumes live on one node, so a full volume group can't
+        # be helped by space on another: new volumes on it just wait
+        - alert: VolumeGroupNearlyFull
+          expr: topolvm_volumegroup_available_bytes / topolvm_volumegroup_size_bytes < 0.1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: A node's volume group is more than 90% allocated
+            description: New volumes on this node will soon have nowhere to go, and volumes here can't use space on another node.

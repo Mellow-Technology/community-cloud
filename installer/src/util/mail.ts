@@ -125,6 +125,10 @@ export interface MailConfig {
  * - scheme: "smtps" or "smtp", which is how Symfony's mailer, and so
  *   Laravel's, says the same thing
  * - fromDomain: where mail comes from
+ * - username: the account's name, empty for a relay that takes mail
+ *   without one. Everything else reads it from the Secret. This is
+ *   for Alertmanager, which will take a password from a file but has
+ *   no way to do the same for a username; the password is never here.
  * - revision: changes whenever anything above, or the username, does.
  *   For a pod annotation, so applications restart and pick up a new
  *   server: Kubernetes doesn't restart anything for a changed
@@ -143,6 +147,7 @@ export interface MailValues {
   startTlsBit: string;
   scheme: string;
   fromDomain: string;
+  username: string;
   revision: string;
 }
 
@@ -253,6 +258,7 @@ export function buildMailValues(raw: Record<string, any>, namespace?: string): M
       startTlsBit: "0",
       scheme: "smtp",
       fromDomain: mainDomain,
+      username: "",
       revision: "none",
     };
   }
@@ -272,6 +278,7 @@ export function buildMailValues(raw: Record<string, any>, namespace?: string): M
     startTlsBit: security === MailSecurity.StartTls ? "1" : "0",
     scheme: security === MailSecurity.Tls ? "smtps" : "smtp",
     fromDomain,
+    username: mail.username ?? "",
     revision: createHash("sha256")
       .update([mail.host, port, security, mail.username ?? "", fromDomain].join("\n"))
       .digest("hex")

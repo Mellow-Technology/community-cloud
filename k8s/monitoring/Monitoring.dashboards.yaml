@@ -1,0 +1,89 @@
+# Dashboards for what doesn't bring its own. Cilium and CloudNativePG
+# ship theirs with their charts, and Grafana finds any ConfigMap
+# labelled "grafana_dashboard" in any namespace.
+#
+# Kept small and written out in full. Dashboards from grafana.com are
+# fetched as Grafana starts, which ties it to the internet, and big
+# exported ones are hard to review. Legends are "__auto" because
+# Grafana's own legend templates use the same double braces as the
+# installer's; for the same reason the JSON is laid out so that no two
+# opening braces are ever next to each other.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-dashboards
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+    grafana_dashboard: "1"
+data:
+  cert-manager.json: |
+    {
+      "uid": "cc-certificates",
+      "title": "Certificates",
+      "tags": ["community-cloud"],
+      "timezone": "browser",
+      "schemaVersion": 41,
+      "refresh": "5m",
+      "time": { "from": "now-7d", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Not ready",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(certmanager_certificate_ready_status{condition=\"False\"} == 1) or vector(0)"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "table",
+          "title": "Days until each certificate expires",
+          "gridPos": { "h": 12, "w": 18, "x": 6, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sort((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400)",
+              "instant": true,
+              "format": "table"
+            }
+          ]
+        }
+      ]
+    }
+  topolvm.json: |
+    {
+      "uid": "cc-node-storage",
+      "title": "Node storage",
+      "tags": ["community-cloud"],
+      "timezone": "browser",
+      "schemaVersion": 41,
+      "refresh": "5m",
+      "time": { "from": "now-7d", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Allocated, by node and device class",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "1 - topolvm_volumegroup_available_bytes / topolvm_volumegroup_size_bytes",
+              "legendFormat": "__auto"
+            }
+          ]
+        }
+      ]
+    }

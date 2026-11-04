@@ -73,6 +73,7 @@ export const clusterSection: ConfigSection = {
       { key: "methods", label: "Methods (projects, for people and bots)", prefix: "methods" },
       { key: "files", label: "ProjectSend (file sharing)", prefix: "files" },
       { key: "headlamp", label: "Headlamp (cluster interface)", prefix: "headlamp" },
+      { key: "grafana", label: "Grafana (metrics and alerts)", prefix: "grafana" },
       { key: "storage", label: "S3 object storage (SeaweedFS)", prefix: "s3" },
     ];
 

@@ -24,6 +24,24 @@ k8sClientRateLimit:
   burst: 600  # Maximum burst rate for API requests
 operator:
   replicas: 1  # Ensures a single replica of the Cilium operator, suitable for small clusters
+  prometheus:
+    enabled: true
+  dashboards:
+    enabled: true
+
+# Metrics, for the monitoring package's PodMonitors, and Cilium's
+# Grafana dashboards, as ConfigMaps Grafana finds by their label. The
+# PodMonitors aren't asked for here because this chart goes first,
+# long before the resource type they're written in exists.
+#
+# These listen on 9962 and 9963 on every interface of every node: the
+# pods share the node's network, and Cilium won't bind to one address
+# per node. Hubble's metrics stay off, since they label traffic by what
+# it's going between.
+prometheus:
+  enabled: true
+dashboards:
+  enabled: true
 
 # Ensures smooth rolling updates of Cilium components
 # Ensures that Cilium pods are updated properly during upgrades
