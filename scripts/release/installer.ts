@@ -18,11 +18,15 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { CIRRUS_IMAGE, CIRRUS_MANIFEST } from "./cirrus";
+import { METEOROLOGIST_IMAGE, METEOROLOGIST_MANIFEST } from "./meteorologist";
 import { type CheckContext, ROOT, main, packageJsonPlace, tagFor } from "./release";
 
 // Images of ours the embedded manifests pin, and the release that
 // publishes each
-const PINNED_IMAGES = [{ component: "cirrus", title: "Cirrus", file: CIRRUS_MANIFEST, pattern: CIRRUS_IMAGE }];
+const PINNED_IMAGES = [
+  { component: "cirrus", title: "Cirrus", file: CIRRUS_MANIFEST, pattern: CIRRUS_IMAGE },
+  { component: "meteorologist", title: "Meteorologist", file: METEOROLOGIST_MANIFEST, pattern: METEOROLOGIST_IMAGE },
+];
 
 /**
  * Every pinned image whose release isn't out.

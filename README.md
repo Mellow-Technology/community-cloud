@@ -70,6 +70,7 @@ Object storage is provided by [SeaweedFS](https://github.com/seaweedfs/seaweedfs
 | PostgreSQL + PostGIS | CloudNative-PG | `cc-postgres`, single-instance, 30Gi SSD by default, PostGIS 3.6 extension |
 | Redis | Opstree Operator | Standalone, 5Gi SSD |
 | RabbitMQ | RabbitMQ Cluster Operator | `rabbitmq`, single node, 5Gi SSD |
+| MariaDB | MariaDB Operator | `cc-mariadb`, single-instance, 10Gi SSD by default, for the applications that only run on MySQL |
 
 ## Project Structure
 
@@ -93,7 +94,7 @@ community-cloud/
 │   └── package.json
 ├── k8s/                # Kubernetes manifests & Helm values
 │   ├── ai/             # vLLM GPU inference (AMD MI300), applied by hand
-│   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Headlamp, etc.)
+│   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Methods, Headlamp, etc.)
 │   ├── certs/          # cert-manager values and the cluster's Let's Encrypt issuer
 │   ├── crd/            # The Site CRD draft, not yet applied by anything
 │   ├── database/       # PostGIS
@@ -179,7 +180,9 @@ Webapp draft.
 | Twenty CRM | `cc-office` | `twenty` package — server and worker, on cc-postgres, Redis and a SeaweedFS bucket |
 | Lago | `cc-office` | `lago` package — billing, on cc-postgres, Redis and a SeaweedFS bucket |
 | Plane | `cc-office` | `plane` package — projects, on cc-postgres, Redis, RabbitMQ and a SeaweedFS bucket |
+| Methods | `cc-office` | `methods` package — projects, for people and bots, on cc-postgres and a SeaweedFS bucket, through Authentik |
 | Documenso | `cc-office` | `documenso` package — document signing, through Authentik |
+| ProjectSend | `cc-office` | `projectsend` package — file sharing with clients, through Authentik, on cc-mariadb, Redis and a volume or SeaweedFS bucket |
 | Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
 | Headlamp | `community-cloud` | `headlamp` package — cluster UI, signed into through Authentik, with our plugins |
 | Picoclaw | `cc-office` | `picoclaw` package — AI agent, behind an Authentik gate |
@@ -204,5 +207,5 @@ None of these has run on real hardware in its current form yet.
 - **CLI Framework**: Commander.js, Inquirer, node-ssh
 - **Storage**: TopoLVM, SeaweedFS
 - **Networking**: Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale
-- **Databases and queues**: CloudNative-PG (PostgreSQL/PostGIS), Redis (Opstree), RabbitMQ (its Cluster Operator)
+- **Databases and queues**: CloudNative-PG (PostgreSQL/PostGIS), MariaDB (its operator), Redis (Opstree), RabbitMQ (its Cluster Operator)
 - **AI**: vLLM (ROCm/AMD GPU)

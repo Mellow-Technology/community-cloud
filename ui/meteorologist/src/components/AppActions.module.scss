@@ -1,0 +1,22 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-space-4);
+}
+
+.heading {
+  margin: 0 0 var(--gm-space-2);
+  font-size: 0.875rem;
+  font-weight: var(--gm-weight-medium);
+}
+
+.list {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--gm-color-text-subtle);
+  font-size: 0.875rem;
+
+  li + li {
+    margin-top: var(--gm-space-1);
+  }
+}

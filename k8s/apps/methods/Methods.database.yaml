@@ -1,0 +1,39 @@
+# Methods's role and database, in the shared cc-postgres cluster.
+#
+# Methods runs its own migrations each time it starts, so the database
+# only has to exist and belong to it.
+#
+# The role is here rather than in office/Office.roles.yaml, as for
+# Documenso, so that installing Methods on its own brings everything
+# it connects with. Its password is the methods-db Secret the
+# installer makes for the methods package; why the role takes it from
+# a Secret, and why the username has to match, is in Office.roles.yaml.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  name: methods
+  cluster:
+    name: cc-postgres
+  ensure: present
+  login: true
+  comment: Methods
+  passwordSecret:
+    name: methods-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  name: methods
+  owner: methods
+  cluster:
+    name: cc-postgres

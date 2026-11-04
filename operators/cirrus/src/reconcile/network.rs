@@ -30,7 +30,8 @@ pub const GATEWAY_LABEL_VALUE: &str = "weDontNeedRoads";
 
 /// Make the listeners and routes, or remove them when the application
 /// no longer has a hostname. Returns the address it's served on.
-pub async fn ensure(ctx: &Context, app: &WebApplication) -> Result<Option<String>> {
+/// `port` is the Service's, which the route points at.
+pub async fn ensure(ctx: &Context, app: &WebApplication, port: i32) -> Result<Option<String>> {
     let (namespace, name) = super::identity(app);
     if app.spec.hostnames.is_empty() {
         for (kind, object_name) in [
@@ -56,13 +57,13 @@ pub async fn ensure(ctx: &Context, app: &WebApplication) -> Result<Option<String
         )));
     }
 
-    for (kind, object) in build(app, &ctx.settings) {
+    for (kind, object) in build(app, &ctx.settings, port) {
         resources::apply_dynamic(&ctx.client, kind, object).await?;
     }
     Ok(Some(format!("https://{}", app.spec.hostnames[0])))
 }
 
-pub fn build(app: &WebApplication, settings: &Settings) -> Vec<(&'static resources::Kind, Value)> {
+pub fn build(app: &WebApplication, settings: &Settings, port: i32) -> Vec<(&'static resources::Kind, Value)> {
     let (namespace, name) = super::identity(app);
     let hostnames = &app.spec.hostnames;
     let metadata = |object_name: String, annotations: Value| {
@@ -127,7 +128,7 @@ pub fn build(app: &WebApplication, settings: &Settings) -> Vec<(&'static resourc
                 "spec": {
                     "parentRefs": parents("https"),
                     "hostnames": hostnames,
-                    "rules": [{ "backendRefs": [{ "name": name, "port": app.spec.port }] }],
+                    "rules": [{ "backendRefs": [{ "name": name, "port": port }] }],
                 },
             }),
         ),
@@ -158,7 +159,7 @@ mod tests {
     fn a_listener_pair_per_hostname() {
         let mut app = app();
         app.spec.hostnames = vec!["shop.example.com".into(), "www.shop.example.com".into()];
-        let built = build(&app, &Settings::default());
+        let built = build(&app, &Settings::default(), 8080);
         let listeners = built[0].1["spec"]["listeners"].as_array().unwrap();
         assert_eq!(listeners.len(), 4);
         assert_eq!(

@@ -50,7 +50,7 @@ const UPDATED_KEY = "updated";
 const INSTALLER_KEY = "installer";
 
 // What wrote it, so a cluster built by an older installer can say so
-const INSTALLER_VERSION = "1.0.0";
+export const INSTALLER_VERSION = "1.0.0";
 
 /**
  * What the cluster has stored about itself.

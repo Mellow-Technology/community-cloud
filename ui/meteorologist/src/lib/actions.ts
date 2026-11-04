@@ -18,8 +18,28 @@ import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 
 import { CAPABILITIES, capabilityLabelPatch, type CapabilityId } from "./capabilities";
+import {
+  credentialsData,
+  domainConflicts,
+  fromDnsForm,
+  validateDnsForm,
+  withNamespace,
+  type DnsProviderForm,
+} from "./dns/providers";
+import { DNS_NAMESPACE } from "./dns/types";
+import { gitLabFor } from "./gitlab/api";
+import {
+  CONNECTION_KEY,
+  CONNECTION_LABEL,
+  URL_ANNOTATION,
+  connectionProblem,
+  connectionsIn,
+  imageFor,
+  normaliseUrl,
+  type GitLabProject,
+} from "./gitlab/connections";
 import { getKube } from "./kube";
-import { describeError, type KubeClient } from "./kube/client";
+import { describeError, isForbidden, type KubeClient } from "./kube/client";
 import {
   CREATED_BY,
   DEFAULT_SERVICE_ACCOUNT,
@@ -35,7 +55,10 @@ import {
   validateNamespaceForm,
   type NamespaceForm,
 } from "./namespace/settings";
+import { findAdminSecret, readPackageRecords } from "./office";
+import { confirmsDeletion } from "./webapp/deletion";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
+import { REGISTRY_ANNOTATION, normaliseRegistry } from "./webapp/registry";
 
 /**
  * What an action did: done, with anything worth handing back, or not,
@@ -123,46 +146,230 @@ export async function saveWebApplication(
 }
 
 /**
- * Makes the Secret holding a GitLab access token, for an
- * application's source.
+ * Deletes a WebApplication, once its name has been typed to confirm.
  *
- * The token goes straight from the form to the API server; nothing
- * here keeps or logs it.
+ * The name is checked here too, so nothing but the confirm dialog can
+ * delete through this. Only the WebApplication is deleted; Cirrus and
+ * Kubernetes take what it made with it (see lib/webapp/deletion.ts).
  *
  * @param namespace
  * @param name
- * @param key
- * @param token
- * @param app the application it's for, recorded on the Secret
+ * @param typed what was typed to confirm
  * @returns
  */
-export async function createTokenSecret(
+export async function deleteWebApplication(namespace: string, name: string, typed: string): Promise<ActionResult> {
+  if (!confirmsDeletion(typed, name)) {
+    return { ok: false, error: `Type ${name} to delete it.` };
+  }
+  const result = await run(async () => {
+    await (await getKube()).deleteWebApplication(namespace, name);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * A namespace's GitLab connection, with its token, for a call made
+ * here and then.
+ *
+ * @param kube
+ * @param namespace
+ * @param name
+ * @returns
+ */
+async function connectionWithToken(
+  kube: KubeClient,
   namespace: string,
   name: string,
-  key: string,
+): Promise<{ url: string; token: string }> {
+  const connection = connectionsIn(await kube.listSecrets(namespace)).find((each) => each.name === name);
+  if (connection === undefined) {
+    throw new Error(`${name} isn't a GitLab connection in ${namespace}.`);
+  }
+  const token = await kube.readSecretValue(namespace, name, CONNECTION_KEY);
+  if (token === undefined || token.trim() === "") {
+    throw new Error(`${name} has no token in it. Remove it and add it again.`);
+  }
+  return { url: connection.url, token: token.trim() };
+}
+
+/**
+ * Adds a GitLab connection to a namespace: a Secret with the token,
+ * marked as a connection, once GitLab has said the token works.
+ *
+ * The token goes straight from the form to GitLab and the API server;
+ * nothing here keeps or logs it.
+ *
+ * @param namespace
+ * @param name
+ * @param url the GitLab instance
+ * @param token
+ * @returns how many projects the token can see
+ */
+export async function createGitLabConnection(
+  namespace: string,
+  name: string,
+  url: string,
   token: string,
-  app: string,
-): Promise<ActionResult> {
-  if (token.trim() === "") {
-    return { ok: false, error: "Paste the access token first." };
+): Promise<ActionResult<{ projects: number }>> {
+  const problem = connectionProblem(name, url, token);
+  if (problem !== undefined) {
+    return { ok: false, error: problem };
   }
-  if (!/^[-._a-zA-Z0-9]+$/.test(key)) {
-    return { ok: false, error: "A Secret's key is letters, digits, '-', '_' and '.'." };
-  }
-  return run(async () => {
+  const instance = normaliseUrl(url);
+  const result = await run(async () => {
+    const projects = await gitLabFor(instance, token.trim()).listProjects();
     await (
       await getKube()
     ).createSecret(
       namespace,
-      name,
-      { [key]: token.trim() },
-      {
-        "app.kubernetes.io/created-by": "meteorologist",
-        ...(app !== "" ? { "app.kubernetes.io/part-of": app } : {}),
-      },
+      name.trim(),
+      { [CONNECTION_KEY]: token.trim() },
+      { ...CREATED_BY, [CONNECTION_LABEL]: "true" },
+      "Opaque",
+      { [URL_ANNOTATION]: instance },
     );
+    return { projects: projects.length };
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Removes a GitLab connection, unless an application still updates
+ * through it.
+ *
+ * @param namespace
+ * @param name
+ * @returns
+ */
+export async function deleteGitLabConnection(namespace: string, name: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const kube = await getKube();
+    if (!connectionsIn(await kube.listSecrets(namespace)).some((each) => each.name === name)) {
+      throw new Error(`${name} isn't a GitLab connection in ${namespace}.`);
+    }
+    const users = (await kube.listWebApplications(namespace))
+      .filter((app) => app.spec.source?.gitlab?.tokenSecret.name === name)
+      .map((app) => app.metadata.name);
+    if (users.length > 0) {
+      throw new Error(`${users.join(", ")} still update through ${name}. Switch them to another connection first.`);
+    }
+    await kube.deleteSecret(namespace, name);
     return undefined;
   });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * The projects a connection's token can see.
+ *
+ * @param namespace
+ * @param connection
+ * @param search
+ * @returns
+ */
+export async function findGitLabProjects(
+  namespace: string,
+  connection: string,
+  search: string,
+): Promise<ActionResult<GitLabProject[]>> {
+  return run(async () => {
+    const { url, token } = await connectionWithToken(await getKube(), namespace, connection);
+    return gitLabFor(url, token).listProjects(search);
+  });
+}
+
+/**
+ * A project's images, and which of them to run.
+ *
+ * @param namespace
+ * @param connection
+ * @param project
+ * @returns
+ */
+export async function findGitLabImages(
+  namespace: string,
+  connection: string,
+  project: GitLabProject,
+): Promise<ActionResult<{ images: string[]; suggested?: string }>> {
+  return run(async () => {
+    const { url, token } = await connectionWithToken(await getKube(), namespace, connection);
+    const repositories = await gitLabFor(url, token).listRepositories(project.id);
+    const suggested = imageFor(project, repositories);
+    // Before the first image there are no repositories, only where one will go
+    const images = repositories.length > 0 ? repositories : suggested ? [suggested] : [];
+    return { images, suggested };
+  });
+}
+
+/**
+ * Gives a namespace a DNS provider of its own: its credentials, in a
+ * Secret beside where Cirrus runs ExternalDNS, then the DnsProvider
+ * that publishes the namespace with them.
+ *
+ * @param namespace
+ * @param form
+ * @returns
+ */
+export async function createDnsProvider(namespace: string, form: DnsProviderForm): Promise<ActionResult> {
+  const result = await run(async () => {
+    const kube = await getKube();
+    const existing = await kube.listDnsProviders();
+    const first = Object.values(validateDnsForm(form, existing, namespace))[0];
+    if (first !== undefined) {
+      throw new Error(first);
+    }
+    const provider = fromDnsForm(form, namespace);
+    // Credentials go straight from the form to the API server; nothing
+    // here keeps or logs them
+    await kube.applySecret(DNS_NAMESPACE, provider.spec.credentialsSecret ?? "", credentialsData(form), {
+      ...CREATED_BY,
+      "cirrus.community-cloud.technology/dns-provider": provider.metadata.name,
+    });
+    await kube.applyDnsProvider(provider);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Has an existing DNS provider publish a namespace's routes, or stop.
+ *
+ * @param namespace
+ * @param provider the DnsProvider's name
+ * @param publish
+ * @returns
+ */
+export async function setDnsPublishing(namespace: string, provider: string, publish: boolean): Promise<ActionResult> {
+  const result = await run(async () => {
+    const kube = await getKube();
+    const providers = await kube.listDnsProviders();
+    const current = providers.find((each) => each.metadata.name === provider);
+    if (current === undefined) {
+      throw new Error(`There's no DNS provider called ${provider}.`);
+    }
+    const changed = withNamespace(current, namespace, publish);
+    const conflict = domainConflicts(
+      providers.map((each) => (each === current ? changed : each)),
+      provider,
+    )[0];
+    if (publish && conflict !== undefined) {
+      throw new Error(conflict);
+    }
+    await kube.applyDnsProvider({
+      apiVersion: changed.apiVersion,
+      kind: changed.kind,
+      metadata: { name: changed.metadata.name },
+      spec: changed.spec,
+    });
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
 }
 
 /**
@@ -203,6 +410,8 @@ async function applyNamespaceSettings(kube: KubeClient, form: NamespaceForm): Pr
       { ".dockerconfigjson": dockerConfigJson(registry) },
       CREATED_BY,
       PULL_SECRET_TYPE,
+      // So the application form can tell which images it's for
+      { [REGISTRY_ANNOTATION]: normaliseRegistry(registry.server) },
     );
   }
   await kube.setImagePullSecrets(namespace, DEFAULT_SERVICE_ACCOUNT, defaultPullSecrets(form));
@@ -227,7 +436,15 @@ export async function createNamespace(form: NamespaceForm): Promise<ActionResult
   const kube = await getKube();
 
   const created = await run(() =>
-    kube.createNamespace(name, initialLabels(form), placementPatch(form, undefined) as Record<string, string>),
+    kube.createNamespace(
+      name,
+      {
+        ...initialLabels(form),
+        // A new namespace has nothing to take off, so nothing's null
+        ...(placementPatch(form, undefined).labels as Record<string, string>),
+      },
+      {},
+    ),
   );
   if (!created.ok) {
     return created;
@@ -256,13 +473,60 @@ export async function saveNamespaceSettings(form: NamespaceForm): Promise<Action
   const result = await run(async () => {
     const kube = await getKube();
     const namespace = await kube.getNamespace(form.name.trim());
-    const placement = placementPatch(form, namespace.metadata.annotations);
-    if (Object.keys(placement).length > 0) {
-      await kube.patchNamespaceAnnotations(namespace.metadata.name, placement);
+    const placement = placementPatch(form, namespace.metadata);
+    if (Object.keys(placement.labels).length > 0) {
+      await kube.patchNamespaceLabels(namespace.metadata.name, placement.labels);
+    }
+    if (Object.keys(placement.annotations).length > 0) {
+      await kube.patchNamespaceAnnotations(namespace.metadata.name, placement.annotations);
     }
     await applyNamespaceSettings(kube, form);
     return undefined;
   });
   revalidatePath("/", "layout");
   return result;
+}
+
+/**
+ * An office application's administrator password, or console token,
+ * for someone allowed to read it.
+ *
+ * Only ever the Secret the package's record names, so the browser
+ * can't ask for any other. Read as the person asking: whether they
+ * see it is their RBAC's to decide, which for a Secret in cc-office
+ * means cluster admins. Read-only, and not logged.
+ *
+ * @param packageName
+ * @returns
+ */
+export async function revealAdminCredential(packageName: string): Promise<ActionResult<string>> {
+  if (typeof packageName !== "string" || !/^[a-z0-9-]+$/.test(packageName)) {
+    return { ok: false, error: "That isn't a package name." };
+  }
+
+  try {
+    const kube = await getKube();
+    const secret = findAdminSecret(await readPackageRecords(kube), packageName);
+    if (secret === undefined) {
+      return { ok: false, error: `${packageName} has no administrator's password on record.` };
+    }
+
+    const value = await kube.readSecretValue(secret.namespace, secret.name, secret.key);
+    if (value === undefined) {
+      return {
+        ok: false,
+        error: `There's no "${secret.key}" in the Secret ${secret.name} in ${secret.namespace}. Re-running ${packageName}'s install makes it.`,
+      };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    unstable_rethrow(error);
+    if (isForbidden(error)) {
+      return {
+        ok: false,
+        error: "Only people who can read Secrets in this application's namespace, cluster admins, can see this.",
+      };
+    }
+    return { ok: false, error: describeError(error) };
+  }
 }

@@ -1,0 +1,58 @@
+# ProjectSend's database, in the shared MariaDB.
+#
+# ProjectSend runs on MySQL alone, so this is in cc-mariadb rather than
+# cc-postgres (see apps/office/MariaDB.yaml). The operator makes the
+# database, a user with the password in the projectsend-db Secret, and
+# a grant of everything on that one database and nothing else.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: Database
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  mariaDbRef:
+    name: cc-mariadb
+  name: projectsend
+  characterSet: utf8mb4
+  collate: utf8mb4_unicode_ci
+  # Deleting this resource leaves the database, and everything in it,
+  # as removing a bucket leaves its files
+  cleanupPolicy: Skip
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: User
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  mariaDbRef:
+    name: cc-mariadb
+  name: projectsend
+  # From any pod: the MariaDB only answers inside the cluster, and it's
+  # the password that keeps the other applications out
+  host: "%"
+  passwordSecretKeyRef:
+    name: projectsend-db
+    key: password
+  maxUserConnections: 50
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: Grant
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  mariaDbRef:
+    name: cc-mariadb
+  privileges:
+    - "ALL PRIVILEGES"
+  database: projectsend
+  table: "*"
+  username: projectsend
+  host: "%"

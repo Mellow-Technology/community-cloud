@@ -1,6 +1,9 @@
 // The frame around every page
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-space-2);
   font-family: var(--gm-font-display);
   font-weight: var(--gm-weight-heading);
   font-size: var(--gm-text-lg);

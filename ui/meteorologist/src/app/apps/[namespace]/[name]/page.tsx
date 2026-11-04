@@ -7,7 +7,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Disclosure } from "gui-mellow/Accordion";
 import { Alert } from "gui-mellow/Alert";
-import { Button } from "gui-mellow/Button";
 import { Card } from "gui-mellow/Card";
 import { CodeBlock } from "gui-mellow/CodeBlock";
 import { Grid } from "gui-mellow/Grid";
@@ -16,15 +15,20 @@ import { Table } from "gui-mellow/Table";
 import { TagList } from "gui-mellow/Tag";
 import { stringify } from "yaml";
 
+import { AppActions } from "@/components/AppActions";
 import { DetailList } from "@/components/DetailList";
+import { CertificateBadge } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
-import { isNotFound, settle } from "@/lib/kube/client";
+import { describeError, isNotFound, settle } from "@/lib/kube/client";
+import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
+import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
+import { deletionSummary } from "@/lib/webapp/deletion";
 import { appHealth } from "@/lib/webapp/health";
-import { requestedServices, specImage } from "@/lib/webapp/present";
+import { portLabel, requestedServices, specImage } from "@/lib/webapp/present";
 
 interface Params {
   namespace: string;
@@ -61,7 +65,10 @@ function when(iso: string | undefined): string | undefined {
 export default async function AppPage({ params }: { params: Promise<Params> }) {
   const { namespace, name } = await params;
   const kube = await getKube();
-  const found = await settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name)));
+  const [found, certificates] = await Promise.all([
+    settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
+    settle(() => kube.listCertificates(decodeURIComponent(namespace))),
+  ]);
 
   if (!found.ok) {
     if (isNotFound(found.error)) {
@@ -77,6 +84,7 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
 
   const app = found.value;
   const health = appHealth(app);
+  const certificate = certificates.ok ? certificateStatus(app, findCertificate(app, certificates.value)) : undefined;
   const status = app.status;
   const gitlab = app.spec.source?.gitlab;
   const editHref = `/apps/${namespace}/${name}/edit`;
@@ -88,14 +96,14 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
         title={app.metadata.name}
         back={{ href: "/apps", label: "Applications" }}
         actions={
-          <>
-            {status?.url && (
-              <Button href={status.url} variant="secondary" target="_blank" rel="noreferrer">
-                Open
-              </Button>
-            )}
-            <Button href={editHref}>Edit</Button>
-          </>
+          <AppActions
+            namespace={app.metadata.namespace ?? decodeURIComponent(namespace)}
+            name={app.metadata.name}
+            url={status?.url}
+            editHref={editHref}
+            summary={deletionSummary(app)}
+            deleting={health.state === "deleting"}
+          />
         }
       />
 
@@ -108,6 +116,17 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
           <DetailList
             items={[
               { label: "Address", value: status?.url && <a href={status.url}>{status.url}</a> },
+              {
+                label: "Certificate",
+                value: !app.spec.hostnames?.length ? undefined : !certificates.ok ? (
+                  describeError(certificates.error)
+                ) : (
+                  <>
+                    <CertificateBadge status={certificate} />
+                    {certificate?.message && <span className={styles.detail}>{certificate.message}</span>}
+                  </>
+                ),
+              },
               { label: "Running", value: status?.deployedImage && <code>{status.deployedImage}</code> },
               { label: "Spec image", value: <code>{specImage(app)}</code> },
               {
@@ -120,7 +139,7 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
               },
               { label: "Migration job", value: status?.migrationJob && <code>{status.migrationJob}</code> },
               { label: "Replicas", value: String(app.spec.replicas ?? 1) },
-              { label: "Port", value: String(app.spec.port ?? 8080) },
+              { label: "Port", value: portLabel(app) },
               { label: "Health check", value: app.spec.healthCheck?.path && <code>{app.spec.healthCheck.path}</code> },
               { label: "Last checked", value: when(status?.lastChecked) },
             ]}
@@ -137,6 +156,16 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
               {
                 label: "Hostnames",
                 value: app.spec.hostnames?.length ? <TagList tags={app.spec.hostnames} /> : undefined,
+              },
+              {
+                label: "Database",
+                value:
+                  app.spec.postgres === undefined ? undefined : (
+                    <>
+                      <code>{postgresDatabase(app.metadata.name)}</code>, its own, on {namespace}&apos;s shared Postgres
+                      server, <code>{POSTGRES_CLUSTER}</code>
+                    </>
+                  ),
               },
               { label: "Bucket quota", value: app.spec.bucket?.quota },
               {

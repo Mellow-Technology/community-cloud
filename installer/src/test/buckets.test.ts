@@ -25,7 +25,15 @@ import { loadFixtureConfig } from "./helpers.ts";
  * Every document in some manifests, rendered as an install would.
  */
 async function render(...paths: string[]): Promise<any[]> {
-  const config = await loadFixtureConfig();
+  return renderWith({}, ...paths);
+}
+
+/**
+ * The same, for a configuration that says something the fixture
+ * doesn't — ProjectSend's files in its bucket rather than on a volume.
+ */
+async function renderWith(overrides: Record<string, unknown>, ...paths: string[]): Promise<any[]> {
+  const config = await loadFixtureConfig(overrides);
   return paths.flatMap((path) =>
     parseAllDocuments(renderInstallerFile(config, path, { templateNamespace: "cc-office" })).map((document) => {
       assert.deepEqual(document.errors, [], path);
@@ -53,7 +61,14 @@ function secretKeyRefs(value: any): [string, string][] {
 
 // Most read the keys from the Secret themselves. Mattermost names the
 // Secret to its operator, which reads it under its own key names.
-const APPLICATIONS: { name: string; bucket: string; uses: string[]; operatorReads?: boolean }[] = [
+// ProjectSend only has a bucket when the configuration asks for one.
+const APPLICATIONS: {
+  name: string;
+  bucket: string;
+  uses: string[];
+  operatorReads?: boolean;
+  overrides?: Record<string, unknown>;
+}[] = [
   { name: "Lago", bucket: "embed://apps/lago/Lago.bucket.yaml", uses: ["embed://apps/lago/Lago.yaml"] },
   { name: "Twenty", bucket: "embed://apps/twenty/Twenty.storage.yaml", uses: ["embed://apps/twenty/Twenty.yaml"] },
   {
@@ -67,12 +82,18 @@ const APPLICATIONS: { name: string; bucket: string; uses: string[]; operatorRead
     bucket: "embed://apps/authentik/Authentik.storage.yaml",
     uses: ["embed://apps/authentik/Authentik.values.yaml"],
   },
+  {
+    name: "ProjectSend",
+    bucket: "embed://apps/projectsend/ProjectSend.storage.yaml",
+    uses: ["embed://apps/projectsend/ProjectSend.yaml"],
+    overrides: { projectsend: { storage: "s3" } },
+  },
 ];
 
 describe("an application's bucket", () => {
   for (const application of APPLICATIONS) {
     describe(application.name, async () => {
-      const requests = await render(application.bucket);
+      const requests = await renderWith(application.overrides ?? {}, application.bucket);
       const [seaweed] = await render("embed://storage/SeaweedFS/SeaweedFS.yaml");
       const identity = requests.find((document) => document.kind === "S3Identity");
       const credentials = requests.find((document) => document.kind === "S3Credentials");
@@ -104,7 +125,7 @@ describe("an application's bucket", () => {
           return;
         }
 
-        const keys = secretKeyRefs(await render(...application.uses))
+        const keys = secretKeyRefs(await renderWith(application.overrides ?? {}, ...application.uses))
           .filter(([name]) => name === credentials.spec.secretRef.name)
           .map(([, key]) => key);
 

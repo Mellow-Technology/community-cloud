@@ -10,7 +10,7 @@ import { CommandPurpose, CommandSpec } from "./Command.ts";
 import CloudConfig from "../../util/CloudConfig.ts";
 
 // Command Bundles
-import { K3sCommands } from "./K3s.ts";
+import { ClusterSignInCommands, K3sCommands } from "./K3s.ts";
 import { ClusterOnlineCommands, NodeJoinedCommands } from "./AddNode.ts";
 import { BasePackageCommands } from "./BasePackages.ts";
 import { NodeLabelCommands } from "./NodeLabels.ts";
@@ -18,14 +18,15 @@ import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
 import { CiliumCommands } from "./Cilium.ts";
 import { GpuInfoCommands } from "./GpuInfo.ts";
-import { GatewayCommands } from "./GatewayNodes.ts";
+import { GatewayAddressCommands, GatewayCommands } from "./GatewayNodes.ts";
 import { PreflightCommands } from "./Preflight.ts";
 import { ClusterConfigCommands } from "./ClusterConfig.ts";
 import { HelmInstallCommands } from "./Helm.install.ts";
-import { HelmCommands, buildSinglePackageBundle } from "./Helm.ts";
+import { HelmCommands, buildPackagesBundle, buildSinglePackageBundle } from "./Helm.ts";
+import { PackageRecordCommands } from "./PackageRecord.ts";
 import { RegistryCommands } from "./Registries.ts";
 import { NebulaCommands } from "./Nebula.ts";
-import { NebulaNetworkCommands } from "./NebulaNetwork.ts";
+import { NebulaNetworkCommands, usesNebula } from "./NebulaNetwork.ts";
 import { DrainCommands } from "./Drain.ts";
 import { K3sUninstallCommands, NodeRemovedCommands } from "./Uninstall.ts";
 import { CleanCommands, StorageRemoveCommands } from "./Clean.ts";
@@ -174,6 +175,12 @@ const builtInBundles: BundleDefinition[] = [
     commands: ClusterOnlineCommands,
   },
   {
+    name: "cluster-sign-in",
+    description: "Rewrite the API server's sign in settings on each server, without reinstalling K3s",
+    commands: ClusterSignInCommands,
+    checkedBy: "k3s",
+  },
+  {
     name: "dns",
     description: "Install ExternalDNS for each configured DNS provider and namespace",
     commands: DnsCommands,
@@ -194,6 +201,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "gateway",
     description: "Give the cluster a way in from outside, from the control plane",
     commands: GatewayCommands,
+  },
+  {
+    name: "gateway-addresses",
+    description: "Bring the gateway's address pool and the cluster Gateway up to date, from the control plane",
+    commands: GatewayAddressCommands,
+    checkedBy: "gateway",
   },
   {
     name: "gpu",
@@ -236,20 +249,45 @@ const builtInBundles: BundleDefinition[] = [
     destructive: true,
   },
   {
+    name: "mariadb",
+    description: "Install the MariaDB operator into community-cloud, and the MariaDB cc-office shares",
+    commands: buildPackagesBundle(["mariadb-operator-crds", "mariadb-operator"]),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "mattermost",
     description: "Install Mattermost chat into cc-office",
     commands: buildSinglePackageBundle("mattermost"),
     checkedBy: "helm-charts",
   },
   {
+    name: "meteorologist",
+    description: "Install Meteorologist into community-cloud, Community Cloud's web interface",
+    commands: buildSinglePackageBundle("meteorologist"),
+    checkedBy: "helm-charts",
+  },
+  {
+    name: "methods",
+    description: "Install Methods into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("methods"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "nebula",
     description: "Join a node to the cluster's Nebula network",
-    commands: NebulaCommands,
+    // Nothing at all without a network, so a plan for a cluster without
+    // a mesh doesn't list steps it would only skip
+    commands: (config: CloudConfig) => (usesNebula(config) ? NebulaCommands : []),
   },
   {
     name: "nebula-network",
     description: "Set up the Nebula network and the roles on it",
     commands: NebulaNetworkCommands,
+  },
+  {
+    name: "package-records",
+    description: "Record every enabled package as installed, for Meteorologist, without installing anything",
+    commands: PackageRecordCommands,
   },
   {
     name: "picoclaw",
@@ -278,6 +316,12 @@ const builtInBundles: BundleDefinition[] = [
     name: "preflight",
     description: "Check a node could be installed on, changing nothing",
     commands: PreflightCommands,
+  },
+  {
+    name: "projectsend",
+    description: "Install ProjectSend into cc-office, signing in through Authentik",
+    commands: buildSinglePackageBundle("projectsend"),
+    checkedBy: "helm-charts",
   },
   {
     name: "rabbitmq",

@@ -15,6 +15,7 @@
  */
 import {
   ApiException,
+  AppsV1Api,
   AuthenticationV1Api,
   CoreV1Api,
   CustomObjectsApi,
@@ -26,9 +27,22 @@ import {
 import "server-only";
 
 import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
+import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
+import { DNS_PLURAL, type DnsProvider } from "../dns/types";
+import { parseQuantity } from "../quantity";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  ConfigMap,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  SecretSummary,
+  ServiceAccount,
+  Workload,
+} from "./types";
 
 // Who server-side applies are made as, so Meteorologist owns only the
 // fields it sets
@@ -36,6 +50,7 @@ const FIELD_MANAGER = "meteorologist";
 
 // CloudNativePG's Cluster kind
 const POSTGRES = { group: "postgresql.cnpg.io", version: "v1", plural: "clusters" };
+const CERTIFICATES = { group: "cert-manager.io", version: "v1", plural: "certificates" };
 
 // The node label a region is read from
 const REGION_LABEL = "topology.kubernetes.io/region";
@@ -181,9 +196,11 @@ async function optional<T>(call: () => Promise<T>): Promise<T | undefined> {
  */
 function clientFor(config: KubeConfig): KubeClient {
   const core = config.makeApiClient(CoreV1Api);
+  const apps = config.makeApiClient(AppsV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
   const authentication = config.makeApiClient(AuthenticationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
+  const dns = { group: GROUP, version: VERSION, plural: DNS_PLURAL };
   const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
   const apply = setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply);
 
@@ -213,6 +230,35 @@ function clientFor(config: KubeConfig): KubeClient {
       attempt(
         async () => (await core.createNamespace({ body: { metadata: { name, labels, annotations } } })) as Namespace,
       ),
+
+    getClusterUsage: () =>
+      attempt(async (): Promise<ClusterUsage> => {
+        const [nodes, pods] = await Promise.all([core.listNode(), core.listPodForAllNamespaces()]);
+        const usage = await Promise.all(
+          nodes.items.map(async (node) => {
+            const name = node.metadata?.name ?? "";
+            // The kubelet's own summary, through the API server. One
+            // that doesn't answer leaves the node out of the usage, not
+            // the whole panel off.
+            const summary = await core
+              .connectGetNodeProxyWithPath({ name, path: "stats/summary" })
+              // Typed as text, but the client parses the kubelet's JSON itself
+              .then(
+                (body: unknown) =>
+                  (typeof body === "string" ? JSON.parse(body) : body) as { node?: KubeletNodeSummary },
+              )
+              .then((body) => body.node)
+              .catch(() => undefined);
+            return {
+              name,
+              cpuCores: parseQuantity(node.status?.capacity?.cpu) ?? 0,
+              memoryBytes: parseQuantity(node.status?.capacity?.memory) ?? 0,
+              summary,
+            };
+          }),
+        );
+        return { nodes: usage, podPhases: pods.items.map((pod) => pod.status?.phase ?? "Unknown") };
+      }),
 
     listRegions: () =>
       attempt(async () => {
@@ -292,8 +338,96 @@ function clientFor(config: KubeConfig): KubeClient {
         (await core.listNamespacedSecret({ namespace })).items.map((secret): SecretSummary => ({
           name: secret.metadata?.name ?? "",
           type: secret.type ?? "Opaque",
+          labels: secret.metadata?.labels,
+          annotations: secret.metadata?.annotations,
+          creationTimestamp:
+            secret.metadata?.creationTimestamp instanceof Date
+              ? secret.metadata.creationTimestamp.toISOString()
+              : (secret.metadata?.creationTimestamp as string | undefined),
         })),
       ),
+
+    listConfigMaps: (namespace, labelSelector) =>
+      attempt(async () =>
+        (await core.listNamespacedConfigMap({ namespace, labelSelector })).items.map((configMap): ConfigMap => ({
+          metadata: { name: configMap.metadata?.name ?? "", namespace, labels: configMap.metadata?.labels },
+          data: configMap.data,
+        })),
+      ),
+
+    listWorkloads: (namespace) =>
+      attempt(async () => {
+        const [deployments, statefulSets] = await Promise.all([
+          apps.listNamespacedDeployment({ namespace }),
+          apps.listNamespacedStatefulSet({ namespace }),
+        ]);
+        return [
+          ...deployments.items.map((each): Workload => ({
+            kind: "deployment",
+            name: each.metadata?.name ?? "",
+            namespace,
+            ready: each.status?.readyReplicas ?? 0,
+            desired: each.spec?.replicas ?? 1,
+          })),
+          ...statefulSets.items.map((each): Workload => ({
+            kind: "statefulset",
+            name: each.metadata?.name ?? "",
+            namespace,
+            ready: each.status?.readyReplicas ?? 0,
+            desired: each.spec?.replicas ?? 1,
+          })),
+        ];
+      }),
+
+    readSecretValue: async (namespace, name, key) => {
+      const secret = await optional(() => core.readNamespacedSecret({ name, namespace }));
+      const value = secret?.data?.[key];
+      return value === undefined ? undefined : Buffer.from(value, "base64").toString("utf8");
+    },
+
+    applySecret: (namespace, name, data, labels, annotations) =>
+      attempt(async () => {
+        await core.patchNamespacedSecret(
+          {
+            name,
+            namespace,
+            body: {
+              apiVersion: "v1",
+              kind: "Secret",
+              metadata: { name, namespace, labels, annotations },
+              type: "Opaque",
+              stringData: data,
+            },
+            fieldManager: FIELD_MANAGER,
+            force: true,
+          },
+          apply,
+        );
+      }),
+
+    deleteSecret: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => core.deleteNamespacedSecret({ name, namespace }));
+      }),
+
+    listDnsProviders: async () =>
+      // A 404 means Cirrus's CRD isn't installed, so there are none
+      (await optional(async () => ((await custom.listClusterCustomObject(dns)) as { items: DnsProvider[] }).items)) ??
+      [],
+
+    applyDnsProvider: (provider) =>
+      attempt(async () => {
+        const { status: _status, ...body } = provider;
+        await custom.patchClusterCustomObject(
+          { ...dns, name: provider.metadata.name, body, fieldManager: FIELD_MANAGER, force: true },
+          apply,
+        );
+      }),
+
+    deleteDnsProvider: (name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteClusterCustomObject({ ...dns, name }));
+      }),
 
     listPostgresClusters: async (namespace) =>
       // A 404 means CloudNativePG isn't installed, so there are none
@@ -303,6 +437,16 @@ function clientFor(config: KubeConfig): KubeClient {
             ? await custom.listClusterCustomObject(POSTGRES)
             : await custom.listNamespacedCustomObject({ ...POSTGRES, namespace });
         return (list as { items: PostgresCluster[] }).items;
+      })) ?? [],
+
+    listCertificates: async (namespace) =>
+      // A 404 means cert-manager isn't installed, so there are none
+      (await optional(async () => {
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(CERTIFICATES)
+            : await custom.listNamespacedCustomObject({ ...CERTIFICATES, namespace });
+        return (list as { items: Certificate[] }).items;
       })) ?? [],
 
     listWebApplications: (namespace) =>
@@ -340,11 +484,16 @@ function clientFor(config: KubeConfig): KubeClient {
         })) as WebApplication;
       }),
 
-    createSecret: (namespace, name, data, labels, type = "Opaque") =>
+    deleteWebApplication: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteNamespacedCustomObject({ ...webapps, namespace, name }));
+      }),
+
+    createSecret: (namespace, name, data, labels, type = "Opaque", annotations) =>
       attempt(async () => {
         await core.createNamespacedSecret({
           namespace,
-          body: { metadata: { name, namespace, labels }, type, stringData: data },
+          body: { metadata: { name, namespace, labels, annotations }, type, stringData: data },
         });
       }),
   };

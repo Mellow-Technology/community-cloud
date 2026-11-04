@@ -15,9 +15,12 @@
       "billingApi": "billing-api.example.test",
       "signing": "sign.example.test",
       "plane": "plane.example.test",
+      "methods": "methods.example.test",
       "cirrus": "cirrus.example.test",
+      "meteorologist": "meteorologist.example.test",
       "headlamp": "headlamp.example.test",
-      "storage": "s3.example.test"
+      "storage": "s3.example.test",
+      "files": "files.example.test"
     },
     "authentik": {
       "secretKey": "not-a-real-signing-key-this-is-a-fixture"

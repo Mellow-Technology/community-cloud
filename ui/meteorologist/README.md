@@ -18,13 +18,19 @@ know about:
   They're listed once, in `src/lib/capabilities.ts`. Adding a
   capability means adding one entry there.
 
-  A namespace can be created from here, and each one has a page for
-  its settings, all made the way Kubernetes itself does them so they
-  hold for everything in the namespace, not just what Cirrus makes:
-  - **Region**: the `scheduler.alpha.kubernetes.io/node-selector`
-    annotation that the installer's `placement` also sets. It pins
-    every pod in the namespace, Postgres included, to the region's
-    nodes.
+  A namespace can be created from here, and each one has a page in
+  three tabs: General (capabilities, Postgres, usage and settings), DNS
+  and Integration (GitLab connections). The tab shown is in the
+  address, as `?tab=dns` or `?tab=integration`. The settings are all
+  made the way Kubernetes itself does them, so they hold for
+  everything in the namespace, not just what Cirrus makes:
+  - **Region**: the `placement.community-cloud.technology/region`
+    and `/affinity` labels that the installer's `placement` also
+    sets. The installer's admission policy gives every pod in the
+    namespace, Postgres included, an affinity for the region's nodes,
+    required or preferred. A namespace placed with the old
+    `scheduler.alpha.kubernetes.io/node-selector` annotation is shown
+    with its region, and moved to the labels when it's saved.
   - **Limits**: a ResourceQuota (`requests.cpu`, `limits.memory`,
     `requests.storage`) for the namespace's totals. There's also a
     LimitRange with each container's defaults, which a quota needs:
@@ -33,7 +39,27 @@ know about:
     left alone.
   - **Private registries**: `kubernetes.io/dockerconfigjson` Secrets,
     named on the namespace's `default` ServiceAccount, so every pod
-    pulls with them unless it names its own.
+    pulls with them unless it names its own. Each one made here
+    records its registry in the `community-cloud.technology/registry`
+    annotation.
+  - **GitLab connections** (the Integration tab): GitLab
+    tokens kept in the namespace, apart from any one application. Each
+    is an Opaque Secret labelled
+    `community-cloud.technology/gitlab-connection=true`, with its
+    instance in the `community-cloud.technology/gitlab-url` annotation
+    and the token under `token`. The token is checked with GitLab
+    before it's saved, and is what the application form lists projects
+    and their registry images with. Cirrus uses the same Secret for its
+    webhook and pipeline checks.
+  - **DNS**: the `DnsProvider`s (Cirrus's cluster-scoped resource)
+    publishing the namespace's hostnames. From here a namespace can
+    join an existing provider, stop, or get a new one with its own
+    account's credentials. Those go in a Secret in `external-dns`,
+    where Cirrus runs one ExternalDNS per provider and namespace.
+    Domains are checked against every other provider first, by the
+    same rule as the installer's: two providers publishing different
+    namespaces may not share a domain unless the broader one excludes
+    it. Only cluster admins can see or change providers.
 
   The page also shows the namespace's Postgres: the CloudNativePG
   Cluster `cirrus-postgres`, which Cirrus starts for the first
@@ -41,13 +67,53 @@ know about:
   storage quota has no room for its 20Gi volume. That size mirrors
   Cirrus's default in `src/lib/postgres.ts`.
 
-- **Applications**: list, view, create and edit `WebApplication`
+- **Applications**: list, view, create, edit and delete `WebApplication`
   resources (`community-cloud.technology/v1alpha1`), which the Cirrus
   operator turns into a Deployment, its database, bucket, queue, routes
   and rollouts. Creating and editing go through a guided form. The form
   explains what each shared service provides, warns when the namespace
-  is missing a label that a choice needs (and can add it on the spot),
-  and can create the GitLab token Secret for you.
+  is missing a label that a choice needs, and can add it on the spot.
+  An image from GitLab is chosen rather than typed: through one of the
+  namespace's connections, from the projects its token can see, with
+  the image taken from the project's container registry. "Update
+  automatically on image builds" then has Cirrus roll out each image a
+  successful pipeline builds. Registry credentials follow the image:
+  of the namespace's pull Secrets, the ones for the image's registry
+  are chosen, read from the `community-cloud.technology/registry`
+  annotation Meteorologist puts on those it makes, or from the
+  Secret's own `.dockerconfigjson` for those it didn't. Deleting asks
+  first, listing what goes and what stays, and takes the
+  application's name typed to confirm. Cirrus's finalizer removes the
+  RabbitMQ vhost and GitLab webhook, and Kubernetes the rest it made;
+  the database and the bucket's contents are kept. An application
+  waiting on that shows as Deleting.
+
+- **Office**: the office applications the installer put on the
+  cluster, such as ProjectSend, Plane and Twenty, each with its
+  address, its health, how people sign in, and how an administrator
+  gets in. It's made from the record each package's install leaves:
+  a ConfigMap in `community-cloud` labelled
+  `community-cloud.technology/package`, with the record as JSON under
+  `record.json` (see `installer/src/cli/commands/PackageRecord.ts`).
+  Health comes from the Deployments and StatefulSets the install
+  waited for.
+  - Where the install made an administrator, the record names the
+    Secret holding the password, never the password itself.
+    "Show password" reads it on request, as the signed-in person, so
+    it needs `get` on that Secret, which in `cc-office` means a
+    cluster admin. Nothing secret is in the page as it's sent. A
+    record can only name a Secret in its own package's namespace.
+  - Where nobody was made one, the record says how to become the
+    administrator, such as Authentik's initial setup page or
+    "the first person to sign up".
+  - A cluster installed before records existed gets them from
+    `community-cloud run-bundle package-records <server> cc.config.json`,
+    which records every enabled package without installing anything.
+
+  The records are also the start of installing from here: they say
+  what's installed, at which version, and what to wait for. What's
+  still missing is a record of what's available, and a way for
+  Meteorologist to start the installer in the cluster.
 
 It's a Next.js (App Router) app built on
 [GUI Mellow](https://github.com/Mellow-Technology/gui-mellow).
@@ -88,9 +154,11 @@ Meteorologist itself needs no RBAC. Its pod's service account token is
 never used; the pod only provides the API server's address and CA.
 
 **The API server only accepts tokens issued to clients it knows
-about.** Meteorologist's Authentik client has to be added to
-`k3s.signInClients` (or share Headlamp's client) before signing in will
-work against a real cluster.
+about.** Installed by the installer's `meteorologist` package, its
+Authentik client is `meteorologist`, which the API server trusts once
+the package is enabled and the `cluster-sign-in` bundle has run (see
+`k8s/apps/meteorologist/`). Run anywhere else, its client has to be
+listed in `k3s.signInClients`.
 
 ### Development without signing in
 
@@ -184,7 +252,7 @@ For this to work, the Authentik provider has to allow
 ```sh
 bun run typecheck
 bun run lint
-bun run test           # bun test: capabilities, form conversion, warnings, health, sessions
+bun run test           # bun test: capabilities, form conversion, warnings, health, sessions, office records
 bun run format:check   # Prettier, 120 columns, like the installer
 bun run build          # next build, standalone output
 ```
@@ -237,6 +305,7 @@ src/
     auth/                   OIDC and the session cookie
     kube/                   the KubeClient interface and its implementations
     namespace/              namespace settings: the form, and the resources it becomes
+    office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
     webapp/                 WebApplication types, form conversion, warnings, health
 ```

@@ -38,7 +38,7 @@ import { MailSecurity } from "../../util/mail.ts";
 import { SecretDefinition } from "./Secrets.ts";
 import type { AuthentikClient } from "./Authentik.ts";
 import type { GateDefinition } from "./OAuth2Proxy.ts";
-import { CLUSTER_CLIENT_ID } from "./ClusterSignIn.ts";
+import { CLUSTER_CLIENT_ID, METEOROLOGIST_CLIENT_ID } from "./ClusterSignIn.ts";
 
 /**
  * Something that can be installed.
@@ -112,6 +112,10 @@ import { CLUSTER_CLIENT_ID } from "./ClusterSignIn.ts";
  *   no sign in of its own — see OAuth2Proxy.ts. Its Deployment, its
  *   credentials and its client in Authentik are all made from this;
  *   the package's own route has to point at it.
+ * - app: what people use it as, for a package with something to sign
+ *   in to. Written into the package's record (see PackageRecord.ts),
+ *   which is how Meteorologist lists the office applications and
+ *   shows an administrator the way in.
  */
 export interface PackageDefinition {
   name: string;
@@ -134,9 +138,43 @@ export interface PackageDefinition {
   mail?: boolean;
   mailSecurity?: MailSecurity[];
   gate?: GateDefinition;
+  app?: PackageApp;
 
   // Which plugin contributed this, when one did
   plugin?: string;
+}
+
+/**
+ * How people sign in to an application.
+ */
+export enum SignIn {
+  // Through Authentik, with the application's own client
+  Authentik = "authentik",
+  // Through the oauth2-proxy gate in front of it
+  Gate = "gate",
+  // With an account of its own, unrelated to Authentik
+  Own = "own",
+}
+
+/**
+ * What an application is to the people using it.
+ *
+ * - title: its name, as people know it
+ * - url: the value holding its hostname, as a path under "values"
+ * - signIn: how people get in
+ * - admin: the way in for an administrator. Either a credential the
+ *   install made, as a Secret in the package's namespace — "key"
+ *   defaulting to "password", and "login" the value that's the
+ *   account's name, when it has one — or, for an application whose
+ *   administrator nobody made, how to become one.
+ * - note: anything else an administrator should know
+ */
+export interface PackageApp {
+  title: string;
+  url: string;
+  signIn: SignIn;
+  admin?: { secret: string; key?: string; login?: string } | { how: string };
+  note?: string;
 }
 
 /**
@@ -310,6 +348,15 @@ const builtInPackages: PackageDefinition[] = [
     // everybody out, so it's the configuration's to keep rather than
     // made afresh
     values: ["domain.auth", "domain.storage", "authentik.secretKey"],
+
+    app: {
+      title: "Authentik",
+      url: "domain.auth",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The administrator, akadmin, is given a password on Authentik's initial setup page, /if/flow/initial-setup/, the first time it's opened. Anyone in the authentik Admins group administers it too.",
+      },
+    },
   },
   {
     name: "documenso",
@@ -392,6 +439,15 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
     values: ["domain.signing", "domain.auth", "domain.main"],
 
+    app: {
+      title: "Documenso",
+      url: "domain.signing",
+      signIn: SignIn.Authentik,
+      admin: {
+        how: "Everyone gets an account the first time they sign in through Authentik. Its admin pages are for accounts given Documenso's admin role, which is set in its database.",
+      },
+    },
+
     authentik: {
       blueprint: "embed://apps/documenso/Documenso.blueprint.yaml",
       secret: "documenso-oidc",
@@ -458,6 +514,156 @@ const builtInPackages: PackageDefinition[] = [
         namespace: "cc-office",
       },
     ],
+  },
+  {
+    name: "mariadb-operator-crds",
+    description: "The MariaDB operator's resource types",
+    chart: { repo: "https://helm.mariadb.com/mariadb-operator", name: "mariadb-operator-crds" },
+    // Pinned with the operator, which has to match it
+    version: "26.10.2",
+    namespace: CLUSTER_NAMESPACE,
+
+    // A chart of their own, as the project publishes them, rather than
+    // the operator's chart installing them. Its chart can, but says
+    // not to: removing the operator would then remove every MariaDB
+    // with it. These go only when this release does — and with them
+    // every MariaDB in the cluster, so this is a package nothing should
+    // ever uninstall.
+  },
+  {
+    name: "mariadb-operator",
+    description: "The MariaDB operator, and the one MariaDB the applications in cc-office that need MySQL share",
+    chart: { repo: "https://helm.mariadb.com/mariadb-operator", name: "mariadb-operator" },
+    // Pinned, so installing an application that needs MariaDB doesn't
+    // also upgrade the operator under the database it's about to use
+    version: "26.10.2",
+    namespace: CLUSTER_NAMESPACE,
+
+    // Community Cloud's databases are Postgres, through CloudNativePG.
+    // This is for the applications that only speak MySQL — ProjectSend
+    // — so that they get a database the way the others do, from an
+    // operator and a resource each, rather than every one bringing a
+    // MySQL of its own. The MariaDB is on "cc-local-ssd-fast", as
+    // cc-postgres is.
+    requires: ["mariadb-operator-crds", "topolvm"],
+
+    manifests: {
+      // The operator runs the cluster, so it's in community-cloud; the
+      // MariaDB is in cc-office, with the applications using it, as the
+      // Redis is, and its root password has to have somewhere to go
+      // first
+      before: ["embed://apps/office/Office.namespace.yaml"],
+      after: ["embed://apps/office/MariaDB.yaml"],
+    },
+
+    // The root password. Only the operator connects as root, to make
+    // the databases and users the applications ask for; each of those
+    // has its own password, from its own package.
+    secrets: [
+      {
+        name: "cc-mariadb",
+        description: "the root password for the MariaDB in cc-office",
+        namespace: "cc-office",
+      },
+    ],
+  },
+  {
+    name: "projectsend",
+    description: "File sharing with clients, signed into through Authentik",
+    namespace: "cc-office",
+
+    // ProjectSend only runs on MySQL, so its database is in the shared
+    // MariaDB rather than cc-postgres. Its sessions, cache and queue
+    // are in the shared Redis.
+    //
+    // Its files are on a volume or in a bucket, as the configuration
+    // chooses (see util/projectsend.ts). Only one of those needs
+    // SeaweedFS, so it's ordered after it rather than requiring it,
+    // and preflight says so when the bucket is chosen without it.
+    requires: ["mariadb-operator", "redis-operator", "topolvm"],
+    after: ["authentik", "seaweedfs"],
+
+    // No chart from the project; the image is the whole application
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/projectsend/ProjectSend.database.yaml",
+        "embed://apps/projectsend/ProjectSend.storage.yaml",
+        "embed://apps/projectsend/ProjectSend.config.yaml",
+        "embed://apps/projectsend/ProjectSend.provision.yaml",
+        "embed://apps/projectsend/ProjectSend.yaml",
+        "embed://apps/projectsend/ProjectSend.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its user in cc-mariadb, which the operator makes with this
+      // password. The name is the MariaDB user's.
+      {
+        name: "projectsend-db",
+        description: "the ProjectSend database user",
+        username: "projectsend",
+      },
+
+      // Laravel's application key. It encrypts the passwords and keys
+      // ProjectSend keeps in its database — the sign in client's
+      // secret, the bucket's — so losing it loses them. Laravel wants
+      // exactly 32 characters.
+      {
+        name: "projectsend-app-key",
+        description: "the key ProjectSend encrypts what it stores with",
+        keyBytes: 16,
+      },
+
+      // The first administrator, made on first start with the
+      // cluster's admin address. Signing in through Authentik with the
+      // same address, once verified, is the same account.
+      {
+        name: "projectsend-admin",
+        description: "the first ProjectSend administrator's password",
+      },
+      {
+        name: "projectsend-oidc",
+        description: "the client ProjectSend signs in to Authentik as",
+      },
+    ],
+
+    // The MariaDB, and ProjectSend's database, user and grant in it,
+    // as the operator reports them. Not the MariaDB's StatefulSet: the
+    // operator restarts its pods itself, so the StatefulSet is OnDelete,
+    // and "rollout status" refuses to wait on one of those.
+    ready: [
+      "mariadbs.k8s.mariadb.com/cc-mariadb",
+      "databases.k8s.mariadb.com/projectsend",
+      "users.k8s.mariadb.com/projectsend",
+      "grants.k8s.mariadb.com/projectsend",
+    ],
+
+    // The Redis first: its operator makes it, so nothing about
+    // installing the operator waited for it. A bucket, when there is
+    // one, isn't waited for here, since whether there is one is the
+    // configuration's to say; ProjectSend's pod can't start without the
+    // keys to it, so the rollout waits for them instead.
+    rollout: ["statefulset/redis", "deployment/projectsend"],
+    mail: true,
+    values: ["domain.files", "domain.auth", "adminEmail"],
+
+    app: {
+      title: "ProjectSend",
+      url: "domain.files",
+      signIn: SignIn.Authentik,
+      admin: { secret: "projectsend-admin", login: "adminEmail" },
+      note: "The administrator can also sign in through Authentik, with an Authentik account that has the same address.",
+    },
+
+    authentik: {
+      blueprint: "embed://apps/projectsend/ProjectSend.blueprint.yaml",
+      secret: "projectsend-oidc",
+      slug: "projectsend",
+    },
   },
   {
     name: "lago",
@@ -557,6 +763,13 @@ const builtInPackages: PackageDefinition[] = [
     mailSecurity: [MailSecurity.StartTls, MailSecurity.None],
 
     values: ["domain.billing", "domain.billingApi", "domain.main", "adminEmail"],
+
+    app: {
+      title: "Lago",
+      url: "domain.billing",
+      signIn: SignIn.Own,
+      admin: { secret: "lago-admin", login: "adminEmail" },
+    },
   },
   {
     name: "twenty",
@@ -613,6 +826,15 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
 
     values: ["domain.crm"],
+
+    app: {
+      title: "Twenty",
+      url: "domain.crm",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The first person to sign up makes the workspace, and administers it. They invite everyone else from its settings.",
+      },
+    },
   },
   {
     name: "plane",
@@ -701,6 +923,75 @@ const builtInPackages: PackageDefinition[] = [
     mail: true,
 
     values: ["domain.plane", "adminEmail"],
+
+    app: {
+      title: "Plane",
+      url: "domain.plane",
+      signIn: SignIn.Own,
+      admin: { secret: "plane-admin", login: "adminEmail" },
+      note: "The instance's own settings are at /god-mode/, for the same account.",
+    },
+  },
+  {
+    name: "methods",
+    description: "Projects and work items, for people and their bots, signed into through Authentik",
+    namespace: "cc-office",
+
+    // Its database is in cc-postgres, and its files in a bucket in
+    // SeaweedFS. Nothing else: one process, with no queue or cache.
+    requires: ["cloudnative-pg", "seaweedfs"],
+    after: ["authentik"],
+
+    // No chart; the image is the whole application
+    manifests: {
+      // The namespace again, for the label the cluster Gateway looks
+      // for, as for Documenso
+      before: ["embed://apps/office/Office.namespace.yaml"],
+
+      after: [
+        "embed://apps/methods/Methods.database.yaml",
+        "embed://apps/methods/Methods.storage.yaml",
+        "embed://apps/methods/Methods.config.yaml",
+        "embed://apps/methods/Methods.yaml",
+        "embed://apps/methods/Methods.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // Its role in cc-postgres, brought with it as Documenso's is
+      {
+        name: "methods-db",
+        description: "the Methods database role",
+        username: "methods",
+        labels: { "cnpg.io/reload": "true" },
+      },
+      {
+        name: "methods-oidc",
+        description: "the client Methods signs in to Authentik as",
+      },
+    ],
+
+    // Its bucket, then its own
+    ready: ["buckets.seaweed.seaweedfs.com/methods", "s3credentials.seaweed.seaweedfs.com/methods"],
+    rollout: ["deployment/methods"],
+
+    values: ["domain.methods", "domain.auth"],
+
+    app: {
+      title: "Methods",
+      url: "domain.methods",
+      signIn: SignIn.Authentik,
+      admin: {
+        how: "Everyone gets an account the first time they sign in through Authentik. Whoever makes a workspace owns it, and adds the others from its settings.",
+      },
+      note: "Bots connect to /mcp with access tokens made under Settings → Bots & MCP.",
+    },
+
+    authentik: {
+      blueprint: "embed://apps/methods/Methods.blueprint.yaml",
+      secret: "methods-oidc",
+      slug: "methods",
+    },
   },
   {
     name: "mattermost-operator",
@@ -755,6 +1046,15 @@ const builtInPackages: PackageDefinition[] = [
     rollout: ["deployment/mattermost"],
 
     values: ["domain.mattermost"],
+
+    app: {
+      title: "Mattermost",
+      url: "domain.mattermost",
+      signIn: SignIn.Own,
+      admin: {
+        how: "The first account made is the system administrator. Make it before telling anyone else the address.",
+      },
+    },
   },
   {
     name: "picoclaw",
@@ -799,6 +1099,14 @@ const builtInPackages: PackageDefinition[] = [
 
     rollout: ["deployment/picoclaw"],
     values: ["domain.agent"],
+
+    app: {
+      title: "Picoclaw",
+      url: "domain.agent",
+      signIn: SignIn.Gate,
+      // No account: once through the gate, the console asks for this
+      admin: { secret: "picoclaw-launcher" },
+    },
   },
   {
     name: "topolvm",
@@ -932,8 +1240,62 @@ const builtInPackages: PackageDefinition[] = [
 
     rollout: ["deployment/cirrus"],
 
-    // Where GitLab sends its webhooks
-    values: ["domain.cirrus"],
+    // Where GitLab sends its webhooks, and the domain that keeps the
+    // records its DnsProviders' ExternalDNS instances make apart from
+    // another cluster's
+    values: ["domain.cirrus", "domain.main"],
+  },
+  {
+    name: "meteorologist",
+    description: "Meteorologist, Community Cloud's web interface, signed into through Authentik",
+    // Beside Headlamp: a way into the cluster, not an application on it
+    namespace: CLUSTER_NAMESPACE,
+
+    // It signs in through Authentik, and acts as whoever signed in, so
+    // it needs the API server to trust its client. Enabling it adds
+    // that client to the API server's settings, which the k3s and
+    // cluster-sign-in bundles write; see ClusterSignIn.ts. It shows
+    // and makes WebApplications, so Cirrus is what gives it anything
+    // to do, but it runs without it.
+    after: ["authentik", "cirrus"],
+
+    // No chart: Meteorologist is ours. The namespace again, for the
+    // label the cluster Gateway looks for, as for Headlamp. The image
+    // is pinned in Meteorologist.yaml.
+    manifests: {
+      before: ["embed://networking/cilium/gateway/Gateway.namespace.yaml"],
+      after: [
+        "embed://apps/meteorologist/Meteorologist.yaml",
+        "embed://apps/meteorologist/Meteorologist.network.yaml",
+      ],
+    },
+
+    secrets: [
+      // The username is the client ID, and it's fixed, as Headlamp's
+      // is: the API server is told it. Only the secret is made up.
+      {
+        name: "meteorologist-oidc",
+        description: "the client Meteorologist signs in to Authentik as",
+        username: METEOROLOGIST_CLIENT_ID,
+      },
+      // What session cookies are sealed with. Made once, so a restart
+      // doesn't sign everybody out.
+      {
+        name: "meteorologist-session",
+        description: "the key Meteorologist seals its session cookies with",
+        keyBytes: 32,
+      },
+    ],
+
+    authentik: {
+      blueprint: "embed://apps/meteorologist/Meteorologist.blueprint.yaml",
+      secret: "meteorologist-oidc",
+      slug: METEOROLOGIST_CLIENT_ID,
+    },
+
+    rollout: ["deployment/meteorologist"],
+
+    values: ["domain.meteorologist", "domain.auth"],
   },
   {
     name: "tailscale-operator",
@@ -1086,12 +1448,14 @@ export function valuesFileIsFromConfig(selection: PackageSelection = {}): boolea
  * nothing is installed before the things it depends on — or before
  * anything it asked to come "after" that is also enabled. A package
  * pulled in as a dependency is reported as such, since being installed
- * without having been asked for is worth saying out loud.
+ * without having been asked for is worth saying out loud, unless the
+ * caller is only installing some of them and it wouldn't be true.
  *
  * @param config
+ * @param quiet don't report dependencies
  * @returns
  */
-export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
+export function resolveInstallOrder(config: CloudConfig, quiet = false): PackageDefinition[] {
   const selections = getPackageSelections(config);
 
   const enabled = Object.entries(selections)
@@ -1117,7 +1481,7 @@ export function resolveInstallOrder(config: CloudConfig): PackageDefinition[] {
 
     const definition = resolvePackage(name, selections[name]);
     for (const required of definition.requires !== undefined ? definition.requires : []) {
-      if (!enabled.includes(required) && !done.has(required)) {
+      if (!quiet && !enabled.includes(required) && !done.has(required)) {
         console.log(`  ${required} will be installed because ${name} requires it`);
       }
 

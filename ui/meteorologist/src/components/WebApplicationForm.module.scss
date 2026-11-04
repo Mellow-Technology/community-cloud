@@ -36,6 +36,29 @@
   font-size: var(--gm-text-sm);
 }
 
+// A note of more than one paragraph
+.noteBlock {
+  display: grid;
+  gap: var(--gm-space-2);
+
+  p,
+  ul {
+    margin: 0;
+  }
+
+  ul {
+    display: grid;
+    gap: var(--gm-space-2);
+    padding-inline-start: var(--gm-space-5);
+  }
+
+  // A list inside an item, such as a token's permissions
+  ul ul {
+    gap: var(--gm-space-1);
+    margin-block: var(--gm-space-1);
+  }
+}
+
 .badge {
   margin-inline-end: var(--gm-space-2);
 }

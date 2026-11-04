@@ -1,0 +1,82 @@
+# Methods's client in Authentik.
+#
+# Not a Kubernetes manifest. This is an Authentik blueprint, which the
+# installer hands to Authentik's worker once the client's credentials
+# exist — see installer/src/cli/commands/Authentik.ts. It's rendered as
+# a template first, like everything else in k8s/, and the client ID and
+# secret arrive separately through "!Context" so they're never written
+# into it.
+#
+# Every entry is found by its identifiers and made to match, so this
+# can be applied as often as the install is run.
+#
+# Who may sign in is left to Authentik, and that matters: Methods
+# makes an account for anyone Authentik sends it. With no policy bound
+# to the application, that's everyone with an Authentik account. Bind
+# a group to it in Authentik to narrow that down; this blueprint won't
+# undo it.
+version: 1
+metadata:
+  name: Community Cloud - Methods
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+entries:
+  # Authentik's own email mapping says every address is unverified.
+  # Methods still signs someone in with an unverified address, but only
+  # joins them to an existing account with the same address when it's
+  # verified, so without this a person whose account came first would
+  # get a second one.
+  #
+  # Saying "verified" is a statement about how accounts get into this
+  # Authentik: an administrator makes them, so the address on one is
+  # the one they gave. If self service enrolment is ever switched on,
+  # this has to change, or anyone could register someone else's
+  # address and be signed in as them.
+  #
+  # Gates declare the same mapping, so either can be applied alone;
+  # identical, so whichever is applied last changes nothing.
+  - model: authentik_providers_oauth2.scopemapping
+    id: email-verified
+    identifiers:
+      name: "Community Cloud: email, as verified"
+    attrs:
+      scope_name: email
+      description: "Email address"
+      expression: |
+        return {
+            "email": request.user.email,
+            "email_verified": True,
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider
+    identifiers:
+      name: Methods
+    attrs:
+      client_type: confidential
+      client_id: !Context client_id
+      client_secret: !Context client_secret
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # Methods sends people back here, and nowhere else
+      redirect_uris:
+        - matching_mode: strict
+          url: {{ printf "https://%s/api/auth/oidc/callback" .Values.domain.methods | quote }}
+      # Authentik 2026 starts a new provider with no grant types, so
+      # each one this client uses is named
+      grant_types: [authorization_code]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !KeyOf email-verified
+
+  - model: authentik_core.application
+    identifiers:
+      slug: methods
+    attrs:
+      name: Methods
+      provider: !KeyOf provider
+      meta_launch_url: {{ printf "https://%s/" .Values.domain.methods | quote }}
+      meta_description: Projects and work items
+      policy_engine_mode: any

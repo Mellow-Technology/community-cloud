@@ -27,6 +27,29 @@ import { loadPlugins } from "../plugins/registry.ts";
 
 export { getConfiguredPipelines, resolvePipeline };
 
+// The bundle --packages narrows
+const HELM_CHARTS_BUNDLE = "helm-charts";
+
+/**
+ * Read a comma separated list of package names.
+ *
+ * @param value
+ * @returns nothing when none were given
+ */
+export function readPackageList(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const names = value.split(",").map((name) => name.trim()).filter((name) => name !== "");
+
+  if (names.length === 0) {
+    throw new Error("--packages was given no package names. List them comma separated, like --packages topolvm,authentik.");
+  }
+
+  return names;
+}
+
 /**
  * Options for a run.
  *
@@ -36,12 +59,15 @@ export { getConfiguredPipelines, resolvePipeline };
  * - dryRun: work out every step and print it without running any.
  * - timeout: how long to give a node to answer when connecting.
  * - verbose: let the commands narrate as well as the run.
+ * - packages: only these packages in "helm-charts", comma separated.
+ *   For upgrading a few at a time rather than everything at once.
  */
 export interface RunPipelineOptions {
   keepGoing?: boolean;
   dryRun?: boolean;
   timeout?: string | number;
   verbose?: boolean;
+  packages?: string;
 }
 
 /**
@@ -100,6 +126,13 @@ async function run(
   loadPlugins(config);
 
   const names = resolveTarget(config, target);
+  const packages = readPackageList(options.packages);
+
+  if (packages !== undefined && !resolvePipeline(config, pipelineName).some((bundle) => bundle.name === HELM_CHARTS_BUNDLE)) {
+    throw new Error(
+      `--packages picks which packages "${HELM_CHARTS_BUNDLE}" installs, and "${pipelineName}" doesn't include it. Run "${HELM_CHARTS_BUNDLE}", or a pipeline with it in.`,
+    );
+  }
   const where = target === ALL_NODES ? `${names.length} nodes` : target;
 
   const outcome = await executePipeline(config, {
@@ -111,6 +144,7 @@ async function run(
     dryRun: options.dryRun,
     timeout: options.timeout,
     verbose: options.verbose,
+    ...(packages !== undefined ? { packages } : {}),
   });
 
   if (outcome.dryRun) {

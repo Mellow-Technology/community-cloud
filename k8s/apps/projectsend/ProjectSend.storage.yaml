@@ -1,0 +1,80 @@
+# Where ProjectSend keeps the files people share.
+#
+# One of two places, as "values.projectsend.storage" chooses (see
+# installer/src/util/projectsend.ts):
+#
+# - "local", the default: a volume on a node's disks, through TopoLVM.
+#   Local disk, so the pod stays on the node this was first made on.
+# - "s3": a bucket in the cluster's SeaweedFS, with keys to only that
+#   bucket, which the SeaweedFS operator writes into the Secret
+#   "projectsend-s3". ProjectSend is pointed at it on first start, by
+#   ProjectSend.provision.yaml.
+#
+# Either way the size is "storage.allocations.projectsendGb": the
+# claim, or the bucket's quota. Both are kept when ProjectSend is
+# removed, and neither is removed by choosing the other — which is
+# also why changing the choice later doesn't move the files already
+# there.
+{{ if .Values.projectsend.s3 }}
+# The bucket's identity, its keys, and the bucket, as for Plane. See
+# k8s/storage/README.md.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Identity
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Credentials
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+  identityRef:
+    name: projectsend
+  secretRef:
+    name: projectsend-s3
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Bucket
+metadata:
+  name: projectsend
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  clusterRef:
+    name: seaweed
+    namespace: seaweedfs
+  quota:
+    size: {{ .Values.projectsendVolumeSize }}
+  access:
+    - user: projectsend
+      actions: [Read, Write, List, Tagging]
+{{ else }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: projectsend-files
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  storageClassName: cc-local-ssd-fast
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.projectsendVolumeSize }}
+{{ end }}

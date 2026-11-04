@@ -7,7 +7,9 @@
  * not being installed first, the ServiceAccount the Deployment runs as
  * not being the one the ClusterRole is bound to, the webhook address
  * it registers with GitLab not being the one the Gateway routes, or
- * the route exposing more of Cirrus than its webhooks.
+ * the route exposing more of Cirrus than its webhooks. And, for the
+ * ExternalDNS instances its DnsProviders run, that what they're bound
+ * to is the ExternalDNS chart's read-only access and nothing more.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -15,6 +17,7 @@ import { parseAllDocuments } from "yaml";
 
 import { buildPackageCommands } from "../cli/commands/Helm.ts";
 import { getPackage, resolveInstallOrder } from "../cli/commands/packages.ts";
+import { DNS_NAMESPACE } from "../util/dns.ts";
 import { renderInstallerFile } from "../util/template.ts";
 import { loadFixtureConfig, withoutConsole } from "./helpers.ts";
 
@@ -96,5 +99,63 @@ describe("installing Cirrus", () => {
       route.spec.rules.flatMap((rule: any) => rule.matches.map((match: any) => match.path.value)),
       ["/hooks/"],
     );
+  });
+
+  it("defines DnsProvider, for the whole cluster rather than a namespace", async () => {
+    const crds = await render(...CIRRUS.manifests!.before!.filter((path) => path.endsWith("Cirrus.crd.yaml")));
+    const crd = crds.find((each) => each.spec.names.kind === "DnsProvider");
+
+    assert.equal(crd.spec.group, "community-cloud.technology");
+    assert.deepEqual(crd.spec.names.shortNames, ["dnsp"]);
+    // Which namespace may write which domain is the cluster's decision
+    assert.equal(crd.spec.scope, "Cluster");
+  });
+});
+
+describe("the ExternalDNS instances Cirrus runs", () => {
+  const rbac = () => render("embed://operators/cirrus/Cirrus.rbac.yaml");
+
+  it("run beside the installer's own, in a namespace nobody's applications are in", async () => {
+    const namespace = (await rbac()).find((each) => each.kind === "Namespace");
+    assert.equal(namespace.metadata.name, DNS_NAMESPACE);
+  });
+
+  // The chart's ClusterRole, with the Gateway route source and
+  // ListenerSets switched on as buildExternalDnsValues does
+  it("may read routes, ListenerSets, Gateways and namespaces, and change nothing", async () => {
+    const role = (await rbac()).find((each) => each.kind === "ClusterRole" && each.metadata.name === "cirrus-external-dns");
+    const granted = role.rules.flatMap((rule: any) =>
+      rule.apiGroups.flatMap((group: string) => rule.resources.map((resource: string) => `${group}/${resource}`)),
+    );
+
+    assert.deepEqual(granted.toSorted(), [
+      "/namespaces",
+      "gateway.networking.k8s.io/gateways",
+      "gateway.networking.k8s.io/httproutes",
+      "gateway.networking.k8s.io/listenersets",
+    ]);
+    for (const rule of role.rules) {
+      assert.deepEqual(rule.verbs.toSorted(), ["get", "list", "watch"]);
+    }
+  });
+
+  it("are bound by Cirrus to that role and no other", async () => {
+    const role = (await rbac()).find((each) => each.kind === "ClusterRole" && each.metadata.name === "cirrus");
+    const binding = role.rules.filter((rule: any) => rule.verbs.includes("bind") || rule.verbs.includes("escalate"));
+
+    assert.deepEqual(binding, [
+      { apiGroups: ["rbac.authorization.k8s.io"], resources: ["clusterroles"], resourceNames: ["cirrus-external-dns"], verbs: ["bind"] },
+    ]);
+    assert.ok(!role.rules.some((rule: any) => rule.resources.includes("clusterroles") && rule.verbs.includes("create")));
+  });
+
+  it("keep their records apart from another cluster's by the main domain", async () => {
+    const config = await loadFixtureConfig();
+    const container = (await render("embed://operators/cirrus/Cirrus.yaml")).find((each) => each.kind === "Deployment")
+      .spec.template.spec.containers[0];
+    const domain = container.env.find((each: any) => each.name === "CIRRUS_CLUSTER_DOMAIN").value;
+
+    assert.equal(domain, config.getConfig().values.domain.main);
+    assert.ok(CIRRUS.values!.includes("domain.main"));
   });
 });

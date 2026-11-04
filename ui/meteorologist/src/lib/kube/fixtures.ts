@@ -8,7 +8,10 @@
  * mid-migration, one blocked because its namespace can't have buckets,
  * one Cirrus hasn't looked at yet. A namespace has a Postgres that's
  * up, another one still starting, and a third a quota too small for
- * one. Changes made through the pages
+ * one. The office applications are a few of the installer's records,
+ * with one of each kind of administrator: a password to show, one
+ * the viewer isn't allowed to see, and one nobody was made. Changes
+ * made through the pages
  * stick until the server restarts, so the forms can be tried end to
  * end. Nothing here ever reaches a real API server.
  *
@@ -16,21 +19,53 @@
  * module in development.
  */
 import { getCapability } from "../capabilities";
+import type { NodeUsage } from "../cluster";
+import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
+import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
+import { RECORD_KEY, RECORD_LABEL, RECORD_NAMESPACE, type PackageRecord } from "../office";
 import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  Condition,
+  ConfigMap,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  ServiceAccount,
+  Workload,
+} from "./types";
 
 interface FixtureStore {
   namespaces: Map<string, Namespace>;
   webapps: Map<string, WebApplication>;
-  // By namespace/name, each Secret's type
-  secrets: Map<string, string>;
+  // By namespace/name
+  secrets: Map<string, FixtureSecret>;
+  dnsProviders: Map<string, DnsProvider>;
   quotas: Map<string, ResourceQuota>;
   limitRanges: Map<string, LimitRange>;
   serviceAccounts: Map<string, ServiceAccount>;
   postgres: Map<string, PostgresCluster>;
+  certificates: Map<string, Certificate>;
+  configMaps: Map<string, ConfigMap>;
+  workloads: Map<string, Workload>;
   regions: string[];
   version: number;
+}
+
+/**
+ * A Secret, as far as the pretend cluster keeps one.
+ */
+interface FixtureSecret {
+  type: string;
+  data: Record<string, string>;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  creationTimestamp: string;
+  // Refused to whoever asks, as RBAC would refuse someone who isn't a
+  // cluster admin
+  forbidden?: boolean;
 }
 
 // When the fixtures were "made", so ages on the page look plausible
@@ -76,6 +111,48 @@ function postgres(namespaceName: string, phase: string, ready: number): Postgres
 }
 
 /**
+ * The Certificate cert-manager would have made for an application.
+ *
+ * @param namespaceName
+ * @param app
+ * @param condition how it's going
+ * @returns
+ */
+function certificate(namespaceName: string, app: string, condition: Condition): Certificate {
+  return {
+    metadata: { name: `${app}-tls`, namespace: namespaceName, creationTimestamp: CREATED },
+    spec: { secretName: `${app}-tls`, issuerRef: { kind: "ClusterIssuer", name: "cc-lets-encrypt" } },
+    status: {
+      conditions: [condition],
+      ...(condition.type === "Ready" ? { notAfter: "2099-01-01T00:00:00Z", renewalTime: "2098-12-02T00:00:00Z" } : {}),
+    },
+  };
+}
+
+/**
+ * A node as its kubelet would report it.
+ *
+ * @param name
+ * @param cores its capacity
+ * @param memory GiB of capacity
+ * @param usedCores
+ * @param usedMemory GiB in use
+ * @returns
+ */
+function fixtureNode(name: string, cores: number, memory: number, usedCores: number, usedMemory: number): NodeUsage {
+  return {
+    name,
+    cpuCores: cores,
+    memoryBytes: memory * 2 ** 30,
+    summary: {
+      cpu: { usageNanoCores: usedCores * 1e9 },
+      memory: { rssBytes: usedMemory * 2 ** 30 },
+      network: { interfaces: [{ name: "defined1", rxBytes: cores * 61 * 2 ** 30, txBytes: cores * 23 * 2 ** 30 }] },
+    },
+  };
+}
+
+/**
  * The labels that turn a capability on.
  *
  * @param ids
@@ -83,6 +160,45 @@ function postgres(namespaceName: string, phase: string, ready: number): Postgres
  */
 function capabilityLabels(...ids: Array<"gateway" | "buckets">): Record<string, string> {
   return Object.fromEntries(ids.map((id) => [getCapability(id).label, getCapability(id).value]));
+}
+
+/**
+ * One of the installer's package records, as it writes them.
+ *
+ * @param record
+ * @returns
+ */
+function packageRecord(record: Omit<PackageRecord, "description"> & { description?: string }): ConfigMap {
+  const { chartVersion, ...rest } = record;
+  return {
+    metadata: {
+      name: `cc-package-${record.name}`,
+      namespace: RECORD_NAMESPACE,
+      labels: { [RECORD_LABEL]: record.name },
+    },
+    data: {
+      [RECORD_KEY]: JSON.stringify({
+        version: 1,
+        description: "",
+        ...rest,
+        ...(chartVersion !== undefined ? { chart: { version: chartVersion } } : {}),
+        installer: "1.0.0",
+      }),
+    },
+  };
+}
+
+/**
+ * A workload with so many replicas ready.
+ *
+ * @param kind
+ * @param name
+ * @param ready
+ * @param desired
+ * @returns
+ */
+function workload(kind: Workload["kind"], name: string, ready: number, desired = 1): Workload {
+  return { kind, name, namespace: "cc-office", ready, desired };
 }
 
 /**
@@ -96,8 +212,10 @@ function seed(): FixtureStore {
       ...capabilityLabels("gateway", "buckets"),
       "app.kubernetes.io/managed-by": "community-cloud",
     }),
-    namespace("team-shop", capabilityLabels("gateway"), {
-      "scheduler.alpha.kubernetes.io/node-selector": "topology.kubernetes.io/region=sea",
+    namespace("team-shop", {
+      ...capabilityLabels("gateway"),
+      "placement.community-cloud.technology/region": "sea",
+      "placement.community-cloud.technology/affinity": "required",
     }),
     namespace("sandbox"),
     namespace("kube-system"),
@@ -165,8 +283,8 @@ function seed(): FixtureStore {
       kind: KIND,
       metadata: { name: "plane", namespace: "cc-office", generation: 1, creationTimestamp: CREATED, uid: "fixture-2" },
       spec: {
+        // No port: Cirrus reads it from the image
         image: { repository: "makeplane/plane-backend", tag: "v1.2.0" },
-        port: 8000,
         hostnames: ["plane.example.org"],
         postgres: {},
         bucket: { quota: "20Gi" },
@@ -180,6 +298,8 @@ function seed(): FixtureStore {
           condition("RolledOut", false, "Migrating", "running plane-migrate-7c1d for makeplane/plane-backend:v1.2.0"),
           condition("Ready", false, "NotReady"),
         ],
+        port: 8000,
+        imagePorts: [{ image: "makeplane/plane-backend:v1.2.0", port: 8000 }],
         deployedImage: "makeplane/plane-backend:v1.1.4",
         migrationJob: "plane-migrate-7c1d",
         url: "https://plane.example.org",
@@ -218,9 +338,81 @@ function seed(): FixtureStore {
   return {
     namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
     webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
-    secrets: new Map([
-      ["team-shop/shop-gitlab-token", "Opaque"],
-      ["team-shop/pull-registry-gitlab-com", "kubernetes.io/dockerconfigjson"],
+    secrets: new Map<string, FixtureSecret>([
+      [
+        "team-shop/shop-gitlab-token",
+        {
+          type: "Opaque",
+          data: { token: "glpat-fixture" },
+          labels: { [CONNECTION_LABEL]: "true" },
+          annotations: { [URL_ANNOTATION]: "https://gitlab.com" },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
+        "team-shop/pull-registry-gitlab-com",
+        {
+          type: "kubernetes.io/dockerconfigjson",
+          // Made by hand, so without Meteorologist's annotation: the
+          // form has to read the registry out of it
+          data: { ".dockerconfigjson": JSON.stringify({ auths: { "https://registry.gitlab.com": {} } }) },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
+        `${DNS_NAMESPACE}/cirrus-dns-acme`,
+        { type: "Opaque", data: { CF_API_TOKEN: "fixture" }, creationTimestamp: CREATED },
+      ],
+      [
+        "cc-office/projectsend-admin",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "correct horse battery staple" },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
+        "cc-office/plane-admin",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "never shown" },
+          creationTimestamp: CREATED,
+          forbidden: true,
+        },
+      ],
+      [
+        "cc-office/picoclaw-launcher",
+        {
+          type: "kubernetes.io/basic-auth",
+          data: { username: "fixture", password: "pc-fixture-token" },
+          creationTimestamp: CREATED,
+        },
+      ],
+    ]),
+    dnsProviders: new Map([
+      [
+        "acme",
+        {
+          apiVersion: DNS_API_VERSION,
+          kind: DNS_KIND,
+          metadata: { name: "acme", generation: 1, creationTimestamp: CREATED },
+          spec: {
+            provider: "cloudflare",
+            domains: ["example.org"],
+            namespaces: ["cc-office", "team-shop"],
+            credentialsSecret: "cirrus-dns-acme",
+            policy: "sync",
+          },
+          status: {
+            observedGeneration: 1,
+            conditions: [condition("Ready", true, "Ready")],
+            instances: [
+              { namespace: "cc-office", deployment: "cirrus-dns-acme-cc-office", ready: true },
+              { namespace: "team-shop", deployment: "cirrus-dns-acme-team-shop", ready: true },
+            ],
+          },
+        },
+      ],
     ]),
     quotas: new Map([
       [
@@ -265,6 +457,110 @@ function seed(): FixtureStore {
       ["team-shop/cirrus-postgres", postgres("team-shop", "Cluster in healthy state", 1)],
       ["cc-office/cirrus-postgres", postgres("cc-office", "Setting up primary", 0)],
     ]),
+    certificates: new Map([
+      ["team-shop/shop-tls", certificate("team-shop", "shop", { type: "Ready", status: "True", reason: "Ready" })],
+      [
+        "cc-office/plane-tls",
+        certificate("cc-office", "plane", {
+          type: "Issuing",
+          status: "False",
+          reason: "Failed",
+          message:
+            'The certificate request has failed to complete and will be retried: Failed to wait for order resource "plane-tls-1-1" to become ready: order is in "invalid" state',
+        }),
+      ],
+    ]),
+    configMaps: new Map(
+      [
+        packageRecord({
+          name: "authentik",
+          namespace: "cc-office",
+          chartVersion: "2026.5.3",
+          rollout: [],
+          updated: CREATED,
+          app: {
+            title: "Authentik",
+            url: "https://auth.example.test/",
+            signIn: "own",
+            admin: {
+              how: "The administrator, akadmin, is given a password on Authentik's initial setup page, /if/flow/initial-setup/, the first time it's opened. Anyone in the authentik Admins group administers it too.",
+            },
+          },
+        }),
+        packageRecord({
+          name: "projectsend",
+          namespace: "cc-office",
+          rollout: ["statefulset/redis", "deployment/projectsend"],
+          updated: CREATED,
+          app: {
+            title: "ProjectSend",
+            url: "https://files.example.test/",
+            signIn: "authentik",
+            admin: {
+              secret: { namespace: "cc-office", name: "projectsend-admin", key: "password" },
+              login: "admin@example.test",
+            },
+            note: "The administrator can also sign in through Authentik, with an Authentik account that has the same address.",
+          },
+        }),
+        packageRecord({
+          name: "plane",
+          namespace: "cc-office",
+          rollout: ["deployment/plane-web", "deployment/plane-api"],
+          updated: CREATED,
+          app: {
+            title: "Plane",
+            url: "https://plane.example.test/",
+            signIn: "own",
+            admin: {
+              secret: { namespace: "cc-office", name: "plane-admin", key: "password" },
+              login: "admin@example.test",
+            },
+            note: "The instance's own settings are at /god-mode/, for the same account.",
+          },
+        }),
+        packageRecord({
+          name: "twenty",
+          namespace: "cc-office",
+          rollout: ["deployment/twenty-server", "deployment/twenty-worker"],
+          updated: CREATED,
+          app: {
+            title: "Twenty",
+            url: "https://crm.example.test/",
+            signIn: "own",
+            admin: {
+              how: "The first person to sign up makes the workspace, and administers it. They invite everyone else from its settings.",
+            },
+          },
+        }),
+        packageRecord({
+          name: "picoclaw",
+          namespace: "cc-office",
+          rollout: ["deployment/picoclaw", "deployment/picoclaw-gate"],
+          updated: CREATED,
+          app: {
+            title: "Picoclaw",
+            url: "https://agent.example.test/",
+            signIn: "gate",
+            admin: { secret: { namespace: "cc-office", name: "picoclaw-launcher", key: "password" } },
+          },
+        }),
+        // Not an application, so not on the Office page
+        packageRecord({ name: "cert-manager", namespace: "cert-manager", chartVersion: "v1.19.1", rollout: [] }),
+      ].map((each) => [key(RECORD_NAMESPACE, each.metadata.name), each]),
+    ),
+    workloads: new Map(
+      [
+        workload("statefulset", "redis", 1),
+        workload("deployment", "projectsend", 1),
+        workload("deployment", "plane-web", 1),
+        workload("deployment", "plane-api", 1, 2),
+        workload("deployment", "twenty-server", 1),
+        workload("deployment", "twenty-worker", 1),
+        workload("deployment", "picoclaw", 0),
+        workload("deployment", "picoclaw-gate", 1),
+      ].map((each) => [key(each.namespace, `${each.kind}/${each.name}`), each]),
+    ),
     regions: ["fra", "sea"],
     version: 100,
   };
@@ -323,10 +619,19 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.postgres === undefined) {
+  if (holder.__meteorologistFixtures?.configMaps === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
+}
+
+/**
+ * Now, as the API server writes times.
+ *
+ * @returns
+ */
+function now(): string {
+  return new Date().toISOString().replace(/\.\d+Z$/, "Z");
 }
 
 /**
@@ -433,13 +738,92 @@ export function fixtureClient(): KubeClient {
       return copy(replaced);
     },
 
-    createSecret: async (namespace, name, _data, _labels, type = "Opaque") => {
+    // Gone at once, as if Cirrus had already cleaned up
+    deleteWebApplication: async (namespace, name) => {
+      store().webapps.delete(key(namespace, name));
+    },
+
+    createSecret: async (namespace, name, data, labels, type = "Opaque", annotations) => {
       requireNamespace(namespace);
       const id = key(namespace, name);
       if (store().secrets.has(id)) {
         throw new KubeError(409, `secrets "${name}" already exists`, "AlreadyExists");
       }
-      store().secrets.set(id, type);
+      store().secrets.set(id, { type, data: { ...data }, labels, annotations, creationTimestamp: now() });
+    },
+
+    applySecret: async (namespace, name, data, labels, annotations) => {
+      if (namespace !== DNS_NAMESPACE) {
+        requireNamespace(namespace);
+      }
+      const id = key(namespace, name);
+      const existing = store().secrets.get(id);
+      store().secrets.set(id, {
+        type: existing?.type ?? "Opaque",
+        data: { ...existing?.data, ...data },
+        labels: { ...existing?.labels, ...labels },
+        annotations: { ...existing?.annotations, ...annotations },
+        creationTimestamp: existing?.creationTimestamp ?? now(),
+      });
+    },
+
+    readSecretValue: async (namespace, name, secretKey) => {
+      const secret = store().secrets.get(key(namespace, name));
+      if (secret?.forbidden === true) {
+        throw new KubeError(
+          403,
+          `secrets "${name}" is forbidden: User "fixture" cannot get resource "secrets" in API group "" in the namespace "${namespace}"`,
+          "Forbidden",
+        );
+      }
+      return secret?.data[secretKey];
+    },
+
+    deleteSecret: async (namespace, name) => {
+      store().secrets.delete(key(namespace, name));
+    },
+
+    listDnsProviders: async () => copy([...store().dnsProviders.values()]),
+
+    applyDnsProvider: async (provider) => {
+      const existing = store().dnsProviders.get(provider.metadata.name);
+      const generation = (existing?.metadata.generation ?? 0) + 1;
+      const namespaces = provider.spec.namespaces ?? [];
+      // As Cirrus would report it, straight away
+      store().dnsProviders.set(
+        provider.metadata.name,
+        copy({
+          ...provider,
+          metadata: {
+            ...existing?.metadata,
+            ...provider.metadata,
+            generation,
+            creationTimestamp: existing?.metadata.creationTimestamp ?? now(),
+          },
+          spec: { ...existing?.spec, ...provider.spec },
+          status: {
+            observedGeneration: generation,
+            conditions: [
+              {
+                type: "Ready",
+                status: "True",
+                reason: "Ready",
+                observedGeneration: generation,
+                lastTransitionTime: now(),
+              },
+            ],
+            instances: namespaces.map((namespace) => ({
+              namespace,
+              deployment: `cirrus-dns-${provider.metadata.name}-${namespace}`,
+              ready: true,
+            })),
+          },
+        }),
+      );
+    },
+
+    deleteDnsProvider: async (name) => {
+      store().dnsProviders.delete(name);
     },
 
     patchNamespaceAnnotations: async (name, patch) => {
@@ -463,6 +847,11 @@ export function fixtureClient(): KubeClient {
     whoAmI: async () => ({ username: "fixtures", groups: [] }),
 
     listRegions: async () => [...store().regions],
+
+    getClusterUsage: async () => ({
+      nodes: [fixtureNode("fra-1", 16, 64, 5.2, 38), fixtureNode("sea-1", 8, 32, 1.4, 11)],
+      podPhases: [...Array.from({ length: 61 }, () => "Running"), "Succeeded", "Succeeded", "Failed"],
+    }),
 
     listResourceQuotas: async (namespace) => copy(inNamespace(store().quotas, namespace)),
 
@@ -503,8 +892,32 @@ export function fixtureClient(): KubeClient {
     listSecrets: async (namespace) =>
       [...store().secrets.entries()]
         .filter(([id]) => id.startsWith(`${namespace}/`))
-        .map(([id, type]) => ({ name: id.slice(namespace.length + 1), type })),
+        .map(([id, secret]) => ({
+          name: id.slice(namespace.length + 1),
+          type: secret.type,
+          labels: secret.labels,
+          annotations: secret.annotations,
+          creationTimestamp: secret.creationTimestamp,
+        })),
 
     listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
+
+    listCertificates: async (namespace) => copy(inNamespace(store().certificates, namespace)),
+
+    listConfigMaps: async (namespace, labelSelector) =>
+      copy(
+        inNamespace(store().configMaps, namespace).filter(
+          // Only "label" and "label=value" selectors, which is all this
+          // app asks with
+          (each) => {
+            const [label = "", value] = labelSelector.split("=");
+            const found = each.metadata.labels?.[label];
+            return value === undefined ? found !== undefined : found === value;
+          },
+        ),
+      ),
+
+    listWorkloads: async (namespace) =>
+      copy([...store().workloads.values()].filter((each) => each.namespace === namespace)),
   };
 }

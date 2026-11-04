@@ -13,7 +13,19 @@
  * HTTP status the API server gave, so a page can tell "you may not"
  * from "there's no such thing" without knowing about either client.
  */
-import type { LimitRange, Namespace, PostgresCluster, ResourceQuota, SecretSummary, ServiceAccount } from "./types";
+import type {
+  Certificate,
+  ConfigMap,
+  LimitRange,
+  Namespace,
+  PostgresCluster,
+  ResourceQuota,
+  SecretSummary,
+  ServiceAccount,
+  Workload,
+} from "./types";
+import type { ClusterUsage } from "../cluster";
+import type { DnsProvider } from "../dns/types";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -86,6 +98,15 @@ export interface KubeClient {
   listRegions(): Promise<string[]>;
 
   /**
+   * Each node's capacity and what its kubelet says it's using, and the
+   * phase of every pod. Needs cluster-wide reads, including nodes/proxy,
+   * so for most people it's a 403.
+   *
+   * @returns
+   */
+  getClusterUsage(): Promise<ClusterUsage>;
+
+  /**
    * ResourceQuotas, in one namespace or in all of them.
    *
    * @param namespace
@@ -154,12 +175,92 @@ export interface KubeClient {
   setImagePullSecrets(namespace: string, name: string, secrets: string[]): Promise<void>;
 
   /**
-   * The Secrets in a namespace, by name and type only.
+   * The Secrets in a namespace, by name, type and metadata only.
    *
    * @param namespace
    * @returns
    */
   listSecrets(namespace: string): Promise<SecretSummary[]>;
+
+  /**
+   * One key of a Secret, decoded, or undefined when the Secret or the
+   * key isn't there. Only ever called on the server, for a value it
+   * uses there and then, such as a GitLab token.
+   *
+   * @param namespace
+   * @param name
+   * @param key
+   * @returns
+   */
+  readSecretValue(namespace: string, name: string, key: string): Promise<string | undefined>;
+
+  /**
+   * Makes or replaces a Secret from plain strings, as Meteorologist's
+   * own. Keys it doesn't name are left as they were.
+   *
+   * @param namespace
+   * @param name
+   * @param data
+   * @param labels
+   * @param annotations
+   */
+  applySecret(
+    namespace: string,
+    name: string,
+    data: Record<string, string>,
+    labels?: Record<string, string>,
+    annotations?: Record<string, string>,
+  ): Promise<void>;
+
+  /**
+   * Removes a Secret, if it's there.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteSecret(namespace: string, name: string): Promise<void>;
+
+  /**
+   * Every DnsProvider. Empty when Cirrus's CRD for them isn't there.
+   *
+   * @returns
+   */
+  listDnsProviders(): Promise<DnsProvider[]>;
+
+  /**
+   * Makes a DnsProvider, or sets the spec fields Meteorologist owns on
+   * an existing one, with server-side apply.
+   *
+   * @param provider
+   */
+  applyDnsProvider(provider: DnsProvider): Promise<void>;
+
+  /**
+   * Removes a DnsProvider, if it's there. Cirrus's instances for it go
+   * with it.
+   *
+   * @param name
+   */
+  deleteDnsProvider(name: string): Promise<void>;
+
+  /**
+   * The ConfigMaps in a namespace with a label, such as the records
+   * the installer leaves of each package it installs.
+   *
+   * @param namespace
+   * @param labelSelector
+   * @returns
+   */
+  listConfigMaps(namespace: string, labelSelector: string): Promise<ConfigMap[]>;
+
+  /**
+   * The Deployments and StatefulSets in a namespace, as far as how
+   * many of each are ready.
+   *
+   * @param namespace
+   * @returns
+   */
+  listWorkloads(namespace: string): Promise<Workload[]>;
 
   /**
    * CloudNativePG Clusters, in one namespace or in all of them. Empty
@@ -169,6 +270,15 @@ export interface KubeClient {
    * @returns
    */
   listPostgresClusters(namespace?: string): Promise<PostgresCluster[]>;
+
+  /**
+   * cert-manager Certificates, in one namespace or in all of them.
+   * Empty when cert-manager isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listCertificates(namespace?: string): Promise<Certificate[]>;
 
   /**
    * WebApplications, in one namespace or in all of them.
@@ -205,6 +315,18 @@ export interface KubeClient {
   replaceWebApplication(app: WebApplication): Promise<WebApplication>;
 
   /**
+   * Asks for a WebApplication to be deleted. Cirrus's finalizer holds
+   * it until it has cleaned up what lives outside the namespace, and
+   * Kubernetes removes everything it owns after. One already gone
+   * counts as deleted.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  deleteWebApplication(namespace: string, name: string): Promise<void>;
+
+  /**
    * Makes a Secret from plain strings.
    *
    * @param namespace
@@ -212,6 +334,7 @@ export interface KubeClient {
    * @param data
    * @param labels
    * @param type Opaque unless said
+   * @param annotations
    */
   createSecret(
     namespace: string,
@@ -219,6 +342,7 @@ export interface KubeClient {
     data: Record<string, string>,
     labels?: Record<string, string>,
     type?: string,
+    annotations?: Record<string, string>,
   ): Promise<void>;
 }
 

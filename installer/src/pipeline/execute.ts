@@ -71,6 +71,9 @@ export interface ExecuteOptions {
   verbose?: boolean;
   verify?: boolean;
   reporter?: Reporter;
+
+  // Only these packages in "helm-charts". See PlanOptions.packages.
+  packages?: string[];
   showSummary?: boolean;
 
   // A bundle each node has to pass before the rest is asked of it.
@@ -212,6 +215,7 @@ async function verify(
   const checks = buildPlan(config, options.pipeline, fleet, {
     purposes: PROMPT_PURPOSES,
     tolerant: options.tolerant,
+    ...(options.packages !== undefined ? { packages: options.packages } : {}),
   });
 
   return runPlan(config, checks, fleet, {
@@ -234,6 +238,7 @@ function planFor(config: CloudConfig, fleet: Fleet, options: ExecuteOptions): Pl
   return buildPlan(config, options.pipeline, fleet, {
     ...(options.purposes !== undefined ? { purposes: options.purposes } : {}),
     ...(options.tolerant !== undefined ? { tolerant: options.tolerant } : {}),
+    ...(options.packages !== undefined ? { packages: options.packages } : {}),
   });
 }
 

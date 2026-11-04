@@ -8,7 +8,7 @@
  * be installed. Offering something the installer has no chart for
  * would be a promise it can't keep.
  */
-import { checkbox, confirm, input, password } from "@inquirer/prompts";
+import { checkbox, confirm, input, password, select } from "@inquirer/prompts";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -21,6 +21,7 @@ import {
   writePath,
 } from "../section.ts";
 import { packageCatalogue } from "../../commands/packages.ts";
+import { ProjectSendStorage } from "../../../util/projectsend.ts";
 
 export const packagesSection: ConfigSection = {
   name: "packages",
@@ -105,6 +106,29 @@ export const packagesSection: ConfigSection = {
         writePath(draft, "values.authentik.secretKey", randomBytes(48).toString("base64"));
         console.log("  Generated. It's in the configuration file, so keep that file private.");
       }
+    }
+
+    // Where ProjectSend keeps its files is decided once, since changing
+    // it later doesn't move the files already there
+    if (chosen.includes("projectsend") && readPath(draft, "values.projectsend.storage") === undefined) {
+      const storage = await select({
+        message: "Where should ProjectSend keep the files people share?",
+        choices: [
+          {
+            name: "A volume on a node's disks",
+            value: ProjectSendStorage.Local,
+            description: "Through TopoLVM. Needs nothing else, and keeps the files on the one node.",
+          },
+          {
+            name: "A bucket in SeaweedFS",
+            value: ProjectSendStorage.S3,
+            description: "Needs the seaweedfs package and an S3 hostname, since downloads are links to the bucket.",
+          },
+        ],
+        default: ProjectSendStorage.Local,
+      });
+
+      writePath(draft, "values.projectsend.storage", storage);
     }
   },
 };

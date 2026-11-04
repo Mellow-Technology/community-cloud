@@ -13,6 +13,7 @@ pub const READY: &str = "Ready";
 pub const PROVISIONED: &str = "Provisioned";
 pub const ROLLED_OUT: &str = "RolledOut";
 pub const WEBHOOK: &str = "WebhookRegistered";
+pub const RELEASE_CHECKED: &str = "ReleaseChecked";
 
 /// Set a condition in `conditions`, keeping its transition time when
 /// its status hasn't changed.

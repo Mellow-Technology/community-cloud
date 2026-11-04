@@ -26,6 +26,7 @@ import { buildKubeEnv } from "../../util/kube.ts";
 import { CLASSES_LABEL, STORAGE_ROLE_SELECTOR, readShape } from "../../util/storage.ts";
 import { field, readLines, readRecordsOfKind } from "./output.ts";
 import { buildHelmEnv } from "./Helm.install.ts";
+import { buildRecordCommand } from "./PackageRecord.ts";
 import {
   buildCreateSecretCommand,
   buildVerifySecretsCommand,
@@ -812,6 +813,11 @@ export function buildPackageCommands(
     );
   }
 
+  // What was installed, for Meteorologist and whatever else asks.
+  // Ahead of the checks, so an install that's slow to come up is
+  // still on record as having been made.
+  commands.push(buildRecordCommand(definition));
+
   // Whether it's there at all, and the package's own checks only if
   // it is. The mail checks belong to the namespace rather than to the
   // package, so they're asked either way.
@@ -888,7 +894,7 @@ export function buildPackageCommands(
  * @returns
  */
 export function buildPackageInventoryCommand(config: CloudConfig): CommandSpec {
-  const enabled = new Set(resolveInstallOrder(config).map((definition) => definition.name));
+  const enabled = new Set(resolveInstallOrder(config, true).map((definition) => definition.name));
   const selections = getPackageSelections(config);
 
   const others = packageCatalogue
@@ -971,6 +977,37 @@ export function buildSinglePackageBundle(name: string) {
 }
 
 /**
+ * Build a bundle that installs a few packages in turn, and nothing
+ * else.
+ *
+ * For packages that only make sense together, where one is what the
+ * next requires — the MariaDB operator and its resource types, which
+ * come as two charts. Each is checked and installed as it would be on
+ * its own, in order, so each one's requirements are there by the time
+ * they're checked. A command two of them share, like the check that
+ * Helm is there, runs once.
+ *
+ * @param names the packages, in the order they go in
+ * @returns the bundle's commands, as a function of the configuration
+ */
+export function buildPackagesBundle(names: string[]) {
+  return (config: CloudConfig): CommandSpec[] => {
+    const seen = new Set<string>();
+
+    return names
+      .flatMap((name) => buildSinglePackageBundle(name)(config))
+      .filter((command) => {
+        if (seen.has(command.name)) {
+          return false;
+        }
+
+        seen.add(command.name);
+        return true;
+      });
+  };
+}
+
+/**
  * Check everything a package needs is already on the cluster.
  *
  * Asked with the same probe as each one's own check that it's
@@ -1031,11 +1068,32 @@ function buildRequirementCommand(
  * configuration knows which packages a cluster wants — and, through
  * their dependencies, which others come with them.
  *
+ * A run can ask for only some of them ("packages" in the context, from
+ * --packages), to upgrade a few at a time. They keep their place in
+ * the order, and what they need isn't installed with them: it's
+ * checked for instead, as a package's own bundle does, since a
+ * staggered upgrade is of a cluster that already has it.
+ *
  * @param config
+ * @param context
  * @returns
  */
-export function HelmCommands(config: CloudConfig): CommandSpec[] {
-  const ordered = resolveInstallOrder(config);
+export function HelmCommands(config: CloudConfig, context: any = {}): CommandSpec[] {
+  const only: string[] | undefined = Array.isArray(context?.packages) ? context.packages : undefined;
+  const everything = resolveInstallOrder(config, only !== undefined);
+
+  if (only !== undefined) {
+    const known = everything.map((entry) => entry.name);
+    const unknown = only.filter((name) => !known.includes(name));
+
+    if (unknown.length > 0) {
+      throw new Error(
+        `${unknown.map((name) => `"${name}"`).join(", ")} ${unknown.length === 1 ? "isn't a package" : "aren't packages"} this configuration installs. It installs: ${known.join(", ")}.`,
+      );
+    }
+  }
+
+  const ordered = only !== undefined ? everything.filter((entry) => only.includes(entry.name)) : everything;
 
   // Credentials are identified by where they go, not by who asked for
   // them, so two packages naming the same one mean one secret and not
@@ -1059,7 +1117,11 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
     ];
   }
 
-  console.log(`Packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`);
+  console.log(
+    only !== undefined
+      ? `Only these packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`
+      : `Packages, in the order they'll be installed: ${ordered.map((entry) => entry.name).join(" → ")}`,
+  );
 
   const commands: CommandSpec[] = [
     checkHelmAvailableCommand,
@@ -1067,6 +1129,20 @@ export function HelmCommands(config: CloudConfig): CommandSpec[] {
   ];
 
   for (const definition of ordered) {
+    // What it needs and isn't being installed alongside it has to be
+    // there already
+    if (only !== undefined) {
+      const missing = (definition.requires ?? [])
+        .filter((name) => !only.includes(name))
+        .map((name) => everything.find((entry) => entry.name === name))
+        .filter((entry): entry is PackageDefinition => entry !== undefined);
+
+      const requirement = buildRequirementCommand(definition, missing);
+      if (requirement !== undefined) {
+        commands.push(requirement);
+      }
+    }
+
     commands.push(...buildPackageCommands(definition, madeSecrets));
   }
 

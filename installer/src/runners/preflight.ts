@@ -30,11 +30,13 @@ import {
   getSignInClients,
   signsInThroughAuthentik,
 } from "../cli/commands/ClusterSignIn.ts";
-import { getPlacement } from "../util/placement.ts";
+import { AFFINITIES, getPlacement } from "../util/placement.ts";
 import { getObjectStorageShape } from "../util/objectStorage.ts";
 import { checkMailConfig, getMailSecurity, getNamespaceMail } from "../util/mail.ts";
 import { checkDnsConfig } from "../util/dns.ts";
+import { checkProjectSendConfig } from "../util/projectsend.ts";
 import { checkSchema } from "../util/configSchema.ts";
+import { API_KEY_ENV, hasApiKey, usesNebula } from "../cli/commands/NebulaNetwork.ts";
 import CloudConfig from "../util/CloudConfig.ts";
 import { loadPlugins } from "../plugins/registry.ts";
 import { GatewayMode, K3SInstallationType, NodeRole } from "../util/types.ts";
@@ -254,13 +256,25 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     say(problem);
   }
 
+  // ProjectSend's files in a bucket need SeaweedFS, and a hostname
+  // browsers can fetch them from
+  const selections = getPackageSelections(config);
+  const enabledPackages = Object.entries(selections)
+    .filter(([, selection]) => selection.enabled !== false)
+    .map(([name]) => name);
+  if (enabledPackages.includes("projectsend")) {
+    for (const problem of checkProjectSendConfig(config.getConfig(), enabledPackages)) {
+      say(problem);
+    }
+  }
+
   // What each enabled package's templates need. Checked here because
   // the alternative is finding out from a route with no hostname.
   // Looked up the way a template sees them: "values" laid over the
   // top of the rest of the configuration.
   const raw = config.getConfig();
   const values = { ...raw, ...(raw.values ?? {}) };
-  for (const [name, selection] of Object.entries(getPackageSelections(config))) {
+  for (const [name, selection] of Object.entries(selections)) {
     const definition = getPackage(name);
 
     if (selection.enabled === false) {
@@ -319,9 +333,20 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     }
   }
 
+  // Nebula is on when the configuration names a network, and install
+  // enrols every node then, which needs a key. Settings without a
+  // network turn nothing on, which is worth saying in case they were
+  // meant to.
+  const nebula = config.getNetworkSection("nebula");
+  if (usesNebula(config) && !hasApiKey(config)) {
+    say(`"network.nebula" names a network, so every node is enrolled on it, and there's no Defined Networking API key to do that with. Set "network.nebula.apiKey", or ${API_KEY_ENV} in the environment.`);
+  } else if (!usesNebula(config) && ["apiKey", "defaultRole", "roles"].some((key) => nebula[key] !== undefined)) {
+    say('"network.nebula" has settings but no "network" or "networkID", so nodes won\'t be put on a mesh. Name the network, or remove the section.');
+  }
+
   // Placing a namespace in a region with no nodes in it, or none that
   // say where they are, leaves every pod made there waiting forever
-  for (const [namespace, region] of Object.entries(getPlacement(config))) {
+  for (const [namespace, { region, affinity }] of Object.entries(getPlacement(config))) {
     if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(namespace) || namespace.length > 63) {
       say(`"placement" names "${namespace}", which isn't a namespace name Kubernetes would take: lower case letters, digits and hyphens, at most 63.`);
     }
@@ -329,6 +354,10 @@ export function checkConfiguration(config: CloudConfig): Problem[] {
     const there = nodes.filter((node: any) => node.region === region);
     if (there.length === 0) {
       say(`"placement" puts ${namespace} in ${region}, and no node has "region": "${region}", so nothing made in ${namespace} could be scheduled.`);
+    }
+
+    if (!(AFFINITIES as readonly string[]).includes(affinity)) {
+      say(`"placement" gives ${namespace} an affinity of ${JSON.stringify(affinity)}, which isn't one of ${AFFINITIES.map((name) => `"${name}"`).join(" or ")}.`);
     }
   }
 

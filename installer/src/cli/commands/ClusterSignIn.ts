@@ -19,8 +19,14 @@
  *
  * Headlamp's client has a fixed ID, "headlamp", rather than a generated
  * one, since the API server is told it when K3s is installed, which
- * may be long before Authentik is. Any other client, such as one made
- * by hand for kubectl, is listed under "k3s.signInClients".
+ * may be long before Authentik is; Meteorologist's is "meteorologist",
+ * for the same reason. Any other client, such as one made by hand for
+ * kubectl, is listed under "k3s.signInClients".
+ *
+ * Enabling Headlamp or Meteorologist on a cluster that's already
+ * running only changes the file. The cluster-sign-in bundle rewrites
+ * it on each server without touching K3s, and checks the API server
+ * is actually reading it.
  *
  * A person is "authentik:<their username>", and is in
  * "authentik:<group>" for each of their Authentik groups. The prefix is
@@ -43,6 +49,10 @@ import CloudConfig from "../../util/CloudConfig.ts";
 // The client in Authentik the API server accepts Headlamp's tokens
 // for, and the application slug its issuer's address is made from
 export const CLUSTER_CLIENT_ID = "headlamp";
+
+// Meteorologist's, which works the same way: the client ID is the
+// audience, and the application slug the issuer
+export const METEOROLOGIST_CLIENT_ID = "meteorologist";
 
 // What every name from Authentik is given in front, for users and
 // groups alike
@@ -75,26 +85,28 @@ export interface SignInClient {
 }
 
 /**
- * Whether Headlamp is to be installed.
+ * Whether a package is to be installed.
  *
  * Read from the configuration directly rather than through the package
- * catalogue, which names this file's client ID and so can't be
+ * catalogue, which names this file's client IDs and so can't be
  * imported by it. "true", or a selection not switched off.
  *
  * @param config
+ * @param name
  * @returns
  */
-function installsHeadlamp(config: CloudConfig): boolean {
-  const headlamp = config.getConfig()?.packages?.headlamp;
+function installs(config: CloudConfig, name: string): boolean {
+  const selection = config.getConfig()?.packages?.[name];
   return (
-    headlamp === true ||
-    (typeof headlamp === "object" && headlamp !== null && headlamp.enabled !== false)
+    selection === true ||
+    (typeof selection === "object" && selection !== null && selection.enabled !== false)
   );
 }
 
 /**
- * Every client the API server should accept tokens for: Headlamp's,
- * when it's being installed, and whatever the configuration lists.
+ * Every client the API server should accept tokens for: Headlamp's and
+ * Meteorologist's, when they're being installed, and whatever the
+ * configuration lists.
  *
  * @param config
  * @returns
@@ -103,7 +115,10 @@ export function getSignInClients(config: CloudConfig): SignInClient[] {
   const listed = config.getConfig()?.k3s?.signInClients;
 
   return [
-    ...(installsHeadlamp(config) ? [{ application: CLUSTER_CLIENT_ID, clientId: CLUSTER_CLIENT_ID }] : []),
+    ...(installs(config, "headlamp") ? [{ application: CLUSTER_CLIENT_ID, clientId: CLUSTER_CLIENT_ID }] : []),
+    ...(installs(config, "meteorologist")
+      ? [{ application: METEOROLOGIST_CLIENT_ID, clientId: METEOROLOGIST_CLIENT_ID }]
+      : []),
     ...(Array.isArray(listed) ? listed : []),
   ];
 }

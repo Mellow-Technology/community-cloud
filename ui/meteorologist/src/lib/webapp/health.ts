@@ -14,6 +14,7 @@
 import {
   CONDITION_PROVISIONED,
   CONDITION_READY,
+  CONDITION_RELEASE_CHECKED,
   CONDITION_ROLLED_OUT,
   CONDITION_WEBHOOK,
   type WebApplication,
@@ -23,12 +24,15 @@ import type { Condition } from "../kube/types";
 /**
  * - healthy: running the image it should, with everything it asked for
  * - degraded: running, but something around it isn't right, such as
- *   the forge's webhook
+ *   the forge's webhook, or GitLab not answering when asked for the
+ *   newest release
  * - progressing: on its way, such as mid-rollout or migrating
  * - failing: stuck until someone does something
  * - pending: Cirrus hasn't looked at this version of it yet
+ * - deleting: asked to be deleted, and waiting on Cirrus to clean up
+ *   what it made outside the namespace
  */
-export type HealthState = "healthy" | "degraded" | "progressing" | "failing" | "pending";
+export type HealthState = "healthy" | "degraded" | "progressing" | "failing" | "pending" | "deleting";
 
 /**
  * GUI Mellow's tones, which badges and dots are coloured by.
@@ -50,6 +54,7 @@ const PRESENTATION: Record<HealthState, { tone: HealthTone; label: string }> = {
   progressing: { tone: "primary", label: "Progressing" },
   failing: { tone: "danger", label: "Failing" },
   pending: { tone: "neutral", label: "Pending" },
+  deleting: { tone: "neutral", label: "Deleting" },
 };
 
 // Reasons that mean waiting won't help
@@ -88,6 +93,10 @@ export function appHealth(app: WebApplication): Health {
   const conditions = status?.conditions ?? [];
   const generation = app.metadata.generation;
 
+  // Whatever it said before, it's on its way out
+  if (app.metadata.deletionTimestamp !== undefined) {
+    return health("deleting", "Cirrus is removing what it made for this application.");
+  }
   if (conditions.length === 0) {
     return health("pending", "Cirrus hasn't reported on this application yet.");
   }
@@ -97,8 +106,12 @@ export function appHealth(app: WebApplication): Health {
 
   const ready = findCondition(conditions, CONDITION_READY);
   const webhook = findCondition(conditions, CONDITION_WEBHOOK);
+  const checked = findCondition(conditions, CONDITION_RELEASE_CHECKED);
 
   if (ready?.status === "True") {
+    if (checked?.status === "False") {
+      return health("degraded", checked.message || "Cirrus couldn't ask GitLab for the newest release.");
+    }
     return webhook?.status === "False"
       ? health("degraded", webhook.message || "The forge's webhook isn't registered, so new releases won't arrive.")
       : health("healthy");
@@ -123,7 +136,14 @@ export function appHealth(app: WebApplication): Health {
  * @returns
  */
 export function countHealth(apps: WebApplication[]): Record<HealthState, number> {
-  const counts: Record<HealthState, number> = { healthy: 0, degraded: 0, progressing: 0, failing: 0, pending: 0 };
+  const counts: Record<HealthState, number> = {
+    healthy: 0,
+    degraded: 0,
+    progressing: 0,
+    failing: 0,
+    pending: 0,
+    deleting: 0,
+  };
   for (const app of apps) {
     counts[appHealth(app).state] += 1;
   }
@@ -133,7 +153,7 @@ export function countHealth(apps: WebApplication[]): Record<HealthState, number>
 /**
  * The order states are listed in, worst first.
  */
-export const HEALTH_ORDER: HealthState[] = ["failing", "degraded", "progressing", "pending", "healthy"];
+export const HEALTH_ORDER: HealthState[] = ["failing", "degraded", "progressing", "pending", "healthy", "deleting"];
 
 /**
  * The word and colour for a state.

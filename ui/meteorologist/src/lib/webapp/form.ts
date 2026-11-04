@@ -18,13 +18,13 @@
  * a field Cirrus adds after this was written all come through as they
  * were.
  */
+import type { GitLabConnection } from "../gitlab/connections";
 import type { EnvVar, ResourceRequirements } from "../kube/types";
 import {
   API_VERSION,
   DEFAULT_GITLAB_REF,
   DEFAULT_GITLAB_URL,
   DEFAULT_IMAGE_TAG,
-  DEFAULT_PORT,
   DEFAULT_REPLICAS,
   DEFAULT_TAG,
   DEFAULT_TOKEN_KEY,
@@ -54,6 +54,9 @@ export interface WebApplicationForm {
   namespace: string;
   name: string;
 
+  // Whether the image is one of a GitLab project's, chosen through a
+  // connection, or typed in. Only the first can update itself.
+  imageSource: ImageSource;
   repository: string;
   tag: string;
   imagePullSecrets: string;
@@ -78,6 +81,7 @@ export interface WebApplicationForm {
   migrationArgs: string;
   migrationTimeoutSeconds: string;
 
+  // Whether new images are rolled out as pipelines build them
   gitlab: boolean;
   gitlabUrl: string;
   gitlabProject: string;
@@ -92,6 +96,8 @@ export interface WebApplicationForm {
   preservedEnv: EnvVar[];
 }
 
+export type ImageSource = "gitlab" | "other";
+
 /**
  * The form for an application that doesn't exist yet.
  *
@@ -102,11 +108,13 @@ export function emptyForm(namespace = ""): WebApplicationForm {
   return {
     namespace,
     name: "",
+    imageSource: "gitlab",
     repository: "",
     tag: DEFAULT_TAG,
     imagePullSecrets: "",
     replicas: String(DEFAULT_REPLICAS),
-    port: String(DEFAULT_PORT),
+    // Blank: read from the image
+    port: "",
     healthCheckPath: "",
     cpuRequest: "",
     memoryRequest: "",
@@ -131,6 +139,27 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     env: [],
     preservedEnv: [],
   };
+}
+
+/**
+ * The form's connection fields set to a namespace's only GitLab
+ * connection, when it has exactly one, so there's nothing to choose.
+ *
+ * @param namespace
+ * @returns
+ */
+export function soleConnection(
+  namespace: { gitlabConnections?: GitLabConnection[] } | undefined,
+): Partial<WebApplicationForm> {
+  const only = namespace?.gitlabConnections?.length === 1 ? namespace.gitlabConnections[0] : undefined;
+  return only
+    ? {
+        gitlabTokenSecretName: only.name,
+        gitlabTokenSecretKey: DEFAULT_TOKEN_KEY,
+        gitlabUrl: only.url,
+        gitlabProject: "",
+      }
+    : { gitlabTokenSecretName: "", gitlabProject: "" };
 }
 
 /**
@@ -176,11 +205,12 @@ export function toForm(app: WebApplication): WebApplicationForm {
   return {
     namespace: app.metadata.namespace ?? "",
     name: app.metadata.name,
+    imageSource: gitlab !== undefined ? "gitlab" : "other",
     repository: spec.image.repository,
     tag: spec.image.tag ?? DEFAULT_TAG,
     imagePullSecrets: (spec.imagePullSecrets ?? []).join(", "),
     replicas: String(spec.replicas ?? DEFAULT_REPLICAS),
-    port: String(spec.port ?? DEFAULT_PORT),
+    port: spec.port !== undefined ? String(spec.port) : "",
     healthCheckPath: spec.healthCheck?.path ?? "",
     cpuRequest: spec.resources?.requests?.cpu ?? "",
     memoryRequest: spec.resources?.requests?.memory ?? "",
@@ -311,7 +341,13 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
 
   spec.image = { ...spec.image, repository: form.repository.trim(), tag: nonEmpty(form.tag) ?? DEFAULT_TAG };
   spec.replicas = toInteger(form.replicas) ?? DEFAULT_REPLICAS;
-  spec.port = toInteger(form.port) ?? DEFAULT_PORT;
+  // Left out, Cirrus reads it from the image
+  const port = toInteger(form.port);
+  if (port === undefined) {
+    delete spec.port;
+  } else {
+    spec.port = port;
+  }
 
   const env: EnvVar[] = [
     ...form.env.filter((row) => row.name.trim() !== "").map((row) => ({ name: row.name.trim(), value: row.value })),
@@ -351,7 +387,7 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
     delete spec.migrations;
   }
 
-  if (form.gitlab) {
+  if (form.gitlab && form.imageSource === "gitlab") {
     spec.source = {
       ...spec.source,
       gitlab: {
@@ -433,9 +469,10 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     errors.replicas = "A whole number, zero or more.";
   }
 
+  // Blank is fine: Cirrus reads it from the image
   const port = toInteger(form.port);
-  if (port === undefined || port < 1 || port > 65535) {
-    errors.port = "A port number, from 1 to 65535.";
+  if (form.port.trim() !== "" && (port === undefined || port < 1 || port > 65535)) {
+    errors.port = "A port number, from 1 to 65535, or blank to use the image's.";
   }
 
   if (form.healthCheckPath.trim() !== "" && !form.healthCheckPath.trim().startsWith("/")) {
@@ -477,19 +514,19 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     }
   }
 
-  if (form.gitlab) {
+  if (form.gitlab && form.imageSource === "gitlab") {
     const url = form.gitlabUrl.trim();
+    const secret = form.gitlabTokenSecretName.trim();
+    if (secret === "") {
+      errors.gitlabTokenSecretName = "Choose the GitLab connection it updates through.";
+    } else if (secret.length > 253 || !SECRET_NAME.test(secret)) {
+      errors.gitlabTokenSecretName = "Not a valid Secret name.";
+    }
     if (url !== "" && !/^https?:\/\/[^\s/]+/.test(url)) {
       errors.gitlabUrl = "The GitLab instance's address, such as https://gitlab.com.";
     }
     if (form.gitlabProject.trim() === "") {
-      errors.gitlabProject = "The project's path, such as group/app, or its numeric id.";
-    }
-    const secret = form.gitlabTokenSecretName.trim();
-    if (secret === "") {
-      errors.gitlabTokenSecretName = "Name the Secret holding the access token, or create one below.";
-    } else if (secret.length > 253 || !SECRET_NAME.test(secret)) {
-      errors.gitlabTokenSecretName = "Not a valid Secret name.";
+      errors.gitlabProject = "Choose the project whose images it runs.";
     }
   }
 

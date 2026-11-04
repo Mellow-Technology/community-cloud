@@ -175,6 +175,7 @@ program
   .option("--dry-run", "Work out every step and print it, changing nothing")
   .option("--timeout <seconds>", "How long to give a node to answer when connecting")
   .option("--verbose", "Print each command's output as well as the report")
+  .option("--packages <names>", 'Only these packages in "helm-charts", comma separated, for upgrading a few at a time')
   .action(runBundle);
 
 // Run several bundles
@@ -188,6 +189,7 @@ program
   .option("--dry-run", "Work out every step and print it, changing nothing")
   .option("--timeout <seconds>", "How long to give a node to answer when connecting")
   .option("--verbose", "Print each command's output as well as the report")
+  .option("--packages <names>", 'Only these packages in "helm-charts", comma separated, for upgrading a few at a time')
   .action(runPipeline);
 
 // List bundles

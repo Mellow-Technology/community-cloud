@@ -41,23 +41,33 @@ import { loadPlugins } from "../plugins/registry.ts";
  *  2. preflight      — say what would stop this before anything changes
  *  3. base           — the packages every later step assumes
  *  4. network        — kernel networking
- *  5. gpu            — detect hardware, so the labels can describe it
- *  6. registries     — credentials, before K3s starts and reads them
- *  7. lvm            — volume groups, before anything wants storage
- *  8. k3s            — the agent joins
- *  9. nodeLabels     — the node described to the cluster
- * 10. node-joined    — the cluster's own word that it worked
+ *  5. nebula         — onto the mesh, when the cluster has one
+ *  6. gpu            — detect hardware, so the labels can describe it
+ *  7. registries     — credentials, before K3s starts and reads them
+ *  8. lvm            — volume groups, before anything wants storage
+ *  9. k3s            — the agent joins, on its mesh address if it has one
+ * 10. nodeLabels     — the node described to the cluster
+ * 11. gateway-addresses — the pool and the cluster Gateway brought up
+ *                     to date, for a gateway node with an address of
+ *                     its own. The one cluster-wide step, and only
+ *                     the part of "gateway" that is about addresses.
+ * 12. node-joined    — the cluster's own word that it worked
+ *
+ * nebula-network isn't here: the mesh's roles belong to the cluster,
+ * and were made when it was installed. Enrolling looks them up.
  */
 export const ADD_NODE_PIPELINE = [
   "cluster-online",
   "preflight",
   "base",
   "network",
+  "nebula",
   "gpu",
   "registries",
   "lvm",
   "k3s",
   "nodeLabels",
+  "gateway-addresses",
   "node-joined",
 ];
 

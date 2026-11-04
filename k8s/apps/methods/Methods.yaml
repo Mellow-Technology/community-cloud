@@ -1,0 +1,122 @@
+# Methods
+#
+# One process: the API, the web app and the MCP endpoint bots connect
+# to, on the one port. It keeps nothing on disk — its data is in its
+# database and its files in its bucket — and migrates the database
+# itself each time it starts.
+apiVersion: v1
+kind: Service
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  selector:
+    app: methods
+    role: server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  # One is plenty. More would work: live updates fan out through
+  # Postgres, so every process hears about every change.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: methods
+      role: server
+  template:
+    metadata:
+      labels:
+        app: methods
+        role: server
+        app.kubernetes.io/managed-by: "community-cloud"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+      securityContext:
+        # The image's own user
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: methods
+          # Pinned to the commit the image was built from, until Methods
+          # has releases
+          image: ghcr.io/mellow-technology/methods:sha-0e01829
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: methods
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: methods-db
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: methods-db
+                  key: password
+            # The generated password is words and hyphens, so it goes
+            # into a URL as it is
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASS)@cc-postgres-rw:5432/methods"
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: methods-oidc
+                  key: username
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: methods-oidc
+                  key: password
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: methods-s3
+                  key: accessKey
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: methods-s3
+                  key: secretKey
+          ports:
+            - name: http
+              containerPort: 8080
+          # Migrations run before it listens, which is quick but not
+          # instant on a first start
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: 50m
+            limits:
+              memory: "512Mi"

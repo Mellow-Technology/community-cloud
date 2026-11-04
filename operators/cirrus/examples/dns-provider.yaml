@@ -1,0 +1,31 @@
+# Publishing the acme namespace's hostnames in Cloudflare: every
+# WebApplication there naming a hostname under acme.example gets its
+# DNS record made, and removed again when the hostname goes.
+#
+# The credentials are kept in the external-dns namespace, which no
+# application runs in, so having access to acme doesn't mean being
+# able to read the token. Put the real one in with
+#   kubectl -n external-dns create secret generic cirrus-dns-acme \
+#     --from-literal=CF_API_TOKEN=...
+# rather than committing it. Each key becomes one of ExternalDNS's
+# environment variables, named as the provider's documentation names
+# them.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cirrus-dns-acme
+  namespace: external-dns
+stringData:
+  CF_API_TOKEN: REPLACE-ME
+---
+apiVersion: community-cloud.technology/v1alpha1
+kind: DnsProvider
+metadata:
+  name: acme
+spec:
+  provider: cloudflare
+  domains: [acme.example]
+  namespaces: [acme]
+  # Behind a router forwarding ports, the Gateway's own address is a
+  # private one; this is what the records point at instead
+  target: 203.0.113.7

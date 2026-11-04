@@ -24,6 +24,12 @@ pub enum Error {
     #[error("forge: {0}")]
     Forge(String),
 
+    /// Reading an image from its registry. Usually something a person
+    /// has to fix — a missing pull Secret, a tag that isn't there — so
+    /// it's shown in a condition rather than only retried.
+    #[error("{0}")]
+    Registry(String),
+
     #[error("finalizer: {0}")]
     Finalizer(String),
 }

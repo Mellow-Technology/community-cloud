@@ -1,9 +1,10 @@
 /**
  * @file
- * The landing page: how the applications are doing, what needs
- * looking at, and the way to everything else.
+ * The landing page: how the cluster and the applications are doing, each of them
+ * worst first, and the way to everything else.
  */
 import Link from "next/link";
+import { Badge } from "gui-mellow/Badge";
 import { Button } from "gui-mellow/Button";
 import { Card } from "gui-mellow/Card";
 import { Grid } from "gui-mellow/Grid";
@@ -11,6 +12,8 @@ import { Stat } from "gui-mellow/Stat";
 import { Table } from "gui-mellow/Table";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { certificateCell } from "@/components/CertificateBadge";
+import { ClusterPanel } from "@/components/ClusterPanel";
 import { HealthBadge } from "@/components/HealthBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
@@ -25,17 +28,19 @@ import styles from "@/components/page.module.scss";
  */
 export default async function OverviewPage() {
   const kube = await getKube();
-  const [namespaces, apps] = await Promise.all([
+  const [namespaces, apps, certificates, usage] = await Promise.all([
     settle(() => kube.listNamespaces()),
     settle(() => kube.listWebApplications()),
+    settle(() => kube.listCertificates()),
+    settle(() => kube.getClusterUsage()),
   ]);
 
   const counts = apps.ok ? countHealth(apps.value) : undefined;
   const total = apps.ok ? apps.value.length : undefined;
-  const attention = apps.ok
+  // Worst first, so what needs looking at is at the top
+  const listed = apps.ok
     ? apps.value
         .map((app) => ({ app, health: appHealth(app) }))
-        .filter(({ health }) => health.state !== "healthy")
         .sort((a, b) => HEALTH_ORDER.indexOf(a.health.state) - HEALTH_ORDER.indexOf(b.health.state))
     : [];
 
@@ -51,40 +56,55 @@ export default async function OverviewPage() {
       <Grid min="180px" gap={4} className={styles.stats}>
         <Stat label="Applications" value={total ?? "—"} />
         <Stat label="Healthy" value={counts?.healthy ?? "—"} total={total} separator="of" />
-        <Stat label="Need attention" value={counts && total !== undefined ? total - counts.healthy : "—"} />
+        <Stat
+          label="Need attention"
+          value={counts && total !== undefined ? total - counts.healthy - counts.deleting : "—"}
+        />
         <Stat label="Namespaces" value={namespaces.ok ? namespaces.value.length : "—"} />
       </Grid>
 
       {!apps.ok && <ErrorNotice error={apps.error} title="Couldn't list applications" />}
 
+      <ClusterPanel usage={usage} />
+
       {counts && (
         <section className={styles.section}>
           <h2 className={styles.heading}>Health</h2>
           <ul className={styles.healthRow}>
-            {HEALTH_ORDER.map((state) => (
-              <li key={state}>
-                <HealthBadge health={{ state, ...presentHealth(state) }} />
-                <span className={styles.count}>{counts[state]}</span>
-              </li>
-            ))}
+            {HEALTH_ORDER.filter((state) => state !== "deleting" || counts.deleting > 0).map((state) => {
+              const { tone, label } = presentHealth(state);
+              return (
+                <li key={state}>
+                  <Badge tone={tone} dot uppercase={false}>
+                    {label} <span className={styles.count}>{counts[state]}</span>
+                  </Badge>
+                </li>
+              );
+            })}
           </ul>
-        </section>
-      )}
 
-      {attention.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.heading}>Needs attention</h2>
-          <Table
-            columns={["Application", "Namespace", "Health", "Why"]}
-            rows={attention.map(({ app, health }) => [
-              <Link key="name" href={appHref(app)}>
-                {app.metadata.name}
-              </Link>,
-              app.metadata.namespace,
-              <HealthBadge key="health" health={health} />,
-              health.message ?? "",
-            ])}
-          />
+          {listed.length === 0 ? (
+            <p className={styles.empty}>
+              No applications yet. <Link href="/apps/new">Create one</Link>.
+            </p>
+          ) : (
+            <Table
+              columns={[
+                { label: "Application", sortable: true },
+                { label: "Namespace", sortable: true },
+                { label: "Health", sortable: true },
+                ...(certificates.ok ? [{ label: "Certificate", sortable: true }] : []),
+                "Why",
+              ]}
+              rows={listed.map(({ app, health }) => [
+                { value: app.metadata.name, display: <Link href={appHref(app)}>{app.metadata.name}</Link> },
+                app.metadata.namespace ?? "",
+                { value: HEALTH_ORDER.indexOf(health.state), display: <HealthBadge health={health} /> },
+                ...(certificates.ok ? [certificateCell(app, certificates.value)] : []),
+                health.message ?? "",
+              ])}
+            />
+          )}
         </section>
       )}
 
@@ -102,6 +122,10 @@ export default async function OverviewPage() {
                 ).join(", ") + ". "
               : ""}
             Turn on what each namespace may use.
+          </Card>
+          <Card title="Office" href="/office" footer="Office →">
+            The applications installed for the cluster&apos;s people, how each is signed in to, and, for cluster admins,
+            the administrator passwords.
           </Card>
           <Card title="New application" href="/apps/new" footer="Start →">
             Run an image with a database, a bucket or a queue, served on your own hostname and updated from GitLab.

@@ -1,0 +1,60 @@
+# Methods's bucket in the cluster's SeaweedFS, for the files attached
+# to work items, and keys to it and nothing else.
+#
+# Requests the SeaweedFS operator carries out, as for Twenty: the
+# bucket, an S3 user called "methods", and a key pair for it, written
+# into the Secret "methods-s3" here. See k8s/storage/README.md.
+#
+# Methods reads files out of the bucket and sends them on itself, so
+# SeaweedFS is never reached from outside the cluster.
+#
+# The bucket stays if this is ever removed — "Retain" is the operator's
+# default. The user and its keys go.
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Identity
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: S3Credentials
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  seaweedRef:
+    name: seaweed
+    namespace: seaweedfs
+  identityRef:
+    name: methods
+  # Made and owned by the operator, with the keys under "accessKey"
+  # and "secretKey"
+  secretRef:
+    name: methods-s3
+---
+apiVersion: seaweed.seaweedfs.com/v1
+kind: Bucket
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  clusterRef:
+    name: seaweed
+    namespace: seaweedfs
+  # Attachments, and images in descriptions and comments; uploads are
+  # capped at 25MB each
+  quota:
+    size: 20Gi
+  access:
+    - user: methods
+      actions: [Read, Write, List, Tagging]

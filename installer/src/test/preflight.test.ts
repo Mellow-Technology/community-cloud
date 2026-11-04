@@ -218,7 +218,7 @@ describe("what preflight warns about without stopping", () => {
 
   it("doesn't stop an install over it", () => {
     assert.deepEqual(
-      checkConfiguration(configFrom({ k3s: { token: "t" }, nodes: [SERVER], network: { nebula: { id: "x", network: "home" } } })),
+      checkConfiguration(configFrom({ k3s: { token: "t" }, nodes: [SERVER], network: { nebula: { id: "x", network: "home", apiKey: "k" } } })),
       [],
     );
   });

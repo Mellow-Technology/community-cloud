@@ -44,10 +44,19 @@ domain:
   signing: "sign.example.com"
   # Plane hostname (derived: plane.<main>)
   plane: "plane.example.com"
+  # Methods, its API and its MCP endpoint (derived: methods.<main>)
+  methods: "methods.example.com"
   # Headlamp, signed into through Authentik (derived: headlamp.<main>)
   headlamp: "headlamp.example.com"
   # SeaweedFS's S3, for links to files in buckets (derived: s3.<main>)
   storage: "s3.example.com"
+  # ProjectSend, for sharing files with clients (derived: files.<main>)
+  files: "files.example.com"
+
+# Where ProjectSend keeps the files people share: "local", a volume on a
+# node's disks, or "s3", a bucket in SeaweedFS. Chosen once.
+projectsend:
+  storage: "local"
 
 # -------------------------------------------------------------------
 # Storage

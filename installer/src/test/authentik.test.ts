@@ -10,13 +10,13 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseAllDocuments } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 
 import { buildPackageCommands } from "../cli/commands/Helm.ts";
-import { getPackage, resolveInstallOrder } from "../cli/commands/packages.ts";
+import { getPackage, packageCatalogue, resolveInstallOrder } from "../cli/commands/packages.ts";
 import { AUTHENTIK_NAMESPACE } from "../cli/commands/Authentik.ts";
 import { renderInstallerFile } from "../util/template.ts";
-import { configFrom } from "./helpers.ts";
+import { configFrom, loadFixtureConfig } from "./helpers.ts";
 
 const AUTHENTIK = getPackage("authentik")!;
 
@@ -60,4 +60,26 @@ describe("the authentik package", () => {
     it("needs its secret key from the configuration, so it's never replaced", () => {
     assert.ok(AUTHENTIK.values?.includes("authentik.secretKey"));
   });
+});
+
+// Authentik 2026 starts a provider made by a blueprint with no grant
+// types at all, and then turns every sign in away as "Invalid
+// grant_type", so each blueprint has to name the ones its client uses
+describe("every package's Authentik client", () => {
+  for (const definition of packageCatalogue.filter((each) => each.authentik?.blueprint)) {
+    it(`${definition.name} is allowed to sign in, and to refresh if it asks to`, async () => {
+      const config = await loadFixtureConfig();
+      const blueprint = parse(
+        renderInstallerFile(config, definition.authentik!.blueprint, { templateNamespace: definition.namespace }).replace(
+          /!(Context|Find|KeyOf)/g,
+          "",
+        ),
+      );
+      const provider = blueprint.entries.find((entry: any) => entry.model === "authentik_providers_oauth2.oauth2provider");
+      const grants: string[] = provider.attrs.grant_types ?? [];
+      assert.ok(grants.includes("authorization_code"), definition.name);
+      const offline = JSON.stringify(provider.attrs.property_mappings).includes("scope-offline_access");
+      assert.equal(grants.includes("refresh_token"), offline, definition.name);
+    });
+  }
 });

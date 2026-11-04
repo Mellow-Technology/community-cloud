@@ -97,6 +97,7 @@ cluster in service.
 | `k3s` | K3s, as a server or an agent depending on the node |
 | `cilium` | The Gateway API resources, then Cilium as the CNI |
 | `gateway` | A way into the cluster from outside |
+| `gateway-addresses` | The address pool and the cluster Gateway brought up to date, run by add-node |
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
 | `nodeLabels` | Roles, labels, region and zone, and what was detected |
@@ -106,11 +107,14 @@ cluster in service.
 | `registries` | Credentials for private registries |
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
-| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane` | One application on its own, into a cluster that has the rest |
+| `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane`, `methods`, `projectsend` | One application on its own, into a cluster that has the rest |
 | `cirrus` | Cirrus, the operator that runs WebApplications |
-| `postgres`, `redis`, `rabbitmq` | One shared service on its own: its operator, and what cc-office shares from it |
+| `meteorologist` | Meteorologist, the web interface, signed into through Authentik |
+| `cluster-sign-in` | The API server's sign in settings on each server, without reinstalling K3s |
+| `postgres`, `redis`, `rabbitmq`, `mariadb` | One shared service on its own: its operator, and what cc-office shares from it |
 | `nebula`, `nebula-network` | A Defined Networking mesh |
 | `cluster` | Records the configuration in the cluster itself |
+| `package-records` | Records every enabled package as installed, for Meteorologist's Office page, without installing anything |
 
 These install one package on its own. Their checks
 are that package's, which `helm-charts` already asks for every
@@ -164,9 +168,12 @@ k8s/
 │   ├── headlamp/                # Headlamp cluster UI, signed into through Authentik, with our plugins
 │   ├── lago/                    # Lago billing, on cc-postgres, the shared Redis and SeaweedFS
 │   ├── mattermost/              # Mattermost chat, through its operator
-│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis and RabbitMQ
+│   ├── meteorologist/           # Meteorologist, the web interface, signed into through Authentik
+│   ├── methods/                 # Methods projects, for people and bots, on cc-postgres and SeaweedFS
+│   ├── office/                  # cc-office namespace, cc-postgres, its roles, the shared Redis, RabbitMQ and MariaDB
 │   ├── picoclaw/                # Picoclaw AI agent, behind an Authentik gate
 │   ├── plane/                   # Plane projects, on cc-postgres, Redis, RabbitMQ and SeaweedFS
+│   ├── projectsend/             # ProjectSend file sharing, on cc-mariadb and Redis, signed into through Authentik
 │   ├── twenty/                  # Twenty CRM
 │   └── README.md
 ├── certs/
@@ -290,6 +297,40 @@ installs it:
 | `Documenso.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
 | `Documenso.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
 
+#### Methods (`apps/methods/`)
+
+Projects and work items, for people and their bots, signed into
+through Authentik over OpenID Connect with passwords switched off.
+Bots connect to its MCP endpoint with access tokens. The `methods`
+package or bundle installs it:
+
+| File | Purpose |
+|---|---|
+| `Methods.yaml` | The application (1 replica): its web app, API and MCP endpoint on one port |
+| `Methods.database.yaml` | Its CloudNative-PG role and `Database` |
+| `Methods.storage.yaml` | Its SeaweedFS bucket, user and keys, for attachments |
+| `Methods.config.yaml` | Its environment |
+| `Methods.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `Methods.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+
+#### ProjectSend (`apps/projectsend/`)
+
+File sharing with clients, signed into through Authentik over OpenID
+Connect. It runs on MySQL alone, so its database is in `cc-mariadb`,
+from the `mariadb-operator` package, and its files are on a TopoLVM
+volume or in a SeaweedFS bucket, as `values.projectsend.storage` says.
+The `projectsend` package or bundle installs it:
+
+| File | Purpose |
+|---|---|
+| `ProjectSend.yaml` | The application (1 replica), and a first container that writes its settings |
+| `ProjectSend.database.yaml` | Its `Database`, `User` and `Grant` in cc-mariadb |
+| `ProjectSend.storage.yaml` | Its volume, or its SeaweedFS bucket and keys to only that |
+| `ProjectSend.config.yaml` | Its environment |
+| `ProjectSend.provision.yaml` | What points it at Authentik, and at the bucket, as it starts |
+| `ProjectSend.network.yaml` | ListenerSet on the cluster Gateway, and its routes |
+| `ProjectSend.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+
 #### Mattermost (`apps/mattermost/`)
 
 Chat, installed by the `mattermost` package through the Mattermost operator (the `mattermost-operator` package, in `community-cloud`), on cc-postgres and a SeaweedFS bucket:
@@ -324,6 +365,25 @@ Cloud's own Headlamp plugins, `cc-cumulus-theme` and
 `cc-storage-explorer`. `bun run build:plugins` builds them and
 `bun run build:embedded` carries them inside the installer, under
 `headlamp-plugins/<name>/`.
+
+#### Meteorologist (`apps/meteorologist/`)
+
+Community Cloud's own web interface, from `ui/meteorologist`, installed
+by the `meteorologist` package into `community-cloud`. Like Headlamp,
+people sign in through Authentik and it uses their token with the API
+server, which trusts its client, `meteorologist`, once the package is
+enabled and the `cluster-sign-in` bundle has run:
+
+| File | Purpose |
+|---|---|
+| `Meteorologist.yaml` | Deployment and Service, with no ServiceAccount token, and the image pinned |
+| `Meteorologist.blueprint.yaml` | Authentik blueprint for its client — not a manifest |
+| `Meteorologist.network.yaml` | ListenerSet on the cluster Gateway, route and HTTPS redirect |
+
+Its Office page lists the office applications from the record each
+package's install leaves in `community-cloud`, and shows a cluster
+admin each one's administrator password on request. See
+`ui/meteorologist/README.md`.
 
 #### Picoclaw (`apps/picoclaw/`)
 
@@ -411,8 +471,9 @@ Build one with `community-cloud` and no arguments, and check it with
 
 Enabled under `packages` in the configuration: `cert-manager`,
 `cloudnative-pg`, `topolvm`, `seaweedfs`, `redis-operator`, `headlamp`,
-`rabbitmq-operator`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
-`mattermost`, `picoclaw`, `plane`. Authentik comes from a plugin rather than this list. See
+`rabbitmq-operator`, `mariadb-operator-crds`, `mariadb-operator`,
+`tailscale-operator`, `twenty`, `lago`, `documenso`, `mattermost`,
+`picoclaw`, `plane`, `projectsend`. Authentik comes from a plugin rather than this list. See
 [`packages`](../installer/README.md#packages).
 
 ### AI Inference
@@ -465,7 +526,7 @@ In stages:
 | **SSH** | node-ssh |
 | **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
-| **Databases and queues** | CloudNative-PG, Redis (Opstree), RabbitMQ |
+| **Databases and queues** | CloudNative-PG, MariaDB (its operator), Redis (Opstree), RabbitMQ |
 | **AI** | vLLM (ROCm/AMD GPU) |
-| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, Headlamp, Picoclaw |
+| **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, ProjectSend, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |

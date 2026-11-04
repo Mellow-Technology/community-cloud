@@ -140,7 +140,7 @@ gets `worker-gpu`, and one with `"gateway": true` gets `gateway`.
 | `clusterCidr` | `10.42.0.0/16` | The pod network. Wants to agree with the Cilium values. |
 | `disable` | — | Packaged components to leave out, e.g. `metrics-server`. `traefik`, `servicelb` and `local-storage` are *always* left out whatever this says — Cilium's Envoy serves the Gateway API, Cilium's own IP management hands out load balancer addresses, and TopoLVM provisions local volumes. K3s's local-path provisioner also claims to be the default storage class, and Kubernetes allows only one. |
 | `extraServerArgs`, `extraAgentArgs` | — | Anything else to pass through. |
-| `signInClients` | — | Clients in Authentik, besides Headlamp's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
+| `signInClients` | — | Clients in Authentik, besides Headlamp's and Meteorologist's, whose tokens the API server accepts — `{ "application": "<slug>", "clientId": "<id>" }` each, such as one made for kubectl. See [signing in to the cluster](#signing-in-to-the-cluster). |
 | `kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Where kubectl should look, for a cluster this didn't build. |
 
 ### `network`
@@ -179,6 +179,15 @@ How the outside world reaches the cluster. The `gateway` bundle turns
 this into a Cilium address pool, and on a home network an ARP
 announcement policy as well.
 
+The cluster Gateway, `cc-letsencrypt-web-gateway`, listens on every
+address here and in `network.externalIPs` that is a single address
+(`"203.0.113.10"`, a `/32` or `/128`, or a range that starts and stops
+in the same place), so each gateway node with an address of its own is
+another way in to the same applications. Give each one an A record.
+A wider CIDR or range is left to Cilium: the Gateway takes one address
+from it, and the rest go to any other LoadBalancer Service. With no
+single address at all, the Gateway takes whichever Cilium gives it.
+
 | Key | Meaning |
 |---|---|
 | `mode` | `floating` — the address is already on an interface of a gateway node, routed there by a provider. `port-forward` — a router maps ports to a LAN address nothing holds, and Cilium answers ARP for it. |
@@ -216,15 +225,26 @@ the address of the default route — on a machine behind a router at
 home, its LAN address, which a node at another site can't reach. Pods
 on the two would never meet.
 
-So on a cluster using Nebula, the `k3s` bundle first finds each
-node's address on the mesh (`find-node-ip`, on its `defined*`
-interface) and installs K3s with `--node-ip` set to it. A node that
-isn't on the mesh stops the install there rather than registering on
-its LAN address; run the `nebula` bundle on it first. `nodeIp` on a
-node overrides the mesh address, and is checked to be one the node
+A cluster uses Nebula when `network.nebula` names a network
+(`network` or `networkID`); a Defined Networking key in the
+environment isn't enough on its own. Then `install` and `add-node`
+put every node on the mesh before K3s: `nebula-network` makes the
+configured roles, once for the cluster (install only, since the roles
+belong to it), and `nebula` enrols each node and waits for its mesh
+address to come up.
+
+The `k3s` bundle then finds each node's address on the mesh
+(`find-node-ip`, on its `defined*` interface) and installs K3s with
+`--node-ip` set to it. A node that isn't on the mesh by then stops the
+install there rather than registering on its LAN address. `nodeIp` on
+a node overrides the mesh address, and is checked to be one the node
 has. Afterwards `verify-node-ip` asks the cluster which addresses it
 actually has the node on — the doctor asks too, so a node registered
 somewhere else is found.
+
+On a cluster that names no network, both Nebula bundles have no steps
+at all. Preflight stops a configuration that names a network with no
+key to enrol nodes with, or has Nebula settings and no network.
 
 The server is joined at its `apiAddress`, or its `address`, so on a
 cluster across sites that should be an address on the mesh as well.
@@ -255,7 +275,10 @@ serving is recorded on the node by `nodeLabels`, and the TopoLVM values
 are rendered from those labels so that a node is never offered a volume
 group it hasn't got — which lvmd treats as fatal. That means running
 `lvm` and `nodeLabels` before `helm-charts`, and re-running
-`helm-charts` when a node's disks change. See
+`helm-charts` when a node's disks change; `--packages topolvm` (see
+[Running part of it](#running-part-of-it)) re-renders TopoLVM alone.
+A volume group made by hand under one of TopoLVM's names is taken as
+serving its class and tagged as the installer's own. See
 [Nodes that can't serve every class](../k8s/storage/README.md#nodes-that-cant-serve-every-class).
 
 `allocations` is about the volumes rather than the disks. The
@@ -267,10 +290,13 @@ lowered. See
 
 ### `placement`
 
-Which region each namespace's pods run in:
+Which region each namespace's pods run in, and how firmly:
 
 ```json
-"placement": { "cc-office": "sea" }
+"placement": {
+  "cc-office": "sea",
+  "team-shop": { "region": "sea", "affinity": "preferred" }
+}
 ```
 
 A cluster can span regions and stay one cluster, but workloads that
@@ -279,27 +305,46 @@ querying its database in another pays the distance on every query —
 Plane's API in Germany, against cc-postgres in Thailand, took six
 seconds for a simple request.
 
-The `placement` bundle annotates each namespace listed for Kubernetes'
-`PodNodeSelector` admission plugin, which the `k3s` bundle turns on for
-the API server when anything is placed. Every pod made in the
-namespace then gets a node selector on `topology.kubernetes.io/region`,
-including the ones operators make — Postgres, Redis, RabbitMQ — so
-nothing in an application's manifests has to know. A region comes from
-each node's `region`, which `nodeLabels` puts on the node.
+The `placement` bundle applies a MutatingAdmissionPolicy,
+`community-cloud-placement`, and labels each namespace listed with
+`placement.community-cloud.technology/region` and `/affinity`. Every
+pod made in a labelled namespace then gets a node affinity for
+`topology.kubernetes.io/region`, including the ones operators make —
+Postgres, Redis, RabbitMQ — so nothing in an application's manifests
+has to know. A region comes from each node's `region`, which
+`nodeLabels` puts on the node. The policy is applied on every install,
+placed or not, since Meteorologist can place a namespace too.
 
-It's strict: with no node in the region up, a pod waits rather than
-starting somewhere else. And it only applies to pods made after it, so
-placing a namespace that already has workloads leaves them where they
-are until they're restarted. The doctor lists any running outside
-their region. On a cluster that's already running:
+The affinity is `required` unless it says otherwise: with no node in
+the region up, a pod waits rather than starting somewhere else.
+`preferred` puts pods in the region when there's room and elsewhere
+when there isn't.
+
+A pod can be an exception to its namespace. One labelled
+`placement.community-cloud.technology/exempt: "true"` is left alone,
+and so is one whose `nodeSelector` names a region of its own. The label
+has to be on the pod, so for one an operator makes it goes wherever
+that operator takes pod labels from — a chart's `podLabels`,
+CloudNativePG's `inheritedMetadata`.
+
+An affinity is only given to pods as they're made, so placing a
+namespace that already has workloads leaves them where they are until
+they're restarted. The doctor lists any running outside a required
+region, and mentions them for a preferred one.
+
+Placement used to be done by the `PodNodeSelector` admission plugin,
+which had no way to make exceptions. The bundle takes its annotation
+off each namespace it places; running the `k3s` bundle again turns the
+plugin off. On a cluster that's already running:
 
 ```bash
-community-cloud run-bundle k3s <server> cc.config.json   # turns the plugin on; restarts K3s
+community-cloud run-bundle k3s <server> cc.config.json   # drops PodNodeSelector; restarts K3s
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle placement <server> cc.config.json
 ```
 
-Preflight reports a namespace placed in a region no node is in.
+Preflight reports a namespace placed in a region no node is in, or
+with an affinity that isn't `required` or `preferred`.
 
 ### `packages`
 
@@ -317,8 +362,10 @@ manifests alone. `true` is shorthand for enabled, and
 
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
-`mattermost-operator`, `headlamp`, `tailscale-operator`, `twenty`,
-`lago`, `documenso`, `mattermost`, `picoclaw`, `plane`, `cirrus`.
+`mariadb-operator-crds`, `mariadb-operator`, `mattermost-operator`,
+`headlamp`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
+`mattermost`, `picoclaw`, `plane`, `methods`, `projectsend`, `cirrus`,
+`meteorologist`.
 Dependencies
 are worked out and installed first — TopoLVM needs cert-manager, so
 enabling it enables that too. `cloudnative-pg`, `redis-operator` and
@@ -352,6 +399,18 @@ other bucket needs keys or a link signed with them. See
 `cc-office` share, with its password
 in the `cc-redis` Secret there.
 
+`mariadb-operator` installs the MariaDB operator into `community-cloud`
+and, through it, `cc-mariadb`, the one MariaDB the applications in
+`cc-office` that need MySQL share, with its root password in the
+`cc-mariadb` Secret there. The cluster's databases are Postgres; this
+is for the ones that can't be, like ProjectSend. As with cc-postgres,
+an application asks for its own `Database`, `User` and `Grant`, and
+only the operator connects as root. Its resource types are a chart of
+their own, `mariadb-operator-crds`, which the operator requires.
+Removing that release removes every MariaDB with it, so nothing should.
+The `mariadb` bundle installs both. There are no backups of
+`cc-mariadb` yet.
+
 `rabbitmq-operator` installs the RabbitMQ team's Cluster Operator and
 Messaging Topology Operator, vendored at pinned versions in
 `k8s/mq/RabbitMQ/` and applied server-side, and through them the one
@@ -370,6 +429,17 @@ rolls out each image a successful pipeline publishes, running the
 application's migrations first. See
 [operators/cirrus](../operators/cirrus/README.md).
 
+`meteorologist` installs Meteorologist, Community Cloud's web
+interface, into `community-cloud` on `values.domain.meteorologist`. It
+makes namespaces and WebApplications, and like Headlamp it signs people
+in through Authentik and talks to the Kubernetes API as whoever signed
+in, so it has no permissions of its own; its pod isn't even given a
+ServiceAccount token. Its Authentik client is `meteorologist`, which
+the API server trusts once the package is enabled and the
+`cluster-sign-in` (or `k3s`) bundle has run; see
+[signing in to the cluster](#signing-in-to-the-cluster). See
+[ui/meteorologist](../ui/meteorologist/README.md).
+
 Plane is projects, issues and docs, on `values.domain.plane`, with its
 web app, public pages, admin pages and API all on that hostname. Its
 database is in cc-postgres, its cache in the shared Redis, its job
@@ -381,8 +451,8 @@ its first administrator with `values.adminEmail` and the password in
 the `plane-admin` Secret, before anyone else can claim its admin
 pages.
 
-`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw` and `plane` are
-applications in `cc-office`, each with a ListenerSet of its own on the
+`twenty`, `lago`, `documenso`, `mattermost`, `picoclaw`, `plane`,
+`methods` and `projectsend` are applications in `cc-office`, each with a ListenerSet of its own on the
 cluster Gateway. Any of them can be installed on its own, into a
 cluster that already has the rest:
 
@@ -443,6 +513,44 @@ Who may sign in to Documenso is decided in Authentik, by binding
 groups or policies to the application. With nothing bound, anyone
 with an Authentik account can.
 
+ProjectSend shares files with clients, on `values.domain.files`, and
+signs people in through Authentik over OpenID Connect, waiting for it
+as Documenso does. It only runs on MySQL, so its database is in
+`cc-mariadb` and it brings `mariadb-operator` with it, as well as
+`redis-operator` for its sessions, cache and queue. Its files are in
+one of two places, chosen with `values.projectsend.storage`:
+
+- `local`, the default: a volume on a node's disks, through TopoLVM.
+- `s3`: a bucket in SeaweedFS. ProjectSend hands a download over as a
+  link signed for the bucket, so it talks to SeaweedFS on
+  `values.domain.storage`, where a browser can follow the link.
+  Preflight checks that `seaweedfs` is enabled and that hostname is
+  set.
+
+Either way the size is `storage.allocations.projectsendGb`. The choice
+is made once: changing it later starts new uploads in the new place
+and moves nothing. ProjectSend keeps its sign in and storage settings
+in its database rather than its environment, so each time it starts,
+a first container writes them there through its own models: the
+Authentik client and, for `s3`, the bucket (see
+`ProjectSend.provision.yaml`). The first administrator is made with
+`values.adminEmail` and the password in the `projectsend-admin`
+Secret; signing in through Authentik with the same address is the
+same account. Anyone else Authentik lets through gets a client account
+of their own, so as with Documenso, who may sign in is decided by what
+is bound to the application in Authentik.
+
+Methods is projects and work items, for people and their bots, on
+`values.domain.methods`. It's one small process — the web app, its API
+and the MCP endpoint bots connect to at `/mcp` — with its database in
+cc-postgres and the files attached to work items in a bucket in
+SeaweedFS, which it serves itself. People sign in through Authentik
+only, waiting for it as Documenso does: passwords and sign up are
+off, and an account is made the first time someone signs in, so who
+may use it is what's bound to the application in Authentik. Whoever
+makes a workspace owns it and adds the others. Bots don't sign in;
+their owners make them access tokens under Settings → Bots & MCP.
+
 Headlamp, in `community-cloud` on `values.domain.headlamp`, signs in
 through Authentik too, and then talks to the Kubernetes API as
 whoever signed in; see [signing in to the cluster](#signing-in-to-the-cluster).
@@ -461,12 +569,22 @@ own, so on an existing cluster it's installed or updated with
 The API server trusts Authentik through an `AuthenticationConfiguration`
 the `k3s` bundle writes to `/etc/rancher/k3s/authentication.yaml` on
 each server, whenever there's a `values.domain.auth` and a client to
-trust it for: Headlamp's, `headlamp`, when the `headlamp` package is
-enabled, and any listed in `k3s.signInClients`, such as one made in
-Authentik for kubectl. Each Authentik application is its own issuer.
-The API server rereads the file when it changes, so adding a client
-needs only the `k3s` bundle again; the first one also restarts K3s
-with the setting that points at the file.
+trust it for: Headlamp's, `headlamp`, and Meteorologist's,
+`meteorologist`, when those packages are enabled, and any listed in
+`k3s.signInClients`, such as one made in Authentik for kubectl. Each
+Authentik application is its own issuer. The API server rereads the
+file when it changes, so adding a client to a running cluster needs
+only the `cluster-sign-in` bundle, which rewrites the file on each
+server without reinstalling K3s. Only the first time does K3s have to
+be started with the setting that points at the file, which the `k3s`
+bundle does.
+
+Both bundles check the API server really reads the file: that it's
+current, and that K3s is given `authentication-config` pointing at it
+and at nothing else. A cluster whose sign in was first set up by hand,
+with the setting in a file of its own under
+`/etc/rancher/k3s/config.yaml.d/`, fails that check until the file is
+removed and the `k3s` bundle has restarted K3s with the installer's.
 
 - People are `authentik:<username>` to the cluster, in
   `authentik:<group>` for each of their Authentik groups. The prefix
@@ -487,6 +605,18 @@ through Authentik, with the proxy, its credentials and its Authentik
 client all made by the installer. See
 `installer/src/cli/commands/OAuth2Proxy.ts`. The `picoclaw` package is
 the one that does.
+
+Every package's install also leaves a record of it: a ConfigMap in
+`community-cloud` called `cc-package-<name>`, labelled
+`community-cloud.technology/package`, with what was installed, at
+which version, what it waits for and, for an application, where it's
+reached, how people sign in and how an administrator gets in, as JSON
+under `record.json`. An administrator's password is named by the
+Secret it's in, never copied into the record. Meteorologist's Office
+page is made from these. The `package-records` bundle writes them for
+every enabled package without installing anything, for a cluster
+installed before there were records. See
+`installer/src/cli/commands/PackageRecord.ts`.
 
 A package not in the catalogue needs `repo` and `chart`. Any package
 takes `version`, `namespace`, `releaseName`, `valuesFile` (relative to
@@ -561,8 +691,8 @@ node's `sshHost`.
 The manifests currently reference `adminEmail`, `domain.main`,
 `domain.auth`, `domain.agent`, `domain.crm`, `domain.mattermost`,
 `domain.billing`, `domain.billingApi`, `domain.signing`, `domain.plane`,
-`domain.headlamp`, `domain.storage`, `clusterAdminGroup` and
-`authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
+`domain.headlamp`, `domain.storage`, `domain.files`, `clusterAdminGroup`,
+`projectsend.storage` and `authentik.secretKey`. `clusterAdminGroup` is the Authentik group whose
 members are cluster admins through Headlamp or kubectl, `k8s-admins`
 unless it's set; it has to start with `k8s-`, which preflight checks.
 `authentik.secretKey` signs Authentik's sessions: keep it, since a new
@@ -581,7 +711,8 @@ would have been worked out:
 | `networkDevices` | The shared interface list. |
 | `storageControllerReplicas` | How many TopoLVM controllers run: one per `storage-local` node, at least 1 and at most 2. They insist on separate nodes, so a replica with no node of its own never schedules and the install waits for it forever. Set it to run more on a larger cluster. |
 | `mail` | [`smtp`](#smtp), for the namespace being rendered. |
-| `databaseVolumeSize`, `objectStorageVolumeSize` | `storage.allocations`: `databaseGb` (30 by default) and `objectStorageGb` (50). |
+| `databaseVolumeSize`, `objectStorageVolumeSize`, `mariadbVolumeSize`, `projectsendVolumeSize` | `storage.allocations`: `databaseGb` (30 by default), `objectStorageGb` (50), `mariadbGb` (10) and `projectsendGb` (50). |
+| `projectsend` | `projectsend.storage`, `local` unless it's `s3`, and `projectsend.s3` for the manifests to test. |
 | `objectStorage` | The cluster's S3 gateway: `endpoint`, `host` (`seaweed-s3.seaweedfs.svc:8333`) and `region`. |
 | `clusterAdminGroup` | `k8s-admins`, unless `values.clusterAdminGroup` names another `k8s-` group. |
 | `headlampPlugins`, `headlampPluginsRevision` | The Headlamp plugins built into the installer, and a revision that changes with them so Headlamp restarts for a new build. |
@@ -861,6 +992,10 @@ community-cloud install cc.config.json -n node-4  # one node only
 To add a machine to a cluster that's already running, use
 [`add-node`](#adding-a-node) rather than `-n`.
 
+On a cluster that uses Nebula, the install puts every node on the mesh
+before K3s, and K3s registers each on its mesh address. See
+[Nodes across sites](#nodes-across-sites).
+
 These flags work the same on `install`, `add-node`, `uninstall`,
 `clean`, `run-bundle` and `run-pipeline`:
 
@@ -917,6 +1052,7 @@ community-cloud run-pipeline lvm phoenix cc.config.json
 community-cloud run-bundle nodeLabels all cc.config.json
 community-cloud run-bundle k3s phoenix cc.config.json --dry-run
 community-cloud run-pipeline new-node node-4 cc.config.json   # one named in "pipelines"
+community-cloud run-bundle helm-charts server-1 cc.config.json --packages topolvm
 community-cloud list-bundles                                  # every bundle there is
 community-cloud list-bundles k3s -c cc.config.json            # the commands in one
 ```
@@ -930,6 +1066,15 @@ needs the configuration for bundles whose commands are built from it.
 node is a cluster of one rather than a separate code path — the
 interesting multi-node bugs are the ones that only appear with more
 than one machine, and a separate path is how those hide.
+
+`--packages` narrows `helm-charts` to some of the configured
+packages, comma separated, for upgrading a few at a time. They're
+installed in their usual order whatever order they're named in, after
+the steps every package relies on (finding Helm, reading the storage
+shapes). What they need isn't installed with them: it's checked for,
+and the run stops if it's missing. A name the configuration doesn't
+install is refused, as is `--packages` on a pipeline without
+`helm-charts` in it.
 
 `run-bundle` is `run-pipeline` with one bundle in it, and it is the
 same code: the barrier between steps, the refusal to start when two
@@ -969,9 +1114,24 @@ configuration has moved on since. What's left is everything that makes
 one machine a member:
 
 ```
-cluster-online → preflight → base → network → gpu
-              → registries → lvm → k3s → nodeLabels → node-joined
+cluster-online → preflight → base → network → nebula → gpu
+              → registries → lvm → k3s → nodeLabels
+              → gateway-addresses → node-joined
 ```
+
+`gateway-addresses` is the one exception, because a gateway node
+usually comes with an address of its own and nothing reaches the
+cluster through it until it's in the address pool and on the cluster
+Gateway. It's the `gateway` bundle without the steps about nodes —
+the interface check is in `preflight`, and `nodeLabels` gives the node
+its gateway role — and it applies whatever the configuration says, so
+it changes nothing when no address was added.
+
+`nebula` puts the node on the cluster's mesh when it has one, so K3s
+registers it on its mesh address (see
+[Nodes across sites](#nodes-across-sites)); on a cluster without one
+it has nothing to do. The mesh's roles were made when the cluster was
+installed, so `nebula-network` isn't run again.
 
 `cluster-online` fails first if there is no cluster to join, which is
 worth catching early — every step after it would fail in a way that

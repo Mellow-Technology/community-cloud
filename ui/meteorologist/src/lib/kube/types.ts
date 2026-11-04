@@ -18,6 +18,9 @@ export interface ObjectMeta {
   resourceVersion?: string;
   generation?: number;
   creationTimestamp?: string;
+  // Set once deletion is asked for, while finalizers still hold it
+  deletionTimestamp?: string;
+  finalizers?: string[];
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
 }
@@ -105,12 +108,15 @@ export interface ServiceAccount {
 }
 
 /**
- * A Secret's name and type, and never its contents: nothing here needs
- * to read one.
+ * A Secret's name, type and metadata, and never its contents. The few
+ * places that need a value read that one key alone, on the server.
  */
 export interface SecretSummary {
   name: string;
   type: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  creationTimestamp?: string;
 }
 
 /**
@@ -120,4 +126,35 @@ export interface PostgresCluster {
   metadata: ObjectMeta;
   spec?: { instances?: number; storage?: { size?: string; storageClass?: string }; imageName?: string };
   status?: { phase?: string; readyInstances?: number; instances?: number };
+}
+
+/**
+ * A cert-manager Certificate, as far as the pages describe one.
+ */
+export interface Certificate {
+  metadata: ObjectMeta;
+  spec?: { secretName?: string; dnsNames?: string[]; issuerRef?: { name?: string; kind?: string } };
+  status?: { conditions?: Condition[]; notAfter?: string; renewalTime?: string };
+}
+
+/**
+ * A ConfigMap, with its data as the strings it holds.
+ */
+export interface ConfigMap {
+  metadata: ObjectMeta;
+  data?: Record<string, string>;
+}
+
+/**
+ * A Deployment or a StatefulSet, as far as whether it's up.
+ *
+ * - ready: replicas ready to take requests
+ * - desired: replicas asked for
+ */
+export interface Workload {
+  kind: "deployment" | "statefulset";
+  name: string;
+  namespace: string;
+  ready: number;
+  desired: number;
 }

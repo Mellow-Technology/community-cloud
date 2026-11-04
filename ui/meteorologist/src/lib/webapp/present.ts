@@ -51,3 +51,19 @@ export function shownImage(app: WebApplication): string {
 export function appHref(app: WebApplication): string {
   return `/apps/${encodeURIComponent(app.metadata.namespace ?? "")}/${encodeURIComponent(app.metadata.name)}`;
 }
+
+/**
+ * The port it's served on, and where that came from: the spec, or the
+ * image when the spec leaves it out.
+ *
+ * @param app
+ * @returns
+ */
+export function portLabel(app: WebApplication): string {
+  if (app.spec.port !== undefined) {
+    return String(app.spec.port);
+  }
+  return app.status?.port !== undefined
+    ? `${app.status.port}, from the image`
+    : "From the image, once Cirrus has read it";
+}

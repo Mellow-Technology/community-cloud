@@ -34,6 +34,7 @@ whose mail settings to render `.Values.mail` with.
 | `Office.roles.yaml` | The database roles for Twenty, Mattermost and Authentik. |
 | `RedisStandalone.yaml` | The Redis the applications share, made by the OpsTree operator. |
 | `RabbitmqCluster.yaml` | The RabbitMQ the applications share, made by the RabbitMQ Cluster Operator. |
+| `MariaDB.yaml` | The MariaDB the applications that need MySQL share, `cc-mariadb`, made by the MariaDB operator. |
 
 The cluster and the roles come with the `cloudnative-pg` package,
 which also makes each role's Secret. Applications added since bring
@@ -51,6 +52,15 @@ application has a vhost of its own and a user that can only use it,
 from `Vhost`, `User` and `Permission` resources the Messaging Topology
 Operator carries out; it writes the user's credentials into
 `<user>-user-credentials`.
+
+The MariaDB comes with the `mariadb-operator` package, which installs
+the MariaDB operator into `community-cloud` (its resource types come
+from `mariadb-operator-crds`) and applies `MariaDB.yaml`. It's
+`cc-mariadb` on 3306 in `cc-office`, for the applications that only
+run on MySQL, with its root password in the `cc-mariadb` Secret. As
+with cc-postgres, an application brings its own `Database`, `User` and
+`Grant`, with the user's password in a Secret of its own, and only the
+operator connects as root. It has no backups yet.
 
 ## Authentik (`authentik/`)
 
@@ -206,6 +216,70 @@ no account. Documents are kept in the database, so it needs no volume,
 and completed ones are signed with a self-signed certificate the
 installer generates.
 
+## Methods (`methods/`)
+
+[Methods](https://github.com/Mellow-Technology/methods) is projects
+and work items, for people and the bots working with them. Install it
+with the `methods` package; it's reached at `values.domain.methods`.
+
+| File | What it is |
+|---|---|
+| `Methods.yaml` | The application: its web app, API and MCP endpoint, on one port. |
+| `Methods.database.yaml` | Its role and database in cc-postgres. |
+| `Methods.storage.yaml` | Its bucket in SeaweedFS, and the keys to it. |
+| `Methods.config.yaml` | Its configuration. |
+| `Methods.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+| `Methods.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+
+It signs in through Authentik with OpenID Connect, and only that way:
+passwords and sign up are off, and an account is made for whoever
+Authentik lets through. Whoever makes a workspace owns it. Bots
+connect to `/mcp` with access tokens their owners make in its
+settings. It migrates its own database on start, and serves the files
+in its bucket itself, so SeaweedFS stays inside the cluster. The route
+has no request time limit, since each browser holds its live updates
+open as one long request.
+
+## ProjectSend (`projectsend/`)
+
+[ProjectSend](https://projectsend.org) is file sharing with clients.
+Install it with the `projectsend` package; it's reached at
+`values.domain.files`.
+
+| File | What it is |
+|---|---|
+| `ProjectSend.yaml` | The application: nginx, PHP, its queue workers and scheduler in the one official image. |
+| `ProjectSend.database.yaml` | Its database, user and grant in cc-mariadb. |
+| `ProjectSend.storage.yaml` | Where its files go: a volume, or a bucket in SeaweedFS and keys to only that. |
+| `ProjectSend.config.yaml` | Its configuration. |
+| `ProjectSend.provision.yaml` | The script its first container runs, which writes its sign in and storage settings. |
+| `ProjectSend.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+| `ProjectSend.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+
+It only runs on MySQL, so its database is in cc-mariadb rather than
+cc-postgres, and its sessions, cache and queue are in the shared Redis
+(databases 4 and 5). Its files are on a TopoLVM volume, or with
+`values.projectsend.storage` set to `s3`, in a bucket in SeaweedFS.
+ProjectSend hands a download over as a link signed for the bucket, so
+it talks to SeaweedFS on `values.domain.storage`, where a browser can
+follow the link, rather than inside the cluster.
+
+ProjectSend keeps its settings in its database, with nothing to set
+them from outside. So its first container waits for the database,
+migrates it, and writes the two settings it can't start without
+through ProjectSend's own models: signing in through Authentik with
+the client in `projectsend-oidc`, and for `s3`, the bucket. The client
+and the bucket are kept in step on every start. Whether the sign in is
+on, and whether it makes accounts, are set the first time only, and
+are an administrator's to change after that.
+
+It signs in through Authentik with OpenID Connect, or with a password.
+The first administrator is made with `values.adminEmail` and the
+password in the `projectsend-admin` Secret. Signing in through
+Authentik with the same address is the same account, since the
+blueprint has Authentik vouch for addresses, as Documenso's does.
+Anyone else Authentik lets through becomes a client.
+
 ## Mattermost (`mattermost/`)
 
 [Mattermost](https://mattermost.com) is team chat. Install it with the
@@ -250,6 +324,27 @@ The plugins are built from `headlamp/plugins/` at the top of the
 repository and carried inside the installer: `bun run build:plugins`,
 then `bun run build:embedded`. Their ConfigMaps are applied before
 the chart, and Headlamp is restarted when they change.
+
+## Meteorologist (`meteorologist/`)
+
+Community Cloud's own web interface, built from `ui/meteorologist`:
+namespaces, with their quotas, defaults and registries, and the
+WebApplications Cirrus runs. Install it with the `meteorologist`
+package; it's reached at `values.domain.meteorologist`, in
+`community-cloud`. It works as Headlamp does: people sign in through
+Authentik, and it calls the API with their token, so what they can do
+is what RBAC already lets them. Its client ID is fixed as
+`meteorologist`, since the API server is told it; the `cluster-sign-in`
+bundle tells a running cluster.
+
+| File | What it is |
+|---|---|
+| `Meteorologist.yaml` | Its Deployment and Service. No ServiceAccount token is mounted; it's given the API server's CA from `kube-root-ca.crt`. |
+| `Meteorologist.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
+| `Meteorologist.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
+
+The image is pinned in `Meteorologist.yaml` and released with
+`scripts/release/meteorologist.ts`, which sets the pin.
 
 ## Picoclaw (`picoclaw/`)
 
@@ -296,7 +391,9 @@ the application. Picoclaw is the one that does.
 
 ## What they share
 
-- **Databases** are CloudNativePG, never a chart's bundled one
+- **Databases** are CloudNativePG, never a chart's bundled one, or
+  for an application that only runs on MySQL, the shared MariaDB from
+  the MariaDB operator
 - **Files** are in a bucket each in SeaweedFS, or on a TopoLVM volume
   through `cc-local-ssd-fast` where an application needs a disk
 - **Certificates** are cert-manager and Let's Encrypt, from the

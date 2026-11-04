@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { emptyForm, fromForm, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
+import { emptyForm, fromForm, soleConnection, splitList, toForm, validateForm, type WebApplicationForm } from "./form";
 import type { WebApplication } from "./types";
 
 /**
@@ -57,8 +57,18 @@ describe("a new application from the form", () => {
       apiVersion: "community-cloud.technology/v1alpha1",
       kind: "WebApplication",
       metadata: { name: "shop", namespace: "team" },
-      spec: { image: { repository: "registry.gitlab.com/acme/shop", tag: "latest" }, replicas: 1, port: 8080 },
+      // No port: Cirrus reads it from the image
+      spec: { image: { repository: "registry.gitlab.com/acme/shop", tag: "latest" }, replicas: 1 },
     });
+  });
+
+  test("keeps a port that was typed in", () => {
+    expect(fromForm(form({ port: "3000" })).spec.port).toBe(3000);
+  });
+
+  test("drops the port when it's cleared, so the image's is used", () => {
+    const withPort = fromForm(form({ port: "3000" }));
+    expect(fromForm(form({ port: "" }), withPort).spec.port).toBeUndefined();
   });
 
   test("asks for a service with an empty block", () => {
@@ -182,7 +192,7 @@ describe("an existing application through the form", () => {
       ...full,
       spec: { image: { repository: "nginx" } },
     };
-    expect(toForm(sparse)).toMatchObject({ tag: "latest", replicas: "1", port: "8080", gitlab: false });
+    expect(toForm(sparse)).toMatchObject({ tag: "latest", replicas: "1", port: "", gitlab: false });
   });
 });
 
@@ -209,7 +219,8 @@ describe("validation", () => {
     expect(validateForm(form({ replicas: "two" })).replicas).toBeDefined();
     expect(validateForm(form({ replicas: "0" })).replicas).toBeUndefined();
     expect(validateForm(form({ port: "70000" })).port).toBeDefined();
-    expect(validateForm(form({ port: "" })).port).toBeDefined();
+    expect(validateForm(form({ port: "0" })).port).toBeDefined();
+    expect(validateForm(form({ port: "" })).port, "blank reads it from the image").toBeUndefined();
   });
 
   test("checks quantities and paths", () => {
@@ -249,4 +260,31 @@ describe("validation", () => {
 
 test("splitList takes commas and spaces", () => {
   expect(splitList(" a,b  c,, ")).toEqual(["a", "b", "c"]);
+});
+
+describe("an image from elsewhere", () => {
+  test("never updates itself, whatever the switch says", () => {
+    const app = fromForm(
+      form({ imageSource: "other", gitlab: true, gitlabProject: "acme/shop", gitlabTokenSecretName: "token" }),
+    );
+    expect(app.spec.source).toBeUndefined();
+    expect(validateForm(form({ imageSource: "other", gitlab: true }))).toEqual({});
+  });
+
+  test("is what an application without a source is read back as", () => {
+    const sparse = fromForm(form({ imageSource: "other" }));
+    expect(toForm(sparse).imageSource).toBe("other");
+    const updating = fromForm(form({ gitlab: true, gitlabProject: "acme/shop", gitlabTokenSecretName: "token" }));
+    expect(toForm(updating).imageSource).toBe("gitlab");
+  });
+});
+
+test("a namespace's only connection is chosen for you", () => {
+  const work = { name: "work", url: "https://gitlab.example.test" };
+  expect(soleConnection({ gitlabConnections: [work] })).toMatchObject({
+    gitlabTokenSecretName: "work",
+    gitlabUrl: "https://gitlab.example.test",
+  });
+  expect(soleConnection({ gitlabConnections: [work, { ...work, name: "other" }] }).gitlabTokenSecretName).toBe("");
+  expect(soleConnection(undefined).gitlabTokenSecretName).toBe("");
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { postgresStorageProblem } from "./postgres";
+import { postgresDatabase, postgresStorageProblem } from "./postgres";
 import { formatBytes, parseQuantity } from "./quantity";
 import { postgresNote } from "./webapp/warnings";
 
@@ -22,7 +22,13 @@ test("a storage quota too small for the namespace's Postgres", () => {
 
 test("what asking for a database means", () => {
   expect(postgresNote({ name: "team" })).toBeUndefined();
-  expect(postgresNote({ name: "team", hasPostgres: true })?.message).toContain("joins");
+  expect(postgresNote({ name: "team", hasPostgres: true })?.message).toContain("already has its Postgres server");
   expect(postgresNote({ name: "team", hasPostgres: false })?.message).toContain("starts one");
   expect(postgresNote({ name: "team", hasPostgres: false, storageQuota: "10Gi" })?.tone).toBe("warning");
+});
+
+// As operators/cirrus/src/naming.rs names it
+test("an application's database is named after it", () => {
+  expect(postgresDatabase("shop")).toBe("shop");
+  expect(postgresDatabase("web-app-2")).toBe("web_app_2");
 });

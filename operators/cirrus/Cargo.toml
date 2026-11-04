@@ -1,6 +1,6 @@
 [package]
 name = "cirrus"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Runs web applications on Community Cloud: their workloads, what they depend on, and their rollouts"
@@ -28,6 +28,7 @@ serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 futures = "0.3"
 axum = "0.8"
+base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 thiserror = "2"

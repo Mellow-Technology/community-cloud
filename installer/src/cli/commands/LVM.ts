@@ -99,6 +99,12 @@ export enum DiskState {
  * trusting that a group called "cc-ssd-vg" is the one we created,
  * which is an assumption about a name in a namespace we don't own. A
  * tag on the volume itself is the thing actually being asked about.
+ *
+ * The one place a name does settle it is a group TopoLVM is set up to
+ * use. lvmd finds its groups by name and is already putting volumes
+ * in one with that name, whoever made it, so such a group is serving
+ * the cluster and is tagged as ours (see tag-volume-groups). A group
+ * by any other name is never touched.
  */
 export const OWNER_TAG = "community-cloud";
 
@@ -170,6 +176,11 @@ export interface CandidateDisk {
 
   // Something worth saying about how it's being treated
   note?: string;
+
+  // The tags it or its volume group should carry and doesn't. A group
+  // with the right name made by hand serves TopoLVM all the same, and
+  // is tagged so it reads as set up for the cluster from then on.
+  missingTags?: string[];
 }
 
 /**
@@ -473,6 +484,13 @@ export function readDisks(
     }
   }
 
+  // Which class each of TopoLVM's volume groups serves. lvmd finds a
+  // group by its name and nothing else, so a disk in one of these is
+  // serving that class however the group came to be there.
+  const classOfGroup = new Map<string, StorageClass>(
+    Object.entries(getVolumeGroups(config)).map(([storageClass, group]) => [group, storageClass as StorageClass]),
+  );
+
   const storage = getStorageConfig(config, context);
   const named = Array.isArray(storage.disks) ? storage.disks : undefined;
   const overrides = storage.diskClasses ?? {};
@@ -523,7 +541,12 @@ export function readDisks(
     // A physical volume we tagged isn't a disk we can't have, it's a
     // disk we already took
     const volume = volumes.get(path);
-    const claimed = volume !== undefined && volume.tags.includes(OWNER_TAG);
+    const groupClass = volume !== undefined ? classOfGroup.get(volume.group) : undefined;
+
+    // In one of TopoLVM's groups and not tagged is a group set up by
+    // hand under the name TopoLVM expects. It's already serving, so
+    // it's taken as ours and given the tags it's missing.
+    const claimed = volume !== undefined && (volume.tags.includes(OWNER_TAG) || groupClass !== undefined);
 
     // A physical volume belonging to no volume group contains
     // nothing: logical volumes live in groups, so there is nowhere
@@ -537,11 +560,22 @@ export function readDisks(
     // still serving the class it's actually in.
     const tagged = volume !== undefined ? readClassTag(volume.tags) : undefined;
 
+    // The group a disk is in decides what it serves, since that's
+    // what lvmd goes by
+    const storageClass = groupClass ?? (claimed ? tagged : undefined) ?? override ?? classifyDisk(device);
+
+    const wantedTags = [OWNER_TAG, classTag(storageClass)];
+    const missingTags = claimed && groupClass !== undefined
+      ? wantedTags.filter(
+        (tag) => !volume.tags.includes(tag) || !(groupTags.get(volume.group) ?? []).includes(tag),
+      )
+      : [];
+
     disks.push({
       path,
       name: device.kname,
       size: device.size,
-      storageClass: (claimed ? tagged : undefined) ?? override ?? classifyDisk(device),
+      storageClass,
       state: claimed
         ? DiskState.Claimed
         : problem !== undefined && !bare
@@ -553,6 +587,7 @@ export function readDisks(
       note: bare
         ? "an LVM physical volume in no volume group, so it holds nothing — taking it"
         : undefined,
+      ...(missingTags.length > 0 ? { missingTags } : {}),
     });
   }
 
@@ -666,6 +701,18 @@ function hasUsableDisks(context: any): boolean {
 }
 
 /**
+ * The disks already serving that are missing some of their tags.
+ *
+ * @param context
+ * @returns
+ */
+function getUntaggedDisks(context: any): CandidateDisk[] {
+  return getDisks(context).filter(
+    (disk) => disk.state === DiskState.Claimed && (disk.missingTags ?? []).length > 0,
+  );
+}
+
+/**
  * Whether this node serves any storage at all, set up now or before.
  *
  * @param context
@@ -725,7 +772,10 @@ export const LvmCommands: CommandSpec[] = [
           console.log(`  ${disk.path.padEnd(16)} ${formatSize(disk.size).padStart(6)}  left alone: ${disk.unusableBecause}`);
         }
         else if (disk.state === DiskState.Claimed) {
-          console.log(`  ${disk.path.padEnd(16)} ${formatSize(disk.size).padStart(6)}  already in ${disk.volumeGroup}`);
+          const untagged = (disk.missingTags ?? []).length > 0
+            ? `, without the tags ${disk.missingTags!.join(" and ")}, which it'll be given`
+            : "";
+          console.log(`  ${disk.path.padEnd(16)} ${formatSize(disk.size).padStart(6)}  already in ${disk.volumeGroup}${untagged}`);
         }
         else if (disk.note !== undefined) {
           console.log(`  ${disk.path.padEnd(16)} ${formatSize(disk.size).padStart(6)}  ${disk.note}`);
@@ -764,6 +814,45 @@ export const LvmCommands: CommandSpec[] = [
         storageClassesPresent: Object.keys(serving),
       };
     },
+  },
+
+  /**
+   * Tag volume groups that have the right name and not the tags.
+   *
+   * Usually a group made by hand before the installer did this, or by
+   * a version of it that didn't tag everything. Only tags are added:
+   * nothing about what's in the group changes. From then on it reads
+   * as set up for the cluster, which includes clean being willing to
+   * remove it.
+   */
+  {
+    name: "tag-volume-groups",
+    description: "Tag volume groups TopoLVM uses that are missing their tags",
+    purpose: CommandPurpose.Apply,
+    skipWhen: (_config: CloudConfig, context: any) => getUntaggedDisks(context).length === 0,
+    command: (_config: CloudConfig, context: any) => {
+      const disks = getUntaggedDisks(context);
+      const groups = new Map<string, StorageClass>();
+
+      for (const disk of disks) {
+        groups.set(disk.volumeGroup!, disk.storageClass);
+      }
+
+      const tags = (storageClass: StorageClass) => `--addtag ${OWNER_TAG} --addtag ${classTag(storageClass)}`;
+
+      return [
+        ...[...groups].map(
+          ([group, storageClass]) =>
+            `sudo vgchange ${tags(storageClass)} ${quoteForShell(group)} > /dev/null || { echo "Couldn't tag the volume group ${group}" >&2; exit 1; }`,
+        ),
+        ...disks.map(
+          (disk) =>
+            `sudo pvchange ${tags(disk.storageClass)} ${quoteForShell(disk.path)} > /dev/null || { echo "Couldn't tag ${disk.path}" >&2; exit 1; }`,
+        ),
+        "sudo vgs --noheadings -o vg_name,vg_tags",
+      ];
+    },
+    output: OutputType.Raw,
   },
 
   /**

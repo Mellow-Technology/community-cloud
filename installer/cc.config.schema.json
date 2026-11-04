@@ -318,13 +318,32 @@
     },
     "placement": {
       "type": "object",
-      "description": "Which region each namespace's pods run in, e.g. {\"cc-office\": \"sea\"}. Every pod made in the namespace gets a node selector on topology.kubernetes.io/region, so related workloads stay near each other. Strict: with no node in the region up, the pods wait.",
+      "description": "Which region each namespace's pods run in, e.g. {\"cc-office\": \"sea\"} or {\"cc-office\": {\"region\": \"sea\", \"affinity\": \"preferred\"}}. Every pod made in the namespace gets a node affinity for topology.kubernetes.io/region, so related workloads stay near each other. A pod labelled placement.community-cloud.technology/exempt=true, or with its own region in its node selector, is left alone.",
       "propertyNames": {
         "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
         "maxLength": 63
       },
       "additionalProperties": {
-        "$ref": "#/$defs/region"
+        "oneOf": [
+          {
+            "$ref": "#/$defs/region"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["region"],
+            "properties": {
+              "region": {
+                "$ref": "#/$defs/region"
+              },
+              "affinity": {
+                "enum": ["required", "preferred"],
+                "default": "required",
+                "description": "Required: with no node in the region up, the pods wait. Preferred: they run in the region when there's room, and anywhere when there isn't."
+              }
+            }
+          }
+        ]
       }
     },
     "plugins": {
@@ -451,6 +470,10 @@
               "type": "string",
               "description": "Headlamp, signed into through Authentik."
             },
+            "methods": {
+              "type": "string",
+              "description": "Methods: its web app, API and the MCP endpoint bots connect to, on the one hostname."
+            },
             "plane": {
               "type": "string",
               "description": "Plane, its web app, admin pages and API on the one hostname."
@@ -459,9 +482,17 @@
               "type": "string",
               "description": "Cirrus's webhook endpoint, which code forges such as GitLab call when they publish an image."
             },
+            "meteorologist": {
+              "type": "string",
+              "description": "Meteorologist, Community Cloud's web interface, signed into through Authentik."
+            },
             "storage": {
               "type": "string",
               "description": "SeaweedFS's S3, for the links applications give browsers to the files in their buckets."
+            },
+            "files": {
+              "type": "string",
+              "description": "ProjectSend, for sharing files with clients, signed into through Authentik."
             }
           },
           "additionalProperties": {
@@ -473,6 +504,17 @@
           "properties": {
             "secretKey": {
               "type": "string"
+            }
+          }
+        },
+        "projectsend": {
+          "type": "object",
+          "description": "ProjectSend, from the projectsend package.",
+          "properties": {
+            "storage": {
+              "type": "string",
+              "enum": ["local", "s3"],
+              "description": "Where ProjectSend keeps the files people share. \"local\" is a volume on a node's disks, through TopoLVM; \"s3\" is a bucket in SeaweedFS, which needs the seaweedfs package and values.domain.storage, since downloads are links to the bucket. Either way the size is storage.allocations.projectsendGb. Defaults to \"local\". Chosen once: changing it later doesn't move the files already there."
             }
           }
         },
@@ -804,6 +846,16 @@
               "type": "integer",
               "minimum": 1,
               "description": "Each SeaweedFS volume server. Defaults to 50."
+            },
+            "mariadbGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The shared MariaDB, cc-mariadb, for the applications that need MySQL. Defaults to 10."
+            },
+            "projectsendGb": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ProjectSend's files: its volume, or with values.projectsend.storage \"s3\", its bucket's quota. Defaults to 50."
             }
           }
         },

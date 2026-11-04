@@ -10,7 +10,7 @@ import { WebApplicationForm } from "@/components/WebApplicationForm";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
 import { namespaceChoices } from "@/lib/namespace/choices";
-import { emptyForm } from "@/lib/webapp/form";
+import { emptyForm, soleConnection } from "@/lib/webapp/form";
 
 export const metadata: Metadata = { title: "New application" };
 
@@ -34,7 +34,13 @@ export default async function NewAppPage({ searchParams }: { searchParams: Promi
         back={{ href: "/apps", label: "Applications" }}
       />
       {!namespaces.ok && <ErrorNotice error={namespaces.error} title="Couldn't list namespaces" />}
-      <WebApplicationForm initial={emptyForm(namespace ?? "")} namespaces={choices} />
+      <WebApplicationForm
+        initial={{
+          ...emptyForm(namespace ?? ""),
+          ...soleConnection(choices.find((choice) => choice.name === namespace)),
+        }}
+        namespaces={choices}
+      />
     </>
   );
 }

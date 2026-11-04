@@ -21,8 +21,10 @@ import { parse as parseYaml } from "yaml";
 import CloudConfig from "./CloudConfig.ts";
 import { GatewayMode, NodeRole } from "./types.ts";
 import { asCiliumDevices } from "./interfaces.ts";
+import { getListenAddresses } from "./gateway.ts";
 import { buildAllocationValues } from "./allocations.ts";
 import { buildObjectStorageValues } from "./objectStorage.ts";
+import { buildProjectSendValues } from "./projectsend.ts";
 import { isEmbeddedPath, readEmbeddedFile } from "./embedded.ts";
 import { getValueContributors, resolveFile } from "./fileResolvers.ts";
 import { buildMailValues } from "./mail.ts";
@@ -366,6 +368,13 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     values.l2Announcements = announcesGatewayAddresses(rawConfig);
   }
 
+  // The addresses the cluster Gateway listens on, from the same
+  // reading of the configuration as the pool they're taken from. See
+  // gateway.ts.
+  if (values.gatewayAddresses === undefined) {
+    values.gatewayAddresses = getListenAddresses(config);
+  }
+
   // Which interfaces Cilium's datapath attaches to. Taken from the one
   // list rather than written out in the values file, so that Cilium
   // and the gateway's ARP announcements agree about what counts as an
@@ -421,6 +430,10 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
       region: "us-east-1",
     };
   }
+
+  // Where ProjectSend keeps its files, from "projectsend.storage", as
+  // something its manifests can test with an "if". See projectsend.ts.
+  values.projectsend = buildProjectSendValues(rawConfig);
 
   // The Authentik group whose members administer the cluster, signed
   // in through Headlamp. See ClusterSignIn.ts.

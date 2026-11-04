@@ -12,6 +12,31 @@
 # Reading every Secret is the broadest of these, and is what an
 # operator that hands out credentials has to be able to do; keep an
 # eye on it if Cirrus's scope narrows.
+#
+# DnsProviders add an ExternalDNS for each namespace they publish, in
+# the external-dns namespace: a ServiceAccount, a Deployment, and a
+# ClusterRoleBinding to cirrus-external-dns below. Making a binding
+# normally needs every permission the role grants, which Cirrus has no
+# use for (it never reads Gateways); "bind" on that one role, by name,
+# is the narrow way round it. Kubernetes still lets Cirrus bind any
+# role no broader than its own permissions, so what it can hand out
+# is at most what it already has: never cluster-admin, and nothing a
+# DnsProvider's author can choose, since the role an instance is bound
+# to is fixed in Cirrus. Bindings are cluster-scoped and RBAC can't
+# limit delete by label, so Cirrus could also remove other bindings;
+# it only ever touches its own, found by label.
+apiVersion: v1
+kind: Namespace
+metadata:
+  # Where ExternalDNS runs and its credentials are kept: nobody's
+  # application namespace, so having access to a namespace doesn't
+  # mean being able to read the token that writes its records. The
+  # installer's own instances (installer/src/util/dns.ts) run here
+  # too.
+  name: external-dns
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -35,12 +60,25 @@ rules:
   - apiGroups: ["community-cloud.technology"]
     resources: ["webapplications/status", "webapplications/finalizers"]
     verbs: ["get", "patch", "update"]
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["dnsproviders"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["dnsproviders/status"]
+    verbs: ["get", "patch", "update"]
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["secrets", "services"]
+    resources: ["secrets", "services", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["cirrus-external-dns"]
+    verbs: ["bind"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
@@ -78,3 +116,30 @@ subjects:
   - kind: ServiceAccount
     name: cirrus
     namespace: community-cloud
+---
+# What every ExternalDNS a DnsProvider runs may do: exactly what the
+# ExternalDNS chart's own ClusterRole grants with the Gateway route
+# source and ListenerSets on (installer/src/util/dns.ts), read-only.
+# Cluster-wide because finding a route's Gateway means reading
+# ListenerSets across the cluster; each instance still only acts on
+# its own namespace's routes, and only writes its provider's domains.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cirrus-external-dns
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["listenersets"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "watch", "list"]

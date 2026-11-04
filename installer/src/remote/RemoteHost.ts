@@ -6,6 +6,12 @@ import { join } from "node:path/posix";
 import { resolveSshHost } from "./sshConfig.ts";
 import { inPosixShell } from "../util/shell.ts";
 
+// How often to check an idle connection is still there, and how many
+// unanswered checks mean it isn't: about a minute in all, long enough
+// for a slow link and short enough that a dead one is noticed
+const KEEPALIVE_INTERVAL_MS = 15_000;
+const KEEPALIVE_COUNT_MAX = 4;
+
 // Common SSH key paths to try automatically
 const DEFAULT_KEY_PATHS = [
   join(homedir(), ".ssh", "id_ed25519"),
@@ -113,12 +119,21 @@ export default class RemoteHost {
       sshAgent: Boolean(sshAgent || (!privateKey && !password)), // fallback to agent only if no other method given
     };
 
+    // Without keepalives a connection that dies quietly — a NAT on the
+    // way forgetting it while a long command says nothing — leaves
+    // the command waiting on it forever. With them it fails in about
+    // a minute, and says why.
+    const keepalive = {
+      keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+      keepaliveCountMax: KEEPALIVE_COUNT_MAX,
+    };
+
     // Remove undefined/empty properties (node-ssh is strict about these)
     if (!finalOptions.privateKey) delete finalOptions.privateKey;
     if (!finalOptions.password) delete finalOptions.password;
 
     try {
-      await this.ssh.connect(finalOptions as Config);
+      await this.ssh.connect({ ...keepalive, ...finalOptions } as Config);
     } catch (err: any) {
       throw new Error(
         `SSH connection failed for host '${this.options.host}': ${err.message}`,

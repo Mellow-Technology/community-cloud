@@ -1,0 +1,42 @@
+# Methods's configuration.
+#
+# Everything here is safe to read. The secrets — the database
+# password, the Authentik client and the keys to its bucket — come
+# from their own Secrets in Methods.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: methods
+  namespace: cc-office
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+data:
+  # Where people reach it. The sign in redirect, the session cookie's
+  # Secure flag and the MCP address shown to bots' owners are all
+  # worked out from it.
+  PUBLIC_URL: {{ printf "https://%s" .Values.domain.methods | quote }}
+
+  # Authentik is the only way in. With passwords off there's no sign up
+  # either, and an account is made the first time someone signs in
+  # through Authentik, so who may use Methods is whoever Authentik lets
+  # through. Bots don't sign in: they use access tokens made in
+  # Methods's settings.
+  PASSWORD_LOGIN: "false"
+  ALLOW_REGISTRATION: "false"
+
+  # Single sign on through the client Methods.blueprint.yaml registers.
+  # Its slug is the "methods" in this address, and the trailing slash
+  # is part of the issuer Authentik announces, which has to match.
+  OIDC_ISSUER: {{ printf "https://%s/application/o/methods/" .Values.domain.auth | quote }}
+  OIDC_NAME: "Community Cloud"
+
+  # Its files are in its own bucket, from Methods.storage.yaml, in the
+  # cluster's SeaweedFS, which is addressed by path and over plain HTTP
+  # inside the cluster
+  S3_BUCKET: "methods"
+  S3_ENDPOINT: {{ .Values.objectStorage.endpoint | quote }}
+  S3_REGION: {{ .Values.objectStorage.region | quote }}
+  S3_ALLOW_HTTP: "true"
+  S3_VIRTUAL_HOSTED: "false"
+
+  RUST_LOG: "info,sqlx=warn"

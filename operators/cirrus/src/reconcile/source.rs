@@ -9,6 +9,14 @@
 //! pipeline itself. The two meet in the same place: a Release in the
 //! status, which the rollout acts on whichever found it.
 //!
+//! The poll is also how a new application finds what to run first:
+//! one never checked is due at once, so its first rollout is the
+//! newest release rather than `spec.image.tag`. Only a check that
+//! worked counts as checked. One that failed — a bad token, GitLab
+//! down, a pipeline whose image tag isn't in the registry — is tried
+//! again on the next pass rather than ten minutes later, since until
+//! it works the application may be running a stale tag.
+//!
 //! Each webhook is registered with a token of its own, kept in
 //! `<app>-cirrus-webhook`, so a request for one application can't be
 //! forged by knowing another's.
@@ -43,7 +51,9 @@ pub struct SourceResult {
     pub webhook: Option<WebhookStatus>,
     pub webhook_problem: Option<String>,
     pub release: Option<Release>,
+    // Set only when the forge was asked and answered
     pub checked_at: Option<String>,
+    // Why the forge couldn't be asked, or didn't answer
     pub problem: Option<String>,
 }
 
@@ -124,7 +134,6 @@ pub async fn sync(ctx: &Context, app: &WebApplication) -> SourceResult {
     // The poll
     let now = Timestamp::now();
     if poll_due(status.last_checked.as_deref(), now) {
-        result.checked_at = Some(now.to_string());
         let known = status.release.as_ref().map(|release| release.commit.clone());
         let found = async {
             match gitlab
@@ -138,7 +147,10 @@ pub async fn sync(ctx: &Context, app: &WebApplication) -> SourceResult {
             }
         };
         match found.await {
-            Ok(release) => result.release = release,
+            Ok(release) => {
+                result.release = release;
+                result.checked_at = Some(now.to_string());
+            }
             Err(error) => result.problem = Some(error.to_string()),
         }
     }
