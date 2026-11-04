@@ -1,0 +1,94 @@
+# How Grafana is reached: a ListenerSet on the cluster Gateway, as for
+# the other applications, on values.domain.grafana.
+#
+# Straight to Grafana, which signs people in through Authentik itself.
+# Prometheus and Alertmanager have no routes on purpose: neither has a
+# sign in, and anyone who could reach them could read or silence
+# everything.
+#
+# The certificate is cert-manager's, asked for by the annotation:
+# cert-manager makes one for the HTTPS listener and answers the
+# HTTP-01 challenge through the HTTP one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: grafana
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+  annotations:
+    cert-manager.io/cluster-issuer: cc-lets-encrypt
+spec:
+  parentRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cc-letsencrypt-web-gateway
+    namespace: community-cloud
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ .Values.domain.grafana }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ .Values.domain.grafana }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: grafana-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: grafana
+      sectionName: https
+  hostnames:
+    - {{ .Values.domain.grafana }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: monitoring-grafana
+          port: 80
+      # Grafana holds a websocket open for live updates, and a query
+      # over a long time range can take a while. Envoy otherwise ends a
+      # request that hasn't finished in 15 seconds; zero turns the
+      # limit off.
+      timeouts:
+        request: 0s
+---
+# Plain HTTP is only ever sent to HTTPS. The ACME challenge cert-manager
+# attaches to the same listener is more specific, so it still answers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana-redirect
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: grafana
+      sectionName: http
+  hostnames:
+    - {{ .Values.domain.grafana }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

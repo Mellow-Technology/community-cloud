@@ -1,0 +1,255 @@
+# kube-prometheus-stack's Helm values: Prometheus, Alertmanager and
+# Grafana, and what feeds them.
+#
+# Grafana is the only way in from outside, signed into through
+# Authentik. Prometheus and Alertmanager have no sign in of their own,
+# so neither gets a route: their data is reached through Grafana.
+#
+# Monitoring has to outlive what it watches, so it leans on as little
+# of the cluster as it can. Grafana keeps its data in SQLite on a
+# volume of its own rather than in cc-postgres, or a Postgres outage
+# would take away the graphs of it.
+
+# The chart's CRDs. Helm only installs what's in a chart's "crds"
+# folder the first time, so a chart upgrade that changes them doesn't
+# change the cluster's. Moving to a newer version of this chart means
+# applying its CRDs by hand first; see k8s/monitoring/README.md.
+crds:
+  enabled: true
+
+# -------------------------------------------------------------------
+# What K3s doesn't have to offer
+# -------------------------------------------------------------------
+# K3s runs the controller manager and the scheduler inside its own
+# process, listening on localhost, and Cilium does kube-proxy's job. A
+# target Prometheus can't reach is an alert that never clears, so each
+# of these goes along with the rules about it. Opening them up would
+# mean changing K3s's arguments and restarting every server.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+
+# -------------------------------------------------------------------
+# Prometheus
+# -------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # Unset, the chart only takes monitors and rules from its own
+    # release, and the ones in Monitoring.monitors.yaml aren't
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    # Two weeks covers looking back over the last incident. The size
+    # limit is what actually protects the volume: a burst of new series
+    # fills a disk well before fifteen days are up, and a Prometheus
+    # with a full volume stops recording altogether.
+    retention: 15d
+    retentionSize: 18GB
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: cc-local-ssd-fast
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+
+    # As per all things in Community Cloud, on the worker nodes
+    nodeSelector:
+      node-role.kubernetes.io/worker: worker
+
+# -------------------------------------------------------------------
+# Alertmanager
+# -------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: cc-local-ssd-fast
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+    nodeSelector:
+      node-role.kubernetes.io/worker: worker
+{{ if .Values.mail.enabled }}
+    # The password, as a file. Alertmanager reads it each time it
+    # sends, and it stays out of this file and the chart's release.
+    secrets:
+      - cc-smtp
+    podMetadata:
+      annotations:
+        community-cloud/smtp: {{ .Values.mail.revision | quote }}
+
+  # Without a mail server for this namespace none of this is here, and
+  # the chart's own configuration stands: alerts are worked out and
+  # shown in Grafana, and nobody is told.
+  config:
+    global:
+      smtp_smarthost: {{ printf "%s:%s" .Values.mail.host .Values.mail.port | quote }}
+      smtp_from: {{ printf "alerts@%s" .Values.mail.fromDomain | quote }}
+      smtp_require_tls: {{ .Values.mail.startTls }}
+      smtp_force_implicit_tls: {{ .Values.mail.implicitTls }}
+{{ if .Values.mail.username }}
+      # Alertmanager will read a password from a file but not a
+      # username. This one ends up in the Secret the chart keeps
+      # Alertmanager's configuration in, not a ConfigMap.
+      smtp_auth_username: {{ .Values.mail.username | quote }}
+      smtp_auth_password_file: /etc/alertmanager/secrets/cc-smtp/password
+{{ end }}
+    route:
+      receiver: email
+      group_by: [alertname, namespace]
+      group_wait: 1m
+      group_interval: 10m
+      # A day between reminders, so a problem someone is already
+      # working on doesn't fill their inbox
+      repeat_interval: 24h
+      routes:
+        # Watchdog fires all the time, on purpose: it proves alerting
+        # works, for something outside the cluster to watch. Nothing
+        # here is watching it, and InfoInhibitor only exists to silence
+        # other alerts.
+        - receiver: "null"
+          matchers:
+            - alertname =~ "Watchdog|InfoInhibitor"
+    receivers:
+      - name: "null"
+      - name: email
+        email_configs:
+          - to: {{ .Values.adminEmail | quote }}
+            send_resolved: true
+{{ end }}
+
+# -------------------------------------------------------------------
+# Grafana
+# -------------------------------------------------------------------
+grafana:
+  # The first administrator, kept for when Authentik is the thing
+  # that's broken. Authentik sends everyone straight through, so this
+  # account signs in at /login?disableAutoLogin.
+  admin:
+    existingSecret: grafana-admin
+    userKey: username
+    passwordKey: password
+
+  # SQLite on a local volume, which one pod at a time can have, so the
+  # old one has to stop before the new one starts
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: cc-local-ssd-fast
+    accessModes: ["ReadWriteOnce"]
+    size: 5Gi
+  deploymentStrategy:
+    type: Recreate
+
+  # The client's ID and secret, from the Secret the installer made, so
+  # they're never written into grafana.ini
+  envValueFrom:
+    GF_AUTH_GENERIC_OAUTH_CLIENT_ID:
+      secretKeyRef:
+        name: grafana-oidc
+        key: username
+    GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+      secretKeyRef:
+        name: grafana-oidc
+        key: password
+
+  grafana.ini:
+    server:
+      root_url: {{ printf "https://%s/" .Values.domain.grafana | quote }}
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    auth:
+      oauth_auto_login: true
+      signout_redirect_url: {{ printf "https://%s/application/o/grafana/end-session/" .Values.domain.auth | quote }}
+    auth.generic_oauth:
+      enabled: true
+      name: Authentik
+      auth_url: {{ printf "https://%s/application/o/authorize/" .Values.domain.auth | quote }}
+      token_url: {{ printf "https://%s/application/o/token/" .Values.domain.auth | quote }}
+      api_url: {{ printf "https://%s/application/o/userinfo/" .Values.domain.auth | quote }}
+      # "profile" carries the username and the groups
+      scopes: openid profile email
+      use_pkce: true
+      allow_sign_up: true
+      login_attribute_path: preferred_username
+      name_attribute_path: name
+      email_attribute_path: email
+      # Authentik has already turned away anyone in no "k8s-" group (see
+      # Monitoring.blueprint.yaml). Of those it lets through, the
+      # cluster's administrators are Grafana's and everyone else may
+      # look. Worked out at every sign in, so taking someone out of the
+      # group takes the role away too.
+      role_attribute_path: {{ printf "contains(groups[*], '%s') && 'Admin' || 'Viewer'" .Values.clusterAdminGroup | quote }}
+      allow_assign_grafana_admin: false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+# -------------------------------------------------------------------
+# What feeds it
+# -------------------------------------------------------------------
+prometheusOperator:
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  admissionWebhooks:
+    deployment:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+    patch:
+      nodeSelector:
+        node-role.kubernetes.io/worker: worker
+
+kube-state-metrics:
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+# On every node, which is the point of it, so no selector here.
+#
+# It shares the node's network, and nothing in front of a gateway node
+# stops the internet reaching its ports, so it's told to listen on the
+# node's internal address rather than on all of them. Prometheus
+# reaches it there just the same.
+prometheus-node-exporter:
+  service:
+    listenOnAllInterfaces: false

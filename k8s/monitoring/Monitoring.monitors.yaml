@@ -1,0 +1,118 @@
+# What Prometheus scrapes beyond what the chart sets up for itself:
+# the parts of the cluster everything else stands on.
+#
+# These are here rather than switched on in each component's own chart
+# because those charts go first. ServiceMonitor and PodMonitor arrive
+# with the monitoring package, so a chart asking for one would fail on
+# a fresh install, and Cilium is installed before anything else at all.
+#
+# A monitor for something that isn't installed matches nothing and does
+# no harm, so these don't depend on what a cluster has chosen.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cilium-agent
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      k8s-app: cilium
+  podMetricsEndpoints:
+    - port: prometheus
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cilium-operator
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      io.cilium/app: operator
+  podMetricsEndpoints:
+    - port: prometheus
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: http-metrics
+---
+# The operator itself
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cloudnative-pg
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    matchNames: [cnpg-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  podMetricsEndpoints:
+    - port: metrics
+---
+# Every Postgres it runs, wherever it is, since cc-postgres isn't
+# necessarily the only one. "instance" leaves out the short lived pods
+# it makes for joining and backing up.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+---
+# Its node pods, which are what publish how full each volume group is
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: topolvm
+  namespace: community-cloud
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"
+spec:
+  namespaceSelector:
+    matchNames: [topolvm-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: topolvm
+      app.kubernetes.io/component: node
+  podMetricsEndpoints:
+    - port: metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node

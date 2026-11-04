@@ -363,7 +363,7 @@ manifests alone. `true` is shorthand for enabled, and
 In the catalogue: `cert-manager`, `cloudnative-pg`, `topolvm`,
 `seaweedfs`, `redis-operator`, `rabbitmq-operator`,
 `mariadb-operator-crds`, `mariadb-operator`, `mattermost-operator`,
-`headlamp`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
+`headlamp`, `monitoring`, `tailscale-operator`, `twenty`, `lago`, `documenso`,
 `mattermost`, `picoclaw`, `plane`, `methods`, `projectsend`, `cirrus`,
 `meteorologist`.
 Dependencies

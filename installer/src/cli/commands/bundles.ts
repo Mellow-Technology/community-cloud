@@ -273,6 +273,12 @@ const builtInBundles: BundleDefinition[] = [
     checkedBy: "helm-charts",
   },
   {
+    name: "monitoring",
+    description: "Install Prometheus, Alertmanager and Grafana into community-cloud, signing in through Authentik",
+    commands: buildSinglePackageBundle("monitoring"),
+    checkedBy: "helm-charts",
+  },
+  {
     name: "nebula",
     description: "Join a node to the cluster's Nebula network",
     // Nothing at all without a network, so a plan for a cluster without

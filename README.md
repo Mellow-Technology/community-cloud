@@ -185,6 +185,7 @@ Webapp draft.
 | ProjectSend | `cc-office` | `projectsend` package — file sharing with clients, through Authentik, on cc-mariadb, Redis and a volume or SeaweedFS bucket |
 | Mattermost | `cc-office` | `mattermost` package — chat, through its operator, on cc-postgres and a SeaweedFS bucket |
 | Headlamp | `community-cloud` | `headlamp` package — cluster UI, signed into through Authentik, with our plugins |
+| Prometheus and Grafana | `community-cloud` | `monitoring` package — metrics and alerts, with Grafana signed into through Authentik |
 | Picoclaw | `cc-office` | `picoclaw` package — AI agent, behind an Authentik gate |
 
 None of these has run on real hardware in its current form yet.

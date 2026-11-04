@@ -19,6 +19,7 @@
       "cirrus": "cirrus.example.test",
       "meteorologist": "meteorologist.example.test",
       "headlamp": "headlamp.example.test",
+      "grafana": "grafana.example.test",
       "storage": "s3.example.test",
       "files": "files.example.test"
     },

@@ -1,0 +1,10 @@
+# CloudNativePG's Helm values.
+#
+# Its Grafana dashboard, as a ConfigMap Grafana finds by its label. It
+# does nothing on a cluster with no Grafana, so it isn't tied to the
+# monitoring package. The PodMonitors are in
+# k8s/monitoring/Monitoring.monitors.yaml, since this chart goes before
+# the resource type they're written in exists.
+monitoring:
+  grafanaDashboard:
+    create: true

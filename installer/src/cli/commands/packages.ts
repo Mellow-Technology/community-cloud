@@ -248,6 +248,7 @@ const builtInPackages: PackageDefinition[] = [
     // the first with the DatabaseRole that Office.roles.yaml uses.
     version: "0.29.1",
     namespace: "cnpg-system",
+    valuesFile: "embed://database/Postgres/CloudNativePG.values.yaml",
 
     // The shared cluster asks for "cc-local-ssd-fast", so the storage
     // has to be there first or its volume waits forever
@@ -1164,6 +1165,74 @@ const builtInPackages: PackageDefinition[] = [
     // The hostname browsers reach S3 on, for the links applications
     // sign for their buckets
     values: ["domain.storage"],
+  },
+  {
+    name: "monitoring",
+    description: "Prometheus, Alertmanager and Grafana, signed into through Authentik",
+    chart: { repo: "https://prometheus-community.github.io/helm-charts", name: "kube-prometheus-stack" },
+    // Pinned. Helm leaves a chart's CRDs alone on upgrade, so moving
+    // this means applying the new ones first, which should be a move
+    // somebody chose. See k8s/monitoring/README.md.
+    version: "92.17.1",
+    // A tool for running the cluster, not one of the applications on it
+    namespace: CLUSTER_NAMESPACE,
+    valuesFile: "embed://monitoring/Monitoring.values.yaml",
+
+    // Its volumes are TopoLVM's. Grafana's data is on one of them
+    // rather than in cc-postgres, so that a Postgres outage doesn't
+    // take the graphs of it away too.
+    requires: ["topolvm"],
+
+    // The monitors below watch these, and any that are installed by
+    // the same run are better up first than alerting from the start
+    after: ["authentik", "cert-manager", "cloudnative-pg"],
+
+    manifests: {
+      // The namespace, which the gateway bundle makes too, for the
+      // label the cluster Gateway looks for
+      before: ["embed://networking/cilium/gateway/Gateway.namespace.yaml"],
+
+      // After the chart, whose CRDs the monitors and rules are written
+      // in
+      after: [
+        "embed://monitoring/Monitoring.monitors.yaml",
+        "embed://monitoring/Monitoring.rules.yaml",
+        "embed://monitoring/Monitoring.dashboards.yaml",
+        "embed://monitoring/Monitoring.network.yaml",
+      ],
+    },
+
+    secrets: [
+      {
+        name: "grafana-oidc",
+        description: "the client Grafana signs in to Authentik as",
+      },
+      // For when Authentik is what's broken
+      {
+        name: "grafana-admin",
+        description: "Grafana's own administrator",
+        username: "admin",
+      },
+    ],
+
+    // Alertmanager sends what it has through the namespace's server
+    mail: true,
+
+    values: ["domain.grafana", "domain.auth", "adminEmail"],
+
+    app: {
+      title: "Grafana",
+      url: "domain.grafana",
+      signIn: SignIn.Authentik,
+      admin: { secret: "grafana-admin" },
+      note: "Anyone in a k8s- group can sign in, and the cluster admin group are administrators. The account in the Secret is for when Authentik is down: its username is admin, and it signs in at /login?disableAutoLogin.",
+    },
+
+    authentik: {
+      blueprint: "embed://monitoring/Monitoring.blueprint.yaml",
+      secret: "grafana-oidc",
+      slug: "grafana",
+    },
   },
   {
     name: "headlamp",

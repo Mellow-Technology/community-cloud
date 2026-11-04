@@ -108,6 +108,7 @@ cluster in service.
 | `helm`, `helm-charts` | Helm, then the configured charts in dependency order |
 | `dns` | ExternalDNS, one per DNS provider account and namespace, publishing routed hostnames |
 | `lago`, `documenso`, `twenty`, `mattermost`, `picoclaw`, `plane`, `methods`, `projectsend` | One application on its own, into a cluster that has the rest |
+| `monitoring` | Prometheus, Alertmanager and Grafana, signed into through Authentik |
 | `cirrus` | Cirrus, the operator that runs WebApplications |
 | `meteorologist` | Meteorologist, the web interface, signed into through Authentik |
 | `cluster-sign-in` | The API server's sign in settings on each server, without reinstalling K3s |
