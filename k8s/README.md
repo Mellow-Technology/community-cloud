@@ -151,6 +151,10 @@ Applied by hand, into `default`. It doesn't select a node yet; the
 installer labels any node it finds a compute-capable GPU on
 `node-role.kubernetes.io/worker-gpu`, which is what it should select.
 
+`NvidiaDevicePlugin/NvidiaDevicePlugin.values.yaml` is the Helm values
+for NVIDIA's device plugin, which makes `nvidia.com/gpu` something a
+pod can ask for. The `nvidia` bundle installs it.
+
 ## Applying in order
 
 Some of this depends on the rest of it. Broadly:

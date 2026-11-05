@@ -1096,6 +1096,54 @@ readable by every user (`644`); to tighten it, remove
 `K3S_KUBECONFIG_MODE` from `/etc/systemd/system/k3s.service.env` on the
 server and restart K3s.
 
+### NVIDIA GPUs
+
+The `nvidia` bundle is everything NVIDIA hardware needs, and it's part
+of `install` and `add-node`. Nodes the `gpu` bundle found no NVIDIA
+hardware on are left alone, and a cluster with no working card gets
+nothing at all. To bring an existing cluster or node up to date:
+
+```sh
+community-cloud run-bundle nvidia <node> cc.config.json
+```
+
+On a node with NVIDIA hardware it:
+
+1. Installs the NVIDIA Container Toolkit.
+2. Restarts K3s if it hasn't seen the runtime, because K3s only looks
+   for it as it starts. That's every new node, since the device plugin
+   needs a cluster and so this comes after K3s. Containers keep running.
+3. Labels the node `gpu.community-cloud.technology/nvidia-driver=ready`
+   if `nvidia-smi` works, and takes the label off if it doesn't.
+
+Then it installs the device plugin, which runs on the labelled nodes and
+tells Kubernetes what cards they have.
+
+The driver isn't installed for you, because changing one can mean a
+reboot. A node without one gets a warning and is left out of the device
+plugin. Install the driver and run the bundle again to bring it in.
+
+A pod needs both of these. K3s adds the `nvidia` RuntimeClass, which
+isn't the node's default runtime, so nothing else is affected. The limit
+is what gets it scheduled, and without the RuntimeClass the pod is given
+a card and can't see it:
+
+```yaml
+spec:
+  runtimeClassName: nvidia
+  containers:
+    - name: app
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+```
+
+Cards are shared by time-slicing, so each one counts as four
+`nvidia.com/gpu`, set in `NvidiaDevicePlugin.values.yaml`. Pods take
+turns on the card and share its memory with no limits between them, so
+one that uses it all can make the others fail. A pod can't ask for more
+than one.
+
 ## Adding a node
 
 ```bash
@@ -1116,7 +1164,7 @@ one machine a member:
 ```
 cluster-online → preflight → base → network → nebula → gpu
               → registries → lvm → k3s → nodeLabels
-              → gateway-addresses → node-joined
+              → gateway-addresses → nvidia → node-joined
 ```
 
 `gateway-addresses` is the one exception, because a gateway node
