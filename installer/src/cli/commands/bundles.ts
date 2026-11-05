@@ -13,6 +13,7 @@ import CloudConfig from "../../util/CloudConfig.ts";
 import { ClusterSignInCommands, K3sCommands } from "./K3s.ts";
 import { ClusterOnlineCommands, NodeJoinedCommands } from "./AddNode.ts";
 import { BasePackageCommands } from "./BasePackages.ts";
+import { DevicePluginCommands, NvidiaCommands } from "./Nvidia.ts";
 import { NodeLabelCommands } from "./NodeLabels.ts";
 import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
@@ -92,7 +93,8 @@ export interface BundleDefinition {
  * just run and their findings are in the context. Run on its own, it
  * would know of no GPU and no disk and leave those labels off, so it
  * looks for itself — with the read-only commands only, since labelling
- * a node shouldn't be able to format its disks.
+ * a node shouldn't be able to format its disks. The nvidia bundle does
+ * the same, to know whether a node has anything for it to do.
  *
  * @param commands
  * @param key the context entry they fill in
@@ -102,14 +104,14 @@ function unlessKnown(commands: CommandSpec[], key: string): CommandSpec[] {
   // Set by the first of them, so the rest can tell what they found
   // from what an earlier bundle did: they run after it has filled the
   // key in, and would otherwise take that as their cue to skip
-  const looking = `${key}:lookedForByNodeLabels`;
+  const looking = `${key}:lookedForItself`;
   const inspecting = commands.filter((command) => command.purpose === CommandPurpose.Inspect);
 
   return inspecting.map((command, index) => {
     const save = command.saveToContext;
 
     if (index === 0 && typeof save !== "function") {
-      throw new Error(`"${command.name}" has to save its findings with a function to be run by nodeLabels.`);
+      throw new Error(`"${command.name}" has to save its findings with a function to be run on their own.`);
     }
 
     return {
@@ -361,6 +363,11 @@ const builtInBundles: BundleDefinition[] = [
     description: "Remove a node from the cluster, and check the cluster agrees",
     commands: NodeRemovedCommands,
     teardown: true,
+  },
+  {
+    name: "nvidia",
+    description: "Install the NVIDIA runtime on nodes with NVIDIA hardware, and the device plugin that lets pods ask for a card",
+    commands: [...unlessKnown(GpuInfoCommands, "videoDevices"), ...NvidiaCommands, ...DevicePluginCommands],
   },
   {
     name: "nodeLabels",

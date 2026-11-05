@@ -1,0 +1,36 @@
+# NVIDIA's device plugin. It counts each node's cards and tells the
+# kubelet, which is what makes "nvidia.com/gpu" something a pod can ask
+# for and the scheduler can keep track of. Installed by the nvidia
+# bundle.
+
+# The nvidia runtime isn't the node's default, so without this the
+# plugin runs under the normal one, can't see the driver, and reports
+# no cards at all.
+runtimeClassName: nvidia
+
+# The chart picks its nodes with labels from Node Feature Discovery,
+# which isn't here. The nvidia bundle labels the nodes whose driver
+# answered, so that's used instead, and the chart's rule has to go:
+# both would have to match.
+nodeSelector:
+  gpu.community-cloud.technology/nvidia-driver: ready
+affinity: null
+
+# Each card is offered to Kubernetes as four, so four pods can share
+# it. Time-slicing takes turns on the card and nothing more: the pods
+# share its memory with no limits between them, so one that takes it
+# all fails the others.
+#
+# Asking for two of these wouldn't get a pod twice the card, only a
+# second turn on the same one, so it's refused rather than left to
+# look like it worked.
+config:
+  map:
+    default: |-
+      version: v1
+      sharing:
+        timeSlicing:
+          failRequestsGreaterThanOne: true
+          resources:
+            - name: nvidia.com/gpu
+              replicas: 4

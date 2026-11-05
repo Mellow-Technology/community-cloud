@@ -100,6 +100,7 @@ cluster in service.
 | `gateway-addresses` | The address pool and the cluster Gateway brought up to date, run by add-node |
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
+| `nvidia` | The NVIDIA runtime on nodes with NVIDIA hardware, and the device plugin that lets pods ask for a card |
 | `nodeLabels` | Roles, labels, region and zone, and what was detected |
 | `placement` | Each namespace in `placement` kept to its region |
 | `cluster-online` | Whether the cluster is up, before joining a node to it |
@@ -491,7 +492,8 @@ Enabled under `packages` in the configuration: `cert-manager`,
 
 `community-cloud install` runs all of it, as one pipeline: `preflight`,
 `base`, `network`, `gpu`, `registries`, `lvm`, `k3s`, `nodeLabels`,
-`placement`, `cilium`, `gateway`, `helm`, `helm-charts`, `dns`, `cluster`.
+`placement`, `cilium`, `gateway`, `helm`, `nvidia`, `helm-charts`,
+`dns`, `cluster`.
 In stages:
 
 1. **Prepare nodes** — preflight checks, packages, kernel networking,
@@ -500,11 +502,13 @@ In stages:
    then which region each placed namespace runs in
 3. **Networking** — the Gateway API resources → Cilium → the cluster
    Gateway (the `gateway` bundle)
-4. **Charts** — the `helm-charts` bundle, dependencies first:
+4. **NVIDIA** — the runtime and the device plugin, on clusters with NVIDIA
+   hardware (the `nvidia` bundle)
+5. **Charts** — the `helm-charts` bundle, dependencies first:
    cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
    CloudNativePG and cc-postgres → Redis and RabbitMQ → Authentik → the
    applications, each with its own ListenerSet on the cluster Gateway
-5. **DNS and record-keeping** — ExternalDNS for the routed hostnames,
+6. **DNS and record-keeping** — ExternalDNS for the routed hostnames,
    then the configuration recorded in the cluster
 
 ---

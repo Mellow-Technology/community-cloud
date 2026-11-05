@@ -58,6 +58,7 @@ export const INSTALL_PIPELINE = [
   "cilium",
   "gateway",
   "helm",
+  "nvidia",
   "helm-charts",
   "dns",
   "cluster",
