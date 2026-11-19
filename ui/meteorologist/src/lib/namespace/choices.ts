@@ -13,6 +13,7 @@ import { providersFor } from "../dns/providers";
 import { connectionsIn } from "../gitlab/connections";
 import { settle, type KubeClient } from "../kube/client";
 import type { Namespace, SecretSummary } from "../kube/types";
+import { acrossNamespaces, namespacesAllowing } from "./access";
 import { PULL_SECRET_TYPE } from "./settings";
 import { REGISTRY_ANNOTATION, registriesIn, type PullSecret } from "../webapp/registry";
 import { POSTGRES_CLUSTER } from "../postgres";
@@ -54,12 +55,17 @@ export async function namespaceChoices(
   namespaces: Namespace[],
   only?: string,
 ): Promise<NamespaceChoice[]> {
-  // Either may be refused to someone who can't see the whole cluster;
-  // then the form just doesn't say what it can't know
-  const [clusters, quotas, dns, secrets] = await Promise.all([
-    settle(() => kube.listPostgresClusters(only)),
-    settle(() => kube.listResourceQuotas(only)),
+  const names = namespaces.map((ns) => ns.metadata.name);
+  const across = <T>(read: (namespace?: string) => Promise<T[]>) =>
+    settle(() => (only === undefined ? acrossNamespaces(namespaces, read) : read(only)));
+
+  // Any of these may be refused; then the form just doesn't say what
+  // it can't know
+  const [clusters, quotas, dns, labelling, secrets] = await Promise.all([
+    across((namespace) => kube.listPostgresClusters(namespace)),
+    across((namespace) => kube.listResourceQuotas(namespace)),
     settle(() => kube.listDnsProviders()),
+    namespacesAllowing(kube, { verb: "patch", resource: "namespaces" }, names),
     // Connections are per namespace, so asked of each; one that's
     // refused just has none offered
     Promise.all(namespaces.map((ns) => settle(() => kube.listSecrets(ns.metadata.name)))),
@@ -81,6 +87,7 @@ export async function namespaceChoices(
       return {
         name,
         labels: ns.metadata.labels ?? {},
+        canChangeCapabilities: labelling.has(name),
         hasPostgres: clusters.ok
           ? clusters.value.some(
               (cluster) => cluster.metadata.namespace === name && cluster.metadata.name === POSTGRES_CLUSTER,

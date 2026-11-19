@@ -9,24 +9,28 @@
  * Who the request is made as comes from the caller: the signed-in
  * person's ID token, or, in development, a kubeconfig's user.
  *
- * The pod's own service account token is never used. Meteorologist
- * needs no RBAC of its own, and binding it none means a bug here can't
- * do more than the person using it could have done anyway.
+ * Everything is done as that person. Meteorologist's own account can
+ * list namespaces and nothing else, and only listNamespaceNames uses
+ * it, so a bug here can't do more than the person using it could have
+ * done anyway, beyond seeing a namespace's name.
  */
 import {
   ApiException,
   AppsV1Api,
   AuthenticationV1Api,
+  AuthorizationV1Api,
   CoreV1Api,
   CustomObjectsApi,
   KubeConfig,
   PatchStrategy,
+  Watch,
   setHeaderOptions,
   type Cluster,
 } from "@kubernetes/client-node";
+import { readFile } from "node:fs/promises";
 import "server-only";
 
-import { getApiServerOverride, getDevKubeconfig, hasDevKubeconfig } from "../config";
+import { getApiServerOverride, getDevKubeconfig, getNamespaceListerTokenFile, hasDevKubeconfig } from "../config";
 import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
 import { DNS_PLURAL, type DnsProvider } from "../dns/types";
 import { parseQuantity } from "../quantity";
@@ -54,6 +58,13 @@ const CERTIFICATES = { group: "cert-manager.io", version: "v1", plural: "certifi
 
 // The node label a region is read from
 const REGION_LABEL = "topology.kubernetes.io/region";
+
+// How long a watch runs before the API server ends it. It has to be
+// short: the API server only checks a token when a watch starts, so
+// one left open would outlast the session it was made with. The
+// browser starts another, which goes through the proxy like any other
+// request and so has its token refreshed.
+const WATCH_SECONDS = 240;
 
 // The name the cluster entry is given inside the KubeConfig built for
 // each request. It only has to be the same in both places it's used.
@@ -157,6 +168,20 @@ function translate(error: unknown): KubeError {
 }
 
 /**
+ * A failed watch as a KubeError. Watch reports the HTTP status on a
+ * plain Error, not an ApiException.
+ *
+ * @param error
+ * @returns
+ */
+function translateWatch(error: unknown): KubeError {
+  const status = (error as { statusCode?: unknown }).statusCode;
+  return typeof status === "number"
+    ? new KubeError(status, error instanceof Error ? error.message : String(error))
+    : translate(error);
+}
+
+/**
  * Runs a call, turning whatever it throws into a KubeError.
  *
  * @param call
@@ -199,6 +224,7 @@ function clientFor(config: KubeConfig): KubeClient {
   const apps = config.makeApiClient(AppsV1Api);
   const custom = config.makeApiClient(CustomObjectsApi);
   const authentication = config.makeApiClient(AuthenticationV1Api);
+  const authorization = config.makeApiClient(AuthorizationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
   const dns = { group: GROUP, version: VERSION, plural: DNS_PLURAL };
   const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
@@ -214,7 +240,31 @@ function clientFor(config: KubeConfig): KubeClient {
         return { username: user?.username ?? "", groups: user?.groups ?? [] };
       }),
 
+    canI: ({ verb, resource, group, namespace, name }) =>
+      attempt(async () => {
+        const review = await authorization.createSelfSubjectAccessReview({
+          body: {
+            apiVersion: "authorization.k8s.io/v1",
+            kind: "SelfSubjectAccessReview",
+            spec: { resourceAttributes: { verb, resource, group, namespace, name } },
+          },
+        });
+        return review.status?.allowed ?? false;
+      }),
+
     listNamespaces: () => attempt(async () => (await core.listNamespace()).items as Namespace[]),
+
+    listNamespaceNames: () =>
+      attempt(async () => {
+        const file = getNamespaceListerTokenFile();
+        if (file === undefined) {
+          throw new KubeError(403, "Meteorologist has no account to list namespaces with.", "Forbidden");
+        }
+        // Read each time, since the kubelet replaces it before it expires
+        const token = (await readFile(file, "utf8")).trim();
+        const listed = await configForToken(token).makeApiClient(CoreV1Api).listNamespace();
+        return listed.items.map((namespace) => namespace.metadata?.name ?? "").filter((name) => name !== "");
+      }),
 
     getNamespace: (name) => attempt(async () => (await core.readNamespace({ name })) as Namespace),
 
@@ -457,6 +507,40 @@ function clientFor(config: KubeConfig): KubeClient {
             : await custom.listNamespacedCustomObject({ ...webapps, namespace });
         return (list as { items: WebApplication[] }).items;
       }),
+
+    watchWebApplications: async ({ namespace, name }, onChange, onEnd) => {
+      const base = `/apis/${GROUP}/${VERSION}`;
+      const path =
+        namespace === undefined ? `${base}/${PLURAL}` : `${base}/namespaces/${encodeURIComponent(namespace)}/${PLURAL}`;
+      const watch = new Watch(config);
+      // It gives up after 30 seconds of silence unless told otherwise,
+      // and a quiet application is silent for minutes. The setting is
+      // private, with no other way to reach it; if it's ever renamed,
+      // quiet pages just reconnect more often.
+      (watch as unknown as { requestTimeoutMs: number }).requestTimeoutMs = (WATCH_SECONDS + 30) * 1000;
+      let stopped = false;
+      const controller = await watch.watch(
+        path,
+        {
+          timeoutSeconds: WATCH_SECONDS,
+          fieldSelector: name === undefined ? undefined : `metadata.name=${name}`,
+        },
+        (phase) => {
+          if (phase !== "BOOKMARK" && phase !== "ERROR") {
+            onChange();
+          }
+        },
+        (error) => {
+          if (!stopped) {
+            onEnd(error ? translateWatch(error) : undefined);
+          }
+        },
+      );
+      return () => {
+        stopped = true;
+        controller.abort();
+      };
+    },
 
     getWebApplication: (namespace, name) =>
       attempt(async () => (await custom.getNamespacedCustomObject({ ...webapps, namespace, name })) as WebApplication),

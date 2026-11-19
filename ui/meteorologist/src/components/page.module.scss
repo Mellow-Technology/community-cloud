@@ -75,3 +75,8 @@
   display: block;
   margin-block-end: var(--gm-space-2);
 }
+
+.live {
+  margin: 0 0 var(--space-4, 1rem);
+  font-size: 0.875rem;
+}

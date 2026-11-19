@@ -196,6 +196,31 @@ export function getApiServerOverride(): { server?: string; caFile?: string; inse
 }
 
 /**
+ * The file holding the token that lists namespace names, which is the
+ * only thing Meteorologist's own account is for. Without one, people
+ * who can't list namespaces themselves find none.
+ *
+ * @returns
+ */
+export function getNamespaceListerTokenFile(): string | undefined {
+  return setting("METEOROLOGIST_NAMESPACE_LISTER_TOKEN_FILE");
+}
+
+/**
+ * The namespaces the pretend cluster's person is limited to, to see
+ * the pages as someone who isn't a cluster admin. Nothing means they
+ * can do everything.
+ *
+ * @returns
+ */
+export function getFixtureNamespaces(): string[] | undefined {
+  return setting("METEOROLOGIST_FIXTURE_NAMESPACES")
+    ?.split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+}
+
+/**
  * Everything needed to sign people in through Authentik.
  *
  * @returns

@@ -13,10 +13,10 @@ import { redirect } from "next/navigation";
 import "server-only";
 
 import { SESSION_COOKIE, sessionIdentity, unsealSession } from "../auth/session";
-import { getKubeMode, type KubeMode } from "../config";
+import { getFixtureNamespaces, getKubeMode, type KubeMode } from "../config";
 import { apiServerClientForDevKubeconfig, apiServerClientForToken } from "./apiServer";
 import type { KubeClient } from "./client";
-import { fixtureClient } from "./fixtures";
+import { fixtureClient, limitedToNamespaces } from "./fixtures";
 
 /**
  * Who requests are made as, for the header.
@@ -38,7 +38,8 @@ export interface Viewer {
 export async function getKube(): Promise<KubeClient> {
   const mode = getKubeMode();
   if (mode === "fixtures") {
-    return fixtureClient();
+    const namespaces = getFixtureNamespaces();
+    return namespaces === undefined ? fixtureClient() : limitedToNamespaces(fixtureClient(), namespaces);
   }
   if (mode === "kubeconfig") {
     return apiServerClientForDevKubeconfig();

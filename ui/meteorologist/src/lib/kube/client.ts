@@ -42,11 +42,32 @@ export interface KubeClient {
   whoAmI(): Promise<{ username: string; groups: string[] }>;
 
   /**
+   * Whether RBAC lets the person do something. Anyone the API server
+   * accepts may ask, about themselves.
+   *
+   * @param permission
+   * @returns
+   */
+  canI(permission: Permission): Promise<boolean>;
+
+  /**
    * Every namespace the person may list.
    *
    * @returns
    */
   listNamespaces(): Promise<Namespace[]>;
+
+  /**
+   * The name of every namespace in the cluster, whoever is asking.
+   *
+   * This is the one read not made as the person, because Kubernetes
+   * can't say which namespaces someone has access to, only whether
+   * they have access to one it's asked about. Nothing here is to be
+   * shown to anyone: it's what reachableNamespaces checks them against.
+   *
+   * @returns
+   */
+  listNamespaceNames(): Promise<string[]>;
 
   /**
    * One namespace.
@@ -289,6 +310,24 @@ export interface KubeClient {
   listWebApplications(namespace?: string): Promise<WebApplication[]>;
 
   /**
+   * Watches WebApplications until stop is called or the API server
+   * ends it. Everything already there comes first, as if just changed,
+   * so nothing is missed between a page being drawn and this starting.
+   *
+   * @param scope a namespace, or one application in it; nothing for
+   *   every namespace
+   * @param onChange called for each change
+   * @param onEnd called once when it stops, with why if it wasn't
+   *   asked to: a KubeError, or nothing when it simply ran its course
+   * @returns how to stop it
+   */
+  watchWebApplications(
+    scope: WatchScope,
+    onChange: () => void,
+    onEnd: (error?: KubeError) => void,
+  ): Promise<() => void>;
+
+  /**
    * One WebApplication.
    *
    * @param namespace
@@ -344,6 +383,29 @@ export interface KubeClient {
     type?: string,
     annotations?: Record<string, string>,
   ): Promise<void>;
+}
+
+/**
+ * Something someone might do, as RBAC sees it.
+ *
+ * - group: the resource's API group; the core group unless said
+ * - namespace: where; nothing means in every namespace
+ * - name: one object, for rules that name theirs
+ */
+export interface Permission {
+  verb: string;
+  resource: string;
+  group?: string;
+  namespace?: string;
+  name?: string;
+}
+
+/**
+ * Which WebApplications a watch covers.
+ */
+export interface WatchScope {
+  namespace?: string;
+  name?: string;
 }
 
 /**

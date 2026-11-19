@@ -25,13 +25,22 @@ export interface CapabilitySwitchProps {
   onChanged?: (enabled: boolean) => void;
   // Words beside the switch; "On" and "Off" by default
   label?: string;
+  // Shows the capability to someone who can't change it
+  readOnly?: boolean;
 }
 
 /**
  * @param props
  * @returns
  */
-export function CapabilitySwitch({ namespace, capability: id, enabled, onChanged, label }: CapabilitySwitchProps) {
+export function CapabilitySwitch({
+  namespace,
+  capability: id,
+  enabled,
+  onChanged,
+  label,
+  readOnly = false,
+}: CapabilitySwitchProps) {
   const capability = getCapability(id);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -59,7 +68,7 @@ export function CapabilitySwitch({ namespace, capability: id, enabled, onChanged
       <Switch
         label={label ?? (shown ? "On" : "Off")}
         checked={shown}
-        disabled={pending}
+        disabled={pending || readOnly}
         aria-label={`${capability.title} for ${namespace}`}
         onChange={(event) => (event.target.checked ? apply(true) : setConfirming(true))}
       />

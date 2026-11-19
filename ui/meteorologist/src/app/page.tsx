@@ -15,11 +15,15 @@ import { ErrorNotice } from "@/components/ErrorNotice";
 import { certificateCell } from "@/components/CertificateBadge";
 import { ClusterPanel } from "@/components/ClusterPanel";
 import { HealthBadge } from "@/components/HealthBadge";
+import { LiveRefresh } from "@/components/LiveRefresh";
+import { NoNamespaces } from "@/components/NoNamespaces";
 import { PageHeader } from "@/components/PageHeader";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
+import { acrossNamespaces, namespacesAllowing, reachableNamespaces } from "@/lib/namespace/access";
 import { HEALTH_ORDER, appHealth, countHealth, presentHealth } from "@/lib/webapp/health";
+import { GROUP, PLURAL } from "@/lib/webapp/types";
 import { appHref } from "@/lib/webapp/present";
 import styles from "@/components/page.module.scss";
 
@@ -28,11 +32,17 @@ import styles from "@/components/page.module.scss";
  */
 export default async function OverviewPage() {
   const kube = await getKube();
-  const [namespaces, apps, certificates, usage] = await Promise.all([
-    settle(() => kube.listNamespaces()),
-    settle(() => kube.listWebApplications()),
-    settle(() => kube.listCertificates()),
+  const namespaces = await settle(() => reachableNamespaces(kube));
+  const reached = namespaces.ok ? namespaces.value : [];
+  const [apps, certificates, usage, deployable] = await Promise.all([
+    settle(() => acrossNamespaces(reached, (namespace) => kube.listWebApplications(namespace))),
+    settle(() => acrossNamespaces(reached, (namespace) => kube.listCertificates(namespace))),
     settle(() => kube.getClusterUsage()),
+    namespacesAllowing(
+      kube,
+      { verb: "create", resource: PLURAL, group: GROUP },
+      reached.map((ns) => ns.metadata.name),
+    ),
   ]);
 
   const counts = apps.ok ? countHealth(apps.value) : undefined;
@@ -50,8 +60,12 @@ export default async function OverviewPage() {
         eyebrow="Community Cloud"
         title="Overview"
         description="Your applications, and the namespaces they live in."
-        actions={<Button href="/apps/new">New application</Button>}
+        actions={deployable.size > 0 ? <Button href="/apps/new">New application</Button> : undefined}
       />
+
+      <LiveRefresh />
+
+      {namespaces.ok && reached.length === 0 && <NoNamespaces />}
 
       <Grid min="180px" gap={4} className={styles.stats}>
         <Stat label="Applications" value={total ?? "—"} />
@@ -85,7 +99,12 @@ export default async function OverviewPage() {
 
           {listed.length === 0 ? (
             <p className={styles.empty}>
-              No applications yet. <Link href="/apps/new">Create one</Link>.
+              No applications yet.{" "}
+              {deployable.size > 0 && (
+                <>
+                  <Link href="/apps/new">Create one</Link>.
+                </>
+              )}
             </p>
           ) : (
             <Table
@@ -127,9 +146,11 @@ export default async function OverviewPage() {
             The applications installed for the cluster&apos;s people, how each is signed in to, and, for cluster admins,
             the administrator passwords.
           </Card>
-          <Card title="New application" href="/apps/new" footer="Start →">
-            Run an image with a database, a bucket or a queue, served on your own hostname and updated from GitLab.
-          </Card>
+          {deployable.size > 0 && (
+            <Card title="New application" href="/apps/new" footer="Start →">
+              Run an image with a database, a bucket or a queue, served on your own hostname and updated from GitLab.
+            </Card>
+          )}
         </Grid>
       </section>
 

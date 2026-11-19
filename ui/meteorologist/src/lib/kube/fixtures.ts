@@ -23,7 +23,7 @@ import type { NodeUsage } from "../cluster";
 import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
 import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
 import { RECORD_KEY, RECORD_LABEL, RECORD_NAMESPACE, type PackageRecord } from "../office";
-import { API_VERSION, KIND, type WebApplication } from "../webapp/types";
+import { API_VERSION, GROUP, KIND, PLURAL, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
 import type {
   Certificate,
@@ -67,6 +67,9 @@ interface FixtureSecret {
   // cluster admin
   forbidden?: boolean;
 }
+
+// How often a watch looks for changes
+const WATCH_INTERVAL_MS = 500;
 
 // When the fixtures were "made", so ages on the page look plausible
 const CREATED = "2026-10-01T09:00:00Z";
@@ -659,13 +662,115 @@ function requireNamespace(name: string): Namespace {
 }
 
 /**
+ * The client as someone would have it who's been given the "edit" role
+ * in some namespaces and nothing else: the shape of what RBAC lets
+ * them do, including the 403s for anything cluster-wide.
+ *
+ * @param client
+ * @param allowed the namespaces they have access to
+ * @returns
+ */
+export function limitedToNamespaces(client: KubeClient, allowed: string[]): KubeClient {
+  const refuse = (resource: string, namespace?: string): never => {
+    const where = namespace === undefined ? "at the cluster scope" : `in the namespace "${namespace}"`;
+    throw new KubeError(403, `${resource} is forbidden: User "fixture" cannot do that ${where}`, "Forbidden");
+  };
+  const within = (resource: string, namespace: string | undefined) => {
+    if (namespace === undefined || !allowed.includes(namespace)) {
+      refuse(resource, namespace);
+    }
+  };
+  // A read that takes an optional namespace, refused without one
+  const scoped =
+    <T>(resource: string, read: (namespace?: string) => Promise<T>) =>
+    async (namespace?: string) => {
+      within(resource, namespace);
+      return read(namespace);
+    };
+
+  return {
+    ...client,
+    canI: async ({ verb, resource, group, namespace }) =>
+      namespace !== undefined &&
+      allowed.includes(namespace) &&
+      // What the "edit" role has, as Cirrus's aggregated roles extend it
+      (resource === "secrets" || (group === GROUP && resource === PLURAL)) &&
+      verb !== "impersonate",
+    listNamespaces: async () => refuse("namespaces"),
+    getNamespace: async (name) => {
+      within("namespaces", name);
+      return client.getNamespace(name);
+    },
+    patchNamespaceLabels: async (name) => refuse("namespaces", name),
+    patchNamespaceAnnotations: async (name) => refuse("namespaces", name),
+    createNamespace: async () => refuse("namespaces"),
+    listRegions: async () => refuse("nodes"),
+    getClusterUsage: async () => refuse("nodes"),
+    listDnsProviders: async () => refuse("dnsproviders"),
+    applyResourceQuota: async (quota) => refuse("resourcequotas", quota.metadata.namespace),
+    applyLimitRange: async (limitRange) => refuse("limitranges", limitRange.metadata.namespace),
+    listResourceQuotas: scoped("resourcequotas", client.listResourceQuotas),
+    listPostgresClusters: scoped("clusters", client.listPostgresClusters),
+    listCertificates: scoped("certificates", client.listCertificates),
+    listWebApplications: scoped("webapplications", client.listWebApplications),
+    listConfigMaps: async (namespace, labelSelector) => {
+      within("configmaps", namespace);
+      return client.listConfigMaps(namespace, labelSelector);
+    },
+    listWorkloads: async (namespace) => {
+      within("deployments", namespace);
+      return client.listWorkloads(namespace);
+    },
+    listSecrets: async (namespace) => {
+      within("secrets", namespace);
+      return client.listSecrets(namespace);
+    },
+    getWebApplication: async (namespace, name) => {
+      within("webapplications", namespace);
+      return client.getWebApplication(namespace, name);
+    },
+    createWebApplication: async (app) => {
+      within("webapplications", app.metadata.namespace);
+      return client.createWebApplication(app);
+    },
+    watchWebApplications: async (scope, onChange, onEnd) => {
+      within("webapplications", scope.namespace);
+      return client.watchWebApplications(scope, onChange, onEnd);
+    },
+  };
+}
+
+/**
  * The in-memory client.
  *
  * @returns
  */
 export function fixtureClient(): KubeClient {
   return {
+    canI: async () => true,
+
     listNamespaces: async () => copy([...store().namespaces.values()]),
+
+    listNamespaceNames: async () => [...store().namespaces.keys()],
+
+    // Every change through the pages moves the store's version, so
+    // that's what's watched. Cirrus isn't here to change anything else.
+    watchWebApplications: async ({ namespace, name }, onChange) => {
+      const matching = [...store().webapps.values()].filter(
+        (app) =>
+          (namespace === undefined || app.metadata.namespace === namespace) &&
+          (name === undefined || app.metadata.name === name),
+      );
+      matching.forEach(() => onChange());
+      let seen = store().version;
+      const timer = setInterval(() => {
+        if (store().version !== seen) {
+          seen = store().version;
+          onChange();
+        }
+      }, WATCH_INTERVAL_MS);
+      return () => clearInterval(timer);
+    },
 
     getNamespace: async (name) => copy(requireNamespace(name)),
 

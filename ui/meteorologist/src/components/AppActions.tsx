@@ -31,13 +31,16 @@ export interface AppActionsProps {
   summary: DeletionSummary;
   // Already being deleted, so there's nothing more to do with it
   deleting: boolean;
+  // What the person is allowed; what they aren't isn't offered
+  canEdit: boolean;
+  canDelete: boolean;
 }
 
 /**
  * @param props
  * @returns
  */
-export function AppActions({ namespace, name, url, editHref, summary, deleting }: AppActionsProps) {
+export function AppActions({ namespace, name, url, editHref, summary, deleting, canEdit, canDelete }: AppActionsProps) {
   const router = useRouter();
   const formId = useId();
   const [open, setOpen] = useState(false);
@@ -71,8 +74,10 @@ export function AppActions({ namespace, name, url, editHref, summary, deleting }
 
   const items: ButtonGroupItem[] = [
     ...(url ? [{ id: "open", label: "Open ↗", href: url, target: "_blank", rel: "noreferrer" }] : []),
-    { id: "edit", label: "Edit", href: editHref, disabled: deleting },
-    { id: "delete", label: "Delete", tone: "danger", onClick: () => setOpen(true), disabled: deleting },
+    ...(canEdit ? [{ id: "edit", label: "Edit", href: editHref, disabled: deleting }] : []),
+    ...(canDelete
+      ? [{ id: "delete", label: "Delete", tone: "danger" as const, onClick: () => setOpen(true), disabled: deleting }]
+      : []),
   ];
 
   return (
