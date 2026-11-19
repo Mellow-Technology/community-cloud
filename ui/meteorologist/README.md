@@ -5,7 +5,9 @@ to Community Cloud, which a general Kubernetes UI like Headlamp doesn't
 know about:
 
 - **Overview**: how every WebApplication is doing, worked out from the
-  conditions Cirrus sets, and which ones need looking at.
+  conditions Cirrus sets, and which ones need looking at. This, the
+  applications list and each application's page update by themselves
+  (see [Live status](#live-status)).
 - **Namespaces**: which Community Cloud capabilities each namespace has,
   with a switch to turn each one on or off. A capability is a label
   that the cluster's shared services select on:
@@ -150,8 +152,9 @@ To change how the API is reached, you only touch those files.
    session and lands on `/auth/no-access`, which says who to ask.
 5. `src/proxy.ts` refreshes the ID token shortly before it expires.
 
-Meteorologist itself needs no RBAC. Its pod's service account token is
-never used; the pod only provides the API server's address and CA.
+Everything is done as the person. Meteorologist's own account can list
+namespaces and nothing else (see [Limited access](#limited-access)); the
+pod otherwise only provides the API server's address and CA.
 
 **The API server only accepts tokens issued to clients it knows
 about.** Installed by the installer's `meteorologist` package, its
@@ -159,6 +162,52 @@ Authentik client is `meteorologist`, which the API server trusts once
 the package is enabled and the `cluster-sign-in` bundle has run (see
 `k8s/apps/meteorologist/`). Run anywhere else, its client has to be
 listed in `k3s.signInClients`.
+
+### Limited access
+
+Not everyone is a cluster admin. To give a team a namespace, bind one of
+Kubernetes's own roles to its group there:
+
+```sh
+kubectl -n team-shop create rolebinding team-shop \
+  --clusterrole=edit --group=authentik:k8s-team-shop
+```
+
+`edit` lets them deploy, and `view` lets them look. Cirrus's manifests
+add WebApplications to both (`k8s/operators/cirrus/Cirrus.rbac.yaml`).
+Neither role can change a namespace or its quota, so capabilities,
+region and limits stay with cluster admins. Those people see them but
+can't change them, and an action RBAC wouldn't allow isn't offered,
+which is worked out with `SelfSubjectAccessReview`.
+
+The cluster-wide reads most pages start with are refused for them, so
+pages go through `src/lib/namespace/access.ts`, which falls back to
+reading each namespace in turn.
+
+**How their namespaces are found is a stopgap.** Kubernetes can say
+whether someone may do something in a namespace, but not which
+namespaces they have access to. So Meteorologist's own account lists
+every namespace's name, using a token in its own volume, and each name
+is tried as the person. They only see the ones the API server gives
+them. It's the one read not made as the person, and the only access the
+pod has.
+
+That was chosen over binding `list namespaces` to
+`system:authenticated`, or to each group, either of which would show
+every tenant's namespace names to anyone using the API directly. The
+costs are that a bug here could expose namespace names and labels, and
+that a page load makes one request per namespace in the cluster for
+these people. It's expected to be replaced with something more
+sophisticated; see CC-41.
+
+### Live status
+
+`src/components/LiveRefresh.tsx` opens a server-sent event stream at
+`/apps/live`, which holds a watch on WebApplications as the person. The
+stream only says that something changed, and the page redraws itself.
+A watch runs for four minutes and then the browser starts another,
+which is what gets it a refreshed token: the API server only checks a
+token when a watch starts. Nothing runs while the tab is hidden.
 
 ### Development without signing in
 
@@ -169,6 +218,8 @@ by name:
   memory. It has namespaces and applications in every state the pages
   draw (healthy, migrating, blocked, not yet seen by Cirrus). Changes
   last until the server restarts. Nothing reaches a real cluster.
+  `METEOROLOGIST_FIXTURE_NAMESPACES=team-shop,sandbox` shows the pages
+  as someone with the `edit` role in only those namespaces.
 - `METEOROLOGIST_KUBE_MODE=kubeconfig` makes every request as the user
   in the file that `METEOROLOGIST_KUBECONFIG` names. That variable is
   the only one read. `KUBECONFIG` and `~/.kube/config` are never picked
@@ -202,6 +253,8 @@ sign-in from a laptop.
 | `METEOROLOGIST_KUBECONFIG`                     | `kubeconfig`                 | Path to a kubeconfig; a leading `~` works                                                                                                                                                                                        |
 | `METEOROLOGIST_KUBECONFIG_CONTEXT`             |                              | A context in it other than the current one                                                                                                                                                                                       |
 | `METEOROLOGIST_ALLOW_KUBECONFIG_IN_PRODUCTION` |                              | `true` to let `next start` use the kubeconfig mode                                                                                                                                                                               |
+| `METEOROLOGIST_NAMESPACE_LISTER_TOKEN_FILE`    | limited access               | A token that may list namespaces. Without it, people who can't list namespaces themselves find none                                                                                                                              |
+| `METEOROLOGIST_FIXTURE_NAMESPACES`             |                              | In `fixtures` mode, the namespaces to act as if limited to, comma separated                                                                                                                                                      |
 
 Put local settings in `.env.local`, which git ignores.
 
@@ -304,10 +357,10 @@ src/
     config.ts               settings, from the environment
     auth/                   OIDC and the session cookie
     kube/                   the KubeClient interface and its implementations
-    namespace/              namespace settings: the form, and the resources it becomes
+    namespace/              namespace settings, and what someone with limited access can reach
     office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
-    webapp/                 WebApplication types, form conversion, warnings, health
+    webapp/                 WebApplication types, form conversion, warnings, health, live status
 ```
 
 `src/lib/webapp/types.ts` mirrors `operators/cirrus/src/crd.rs`, which

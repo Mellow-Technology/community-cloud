@@ -115,6 +115,22 @@ describe("installing Cirrus", () => {
 describe("the ExternalDNS instances Cirrus runs", () => {
   const rbac = () => render("embed://operators/cirrus/Cirrus.rbac.yaml");
 
+  it("lets Kubernetes's own roles deploy WebApplications, so a RoleBinding is all a team needs", async () => {
+    const role = (await rbac()).find((each) => each.metadata.name === "cirrus-webapplications-edit");
+    assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-edit"], "true");
+    assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-admin"], "true");
+    assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-view"], undefined);
+    assert.deepEqual(role.rules.flatMap((rule: any) => rule.resources), ["webapplications"]);
+  });
+
+  it("only lets the view role read", async () => {
+    const role = (await rbac()).find((each) => each.metadata.name === "cirrus-webapplications-view");
+    assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-view"], "true");
+    for (const rule of role.rules) {
+      assert.deepEqual(rule.verbs, ["get", "list", "watch"]);
+    }
+  });
+
   it("run beside the installer's own, in a namespace nobody's applications are in", async () => {
     const namespace = (await rbac()).find((each) => each.kind === "Namespace");
     assert.equal(namespace.metadata.name, DNS_NAMESPACE);

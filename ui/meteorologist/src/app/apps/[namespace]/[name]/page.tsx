@@ -20,6 +20,7 @@ import { DetailList } from "@/components/DetailList";
 import { CertificateBadge } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
@@ -29,6 +30,7 @@ import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
 import { deletionSummary } from "@/lib/webapp/deletion";
 import { appHealth } from "@/lib/webapp/health";
 import { portLabel, requestedServices, specImage } from "@/lib/webapp/present";
+import { GROUP, PLURAL } from "@/lib/webapp/types";
 
 interface Params {
   namespace: string;
@@ -65,9 +67,13 @@ function when(iso: string | undefined): string | undefined {
 export default async function AppPage({ params }: { params: Promise<Params> }) {
   const { namespace, name } = await params;
   const kube = await getKube();
-  const [found, certificates] = await Promise.all([
+  const allowed = (verb: string) =>
+    kube.canI({ verb, resource: PLURAL, group: GROUP, namespace: decodeURIComponent(namespace) }).catch(() => false);
+  const [found, certificates, canEdit, canDelete] = await Promise.all([
     settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
     settle(() => kube.listCertificates(decodeURIComponent(namespace))),
+    allowed("update"),
+    allowed("delete"),
   ]);
 
   if (!found.ok) {
@@ -103,9 +109,13 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
             editHref={editHref}
             summary={deletionSummary(app)}
             deleting={health.state === "deleting"}
+            canEdit={canEdit}
+            canDelete={canDelete}
           />
         }
       />
+
+      <LiveRefresh namespace={app.metadata.namespace ?? decodeURIComponent(namespace)} name={app.metadata.name} />
 
       <Alert tone={health.tone} title={<HealthBadge health={health} />} className={styles.stats}>
         {health.message}

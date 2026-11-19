@@ -1,12 +1,18 @@
 # Meteorologist: Community Cloud's web interface. See ui/meteorologist.
 #
-# It holds no access of its own. People sign in through Authentik, and
-# every request to the Kubernetes API is made with that person's own
-# ID token, so what they can do here is what RBAC already lets them do
-# anywhere else. Its ServiceAccount is never used, so no token is
-# mounted at all: the pod is only given the API server's address and
-# the CA to check it with, from the kube-root-ca.crt ConfigMap every
-# namespace has.
+# People sign in through Authentik, and every request to the Kubernetes
+# API is made with that person's own ID token, so what they can do here
+# is what RBAC already lets them do anywhere else. The pod is given the
+# API server's address and the CA to check it with, from the
+# kube-root-ca.crt ConfigMap every namespace has.
+#
+# Its own access is one thing: listing namespaces. Kubernetes can't say
+# which namespaces someone has access to, so people who can't list them
+# have their access tried against this list, as themselves, and only
+# see the ones that answer. See "Limited access" in
+# ui/meteorologist/README.md, which also says why this may not last.
+# The usual token isn't mounted; the one for this is in its own
+# volume, and only that one read uses it.
 #
 # Its sign in is the "meteorologist" client in Authentik
 # (Meteorologist.blueprint.yaml), which the API server trusts once the
@@ -21,6 +27,34 @@ metadata:
     app.kubernetes.io/name: meteorologist
     app.kubernetes.io/managed-by: "community-cloud"
 automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: meteorologist-namespace-lister
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: meteorologist-namespace-lister
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: meteorologist-namespace-lister
+subjects:
+  - kind: ServiceAccount
+    name: meteorologist
+    namespace: community-cloud
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -55,7 +89,7 @@ spec:
           # Pinned, and released from a meteorologist-v<version> tag;
           # see .github/workflows/meteorologist.yml and
           # scripts/release/meteorologist.ts, which sets this
-          image: ghcr.io/mellow-technology/meteorologist:0.7.0
+          image: ghcr.io/mellow-technology/meteorologist:0.8.0
           ports:
             - name: http
               containerPort: 3000
@@ -89,9 +123,14 @@ spec:
               value: https://kubernetes.default.svc
             - name: KUBE_CA_FILE
               value: /etc/meteorologist/kube-ca/ca.crt
+            - name: METEOROLOGIST_NAMESPACE_LISTER_TOKEN_FILE
+              value: /etc/meteorologist/namespace-lister/token
           volumeMounts:
             - name: kube-ca
               mountPath: /etc/meteorologist/kube-ca
+              readOnly: true
+            - name: namespace-lister
+              mountPath: /etc/meteorologist/namespace-lister
               readOnly: true
             # Next writes its image cache here, and the rest of the
             # filesystem is read only
@@ -121,6 +160,12 @@ spec:
         - name: kube-ca
           configMap:
             name: kube-root-ca.crt
+        - name: namespace-lister
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
         - name: cache
           emptyDir: {}
 ---

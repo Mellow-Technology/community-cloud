@@ -8,7 +8,8 @@
  * sign in: the client Authentik is told about, the issuer and client
  * Meteorologist asks for, the callback it's sent back to, and what the
  * API server accepts. And, since it acts as whoever signed in, that
- * its pod has no access of its own to fall back on.
+ * its pod has nothing of its own to fall back on but a list of
+ * namespace names.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -127,7 +128,7 @@ describe("installing Meteorologist", () => {
     );
   });
 
-  it("has no ServiceAccount token, only the API server's address and CA", async () => {
+  it("mounts no usual ServiceAccount token, only the API server's address and CA", async () => {
     const documents = await render("embed://apps/meteorologist/Meteorologist.yaml");
     const account = documents.find((each) => each.kind === "ServiceAccount");
     const pod = documents.find((each) => each.kind === "Deployment").spec.template.spec;
@@ -142,6 +143,28 @@ describe("installing Meteorologist", () => {
     const mount = pod.containers[0].volumeMounts.find((each: any) => each.name === caVolume.name);
     assert.equal(env.KUBE_CA_FILE, `${mount.mountPath}/ca.crt`);
     assert.match(pod.containers[0].image, /^ghcr\.io\/mellow-technology\/meteorologist:\d+\.\d+\.\d+$/);
+  });
+
+  it("can list namespaces with its own account, and do nothing else", async () => {
+    const documents = await render("embed://apps/meteorologist/Meteorologist.yaml");
+    const roles = documents.filter((each) => each.kind === "ClusterRole" || each.kind === "Role");
+    const bindings = documents.filter((each) => each.kind === "ClusterRoleBinding" || each.kind === "RoleBinding");
+
+    assert.equal(roles.length, 1);
+    assert.deepEqual(roles[0].rules, [{ apiGroups: [""], resources: ["namespaces"], verbs: ["list"] }]);
+    assert.equal(bindings.length, 1);
+    assert.equal(bindings[0].roleRef.name, roles[0].metadata.name);
+  });
+
+  it("gives the lister's token a short life, in the file Meteorologist reads", async () => {
+    const documents = await render("embed://apps/meteorologist/Meteorologist.yaml");
+    const pod = documents.find((each) => each.kind === "Deployment").spec.template.spec;
+    const volume = pod.volumes.find((each: any) => each.projected);
+    const [{ serviceAccountToken: token }] = volume.projected.sources;
+    const mount = pod.containers[0].volumeMounts.find((each: any) => each.name === volume.name);
+
+    assert.ok(token.expirationSeconds <= 3600);
+    assert.equal(envOf(pod.containers[0]).METEOROLOGIST_NAMESPACE_LISTER_TOKEN_FILE, `${mount.mountPath}/${token.path}`);
   });
 
   it("is routed on its own hostname, to its Service", async () => {

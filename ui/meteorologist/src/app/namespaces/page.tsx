@@ -15,11 +15,13 @@ import { Table } from "gui-mellow/Table";
 
 import { CapabilitySwitch } from "@/components/CapabilitySwitch";
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { NoNamespaces } from "@/components/NoNamespaces";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
+import { acrossNamespaces, namespacesAllowing, reachableNamespaces } from "@/lib/namespace/access";
 
 export const metadata: Metadata = { title: "Namespaces" };
 
@@ -28,9 +30,16 @@ export const metadata: Metadata = { title: "Namespaces" };
  */
 export default async function NamespacesPage() {
   const kube = await getKube();
-  const [namespaces, apps] = await Promise.all([
-    settle(() => kube.listNamespaces()),
-    settle(() => kube.listWebApplications()),
+  const namespaces = await settle(() => reachableNamespaces(kube));
+  const reached = namespaces.ok ? namespaces.value : [];
+  const [apps, changeable, canCreate] = await Promise.all([
+    settle(() => acrossNamespaces(reached, (namespace) => kube.listWebApplications(namespace))),
+    namespacesAllowing(
+      kube,
+      { verb: "patch", resource: "namespaces" },
+      reached.map((ns) => ns.metadata.name),
+    ),
+    kube.canI({ verb: "create", resource: "namespaces" }).catch(() => false),
   ]);
 
   const appCounts = new Map<string, number>();
@@ -47,7 +56,7 @@ export default async function NamespacesPage() {
         eyebrow="Cluster"
         title="Namespaces"
         description="What each namespace may use. Capabilities are labels on the namespace that the cluster's shared services look for."
-        actions={<Button href="/namespaces/new">New namespace</Button>}
+        actions={canCreate ? <Button href="/namespaces/new">New namespace</Button> : undefined}
       />
 
       <Grid min="280px" gap={4}>
@@ -64,7 +73,9 @@ export default async function NamespacesPage() {
       </Grid>
 
       <section className={styles.section}>
-        {namespaces.ok ? (
+        {namespaces.ok && reached.length === 0 ? (
+          <NoNamespaces />
+        ) : namespaces.ok ? (
           <Table
             caption="Namespaces you can see"
             columns={[
@@ -93,6 +104,7 @@ export default async function NamespacesPage() {
                         namespace={name}
                         capability={capability.id}
                         enabled={hasCapability(ns.metadata.labels, capability)}
+                        readOnly={!changeable.has(name)}
                       />
                     ),
                   })),

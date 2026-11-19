@@ -117,6 +117,47 @@ subjects:
     name: cirrus
     namespace: community-cloud
 ---
+# What people get with Kubernetes's own roles. "edit" and "admin" know
+# nothing about WebApplications, so without this someone given either
+# in a namespace couldn't deploy there. A RoleBinding to one of them is
+# the whole of giving a team a namespace; see "Limited access" in
+# ui/meteorologist/README.md.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cirrus-webapplications-edit
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["webapplications"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+# The same for "view", along with the Postgres Cirrus starts in a
+# namespace, which Meteorologist shows beside its applications.
+# cert-manager's chart does this for its Certificates itself;
+# CloudNativePG's doesn't by default.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cirrus-webapplications-view
+  labels:
+    app.kubernetes.io/name: cirrus
+    app.kubernetes.io/managed-by: "community-cloud"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["webapplications"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch"]
+---
 # What every ExternalDNS a DnsProvider runs may do: exactly what the
 # ExternalDNS chart's own ClusterRole grants with the Gateway route
 # source and ListenerSets on (installer/src/util/dns.ts), read-only.

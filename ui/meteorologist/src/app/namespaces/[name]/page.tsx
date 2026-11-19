@@ -33,8 +33,10 @@ import {
   describePlacement,
   toNamespaceForm,
 } from "@/lib/namespace/settings";
+import { namespacesAllowing } from "@/lib/namespace/access";
 import { namespaceTab } from "@/lib/namespace/tabs";
 import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresDatabase } from "@/lib/postgres";
+import { GROUP, PLURAL } from "@/lib/webapp/types";
 
 // What a quota's keys mean, in the order they're shown
 const QUOTA_LABELS: Record<string, string> = {
@@ -93,16 +95,25 @@ export default async function NamespacePage({
   }
 
   const namespace = found.value;
-  const [quotas, limitRange, serviceAccount, secrets, clusters, apps, regions, dns] = await Promise.all([
-    settle(() => kube.listResourceQuotas(name)),
-    settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
-    settle(() => kube.getServiceAccount(name, DEFAULT_SERVICE_ACCOUNT)),
-    settle(() => kube.listSecrets(name)),
-    settle(() => kube.listPostgresClusters(name)),
-    settle(() => kube.listWebApplications(name)),
-    settle(() => kube.listRegions()),
-    settle(() => kube.listDnsProviders()),
-  ]);
+  const [quotas, limitRange, serviceAccount, secrets, clusters, apps, regions, dns, labelling, limiting, deploying] =
+    await Promise.all([
+      settle(() => kube.listResourceQuotas(name)),
+      settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
+      settle(() => kube.getServiceAccount(name, DEFAULT_SERVICE_ACCOUNT)),
+      settle(() => kube.listSecrets(name)),
+      settle(() => kube.listPostgresClusters(name)),
+      settle(() => kube.listWebApplications(name)),
+      settle(() => kube.listRegions()),
+      settle(() => kube.listDnsProviders()),
+      namespacesAllowing(kube, { verb: "patch", resource: "namespaces" }, [name]),
+      namespacesAllowing(kube, { verb: "patch", resource: "resourcequotas" }, [name]),
+      namespacesAllowing(kube, { verb: "create", resource: PLURAL, group: GROUP }, [name]),
+    ]);
+  const canLabel = labelling.size > 0;
+  // Saving the settings writes the namespace and its quota, so it
+  // takes both. The "edit" role has neither, on purpose: a team
+  // shouldn't be able to raise its own limits.
+  const canChangeSettings = canLabel && limiting.size > 0;
   const connections = secrets.ok ? connectionsIn(secrets.value) : [];
   const usedBy: Record<string, string[]> = {};
   for (const app of apps.ok ? apps.value : []) {
@@ -130,7 +141,9 @@ export default async function NamespacePage({
             <Button href={`/apps?namespace=${encodeURIComponent(name)}`} variant="secondary">
               Applications
             </Button>
-            <Button href={`/apps/new?namespace=${encodeURIComponent(name)}`}>New application</Button>
+            {deploying.size > 0 && (
+              <Button href={`/apps/new?namespace=${encodeURIComponent(name)}`}>New application</Button>
+            )}
           </>
         }
       />
@@ -150,6 +163,7 @@ export default async function NamespacePage({
                           namespace={name}
                           capability={capability.id}
                           enabled={hasCapability(namespace.metadata.labels, capability)}
+                          readOnly={!canLabel}
                         />
                       ),
                     }))}
@@ -230,7 +244,11 @@ export default async function NamespacePage({
 
               <section className={styles.section}>
                 <h2 className={styles.heading}>Settings</h2>
-                {settingsReadable ? (
+                {!canChangeSettings ? (
+                  <p className={styles.empty}>
+                    The region, limits and default registries here are set by a cluster admin.
+                  </p>
+                ) : settingsReadable ? (
                   <NamespaceSettingsForm
                     initial={toNamespaceForm(name, namespace.metadata, ours, limitRange.value, serviceAccount.value)}
                     existing={{
@@ -269,6 +287,10 @@ export default async function NamespacePage({
           ),
           integration: secrets.ok ? (
             <GitLabConnections namespace={name} connections={connections} usedBy={usedBy} />
+          ) : isForbidden(secrets.error) ? (
+            <p className={styles.empty}>
+              GitLab connections are kept in Secrets, and you don&apos;t have access to the Secrets in this namespace.
+            </p>
           ) : (
             <ErrorNotice error={secrets.error} title="Couldn't list this namespace's Secrets" />
           ),

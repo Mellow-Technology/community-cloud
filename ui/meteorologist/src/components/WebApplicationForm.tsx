@@ -62,6 +62,8 @@ import styles from "./WebApplicationForm.module.scss";
 export interface NamespaceChoice {
   name: string;
   labels: Record<string, string>;
+  // Whether the person may turn a capability on here themselves
+  canChangeCapabilities: boolean;
   // Undefined wherever it couldn't be found out
   hasPostgres?: boolean;
   storageQuota?: string;
@@ -148,6 +150,7 @@ export function WebApplicationForm({
           key={warning.capability.id}
           warning={warning}
           namespace={form.namespace}
+          canAllow={namespace?.canChangeCapabilities ?? false}
           onEnabled={(capability) =>
             setNamespaces((current) =>
               current.map((choice) =>
@@ -678,16 +681,19 @@ export function WebApplicationForm({
  * @param props
  * @param props.warning
  * @param props.namespace
+ * @param props.canAllow whether the person may turn it on themselves
  * @param props.onEnabled
  * @returns
  */
 function CapabilityWarningNotice({
   warning,
   namespace,
+  canAllow,
   onEnabled,
 }: {
   warning: CapabilityWarning;
   namespace: string;
+  canAllow: boolean;
   onEnabled: (capability: Capability) => void;
 }) {
   const [pending, startTransition] = useTransition();
@@ -699,28 +705,30 @@ function CapabilityWarningNotice({
       tone="warning"
       title={`${namespace} doesn't allow ${capability.title.toLowerCase()}`}
       actions={
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={pending}
-          onClick={() =>
-            startTransition(async () => {
-              setError(undefined);
-              const result = await setNamespaceCapability(namespace, capability.id, true);
-              if (result.ok) {
-                onEnabled(capability);
-              } else {
-                setError(result.error);
-              }
-            })
-          }
-        >
-          Allow it
-        </Button>
+        !canAllow ? undefined : (
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={pending}
+            onClick={() =>
+              startTransition(async () => {
+                setError(undefined);
+                const result = await setNamespaceCapability(namespace, capability.id, true);
+                if (result.ok) {
+                  onEnabled(capability);
+                } else {
+                  setError(result.error);
+                }
+              })
+            }
+          >
+            Allow it
+          </Button>
+        )
       }
     >
-      {warning.message} Allowing it labels the namespace <code>{`${capability.label}=${capability.value}`}</code>.
-      {error && <p className={styles.error}>{error}</p>}
+      {warning.message} {canAllow ? "Allowing it labels" : "A cluster admin can allow it by labelling"} the namespace{" "}
+      <code>{`${capability.label}=${capability.value}`}</code>.{error && <p className={styles.error}>{error}</p>}
     </Alert>
   );
 }

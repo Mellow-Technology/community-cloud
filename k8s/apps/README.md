@@ -339,7 +339,7 @@ bundle tells a running cluster.
 
 | File | What it is |
 |---|---|
-| `Meteorologist.yaml` | Its Deployment and Service. No ServiceAccount token is mounted; it's given the API server's CA from `kube-root-ca.crt`. |
+| `Meteorologist.yaml` | Its Deployment and Service, and the one thing its own account may do: list namespaces, for people with access to only some of them. The usual token isn't mounted; it's given the API server's CA from `kube-root-ca.crt`. |
 | `Meteorologist.blueprint.yaml` | Its client in Authentik — a blueprint, not a manifest. |
 | `Meteorologist.network.yaml` | Its listeners on the cluster Gateway, and its routes. |
 
