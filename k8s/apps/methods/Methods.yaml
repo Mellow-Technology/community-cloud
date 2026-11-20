@@ -52,7 +52,7 @@ spec:
         - name: methods
           # Pinned to the commit the image was built from, until Methods
           # has releases
-          image: ghcr.io/mellow-technology/methods:sha-5d5feee
+          image: ghcr.io/mellow-technology/methods:sha-d5569b6
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
