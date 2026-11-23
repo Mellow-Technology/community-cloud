@@ -72,6 +72,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets", "services", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  # Read only: how an application's pods are doing is its Healthy
+  # condition, and the Deployment makes and removes them
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterrolebindings"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]

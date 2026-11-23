@@ -24,6 +24,15 @@ pub enum Error {
     #[error("forge: {0}")]
     Forge(String),
 
+    /// GitLab answered, but not with success. The status is kept apart
+    /// from the message so a caller can treat a 404 as "not there"
+    /// rather than as a failure.
+    #[error("forge: {message}")]
+    GitLab {
+        status: reqwest::StatusCode,
+        message: String,
+    },
+
     /// Reading an image from its registry. Usually something a person
     /// has to fix — a missing pull Secret, a tag that isn't there — so
     /// it's shown in a condition rather than only retried.

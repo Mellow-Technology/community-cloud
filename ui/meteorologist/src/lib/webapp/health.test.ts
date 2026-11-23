@@ -51,25 +51,72 @@ describe("application health", () => {
     expect(appHealth(app([["Ready", true, "Ready"]]))).toEqual({ state: "healthy", tone: "success", label: "Healthy" });
   });
 
-  test("is degraded when ready but the webhook isn't", () => {
+  // Those are its forge status, in ./forge.ts
+  test("is healthy when ready, whatever the webhook and the release check say", () => {
     const health = appHealth(
       app([
         ["Ready", true, "Ready"],
         ["WebhookRegistered", false, "NotRegistered", "401 from GitLab"],
-      ]),
-    );
-    expect(health).toMatchObject({ state: "degraded", message: "401 from GitLab" });
-  });
-
-  test("is degraded when ready but GitLab couldn't be asked for the newest release", () => {
-    const health = appHealth(
-      app([
-        ["Ready", true, "Ready"],
-        ["WebhookRegistered", true, "Registered"],
         ["ReleaseChecked", false, "CheckFailed", "404 from GitLab"],
       ]),
     );
-    expect(health).toMatchObject({ state: "degraded", message: "404 from GitLab" });
+    expect(health).toEqual({ state: "healthy", tone: "success", label: "Healthy" });
+  });
+
+  test("is failing when no pod is serving, even if Cirrus finished rolling out", () => {
+    expect(
+      appHealth(
+        app([
+          ["Ready", true, "Ready"],
+          ["Healthy", false, "PodsFailing", "0 of 1 pods ready. shop-1: ImagePullBackOff"],
+        ]),
+      ),
+    ).toMatchObject({ state: "failing", tone: "danger", message: "0 of 1 pods ready. shop-1: ImagePullBackOff" });
+  });
+
+  test("is degraded when a pod is stuck but something serves", () => {
+    expect(
+      appHealth(
+        app([
+          ["Ready", true, "Ready"],
+          ["Healthy", false, "PodsDegraded", "1 of 2 pods ready. shop-2: CrashLoopBackOff"],
+        ]),
+      ),
+    ).toMatchObject({ state: "degraded", tone: "warning" });
+  });
+
+  test("says a new image is crash looping while the old pods serve mid-rollout", () => {
+    expect(
+      appHealth(
+        app([
+          ["Provisioned", true, "Provisioned"],
+          ["RolledOut", false, "Progressing", "rolling out shop:2"],
+          ["Healthy", false, "PodsDegraded", "shop-new: CrashLoopBackOff"],
+          ["Ready", false, "NotReady"],
+        ]),
+      ),
+    ).toMatchObject({ state: "degraded", message: "shop-new: CrashLoopBackOff" });
+  });
+
+  test("is progressing while pods start, and healthy once they have", () => {
+    expect(
+      appHealth(
+        app([
+          ["Provisioned", true, "Provisioned"],
+          ["RolledOut", true, "RolledOut"],
+          ["Healthy", false, "PodsStarting", "1 of 2 pods ready"],
+          ["Ready", true, "Ready"],
+        ]),
+      ),
+    ).toMatchObject({ state: "progressing", message: "1 of 2 pods ready" });
+    expect(
+      appHealth(
+        app([
+          ["Healthy", true, "PodsReady"],
+          ["Ready", true, "Ready"],
+        ]),
+      ).state,
+    ).toBe("healthy");
   });
 
   test("is failing when blocked", () => {

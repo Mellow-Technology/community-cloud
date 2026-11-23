@@ -266,7 +266,9 @@ function seed(): FixtureStore {
         conditions: [
           condition("Provisioned", true, "Provisioned"),
           condition("WebhookRegistered", true, "Registered"),
+          condition("ReleaseChecked", true, "Checked"),
           condition("RolledOut", true, "RolledOut"),
+          condition("Healthy", true, "PodsReady"),
           condition("Ready", true, "Ready"),
         ],
         release: {
@@ -299,6 +301,8 @@ function seed(): FixtureStore {
         conditions: [
           condition("Provisioned", true, "Provisioned"),
           condition("RolledOut", false, "Migrating", "running plane-migrate-7c1d for makeplane/plane-backend:v1.2.0"),
+          // The old image's pods, still serving while the migration runs
+          condition("Healthy", true, "PodsReady"),
           condition("Ready", false, "NotReady"),
         ],
         port: 8000,
@@ -328,6 +332,55 @@ function seed(): FixtureStore {
           condition("RolledOut", false, "WaitingForDependencies"),
           condition("Ready", false, "NotReady"),
         ],
+      },
+    },
+    {
+      apiVersion: API_VERSION,
+      kind: KIND,
+      // Rolled out, then one of its pods started crash looping, and its
+      // token can't register a webhook: degraded, and polling only
+      metadata: { name: "api", namespace: "team-shop", generation: 1, creationTimestamp: CREATED, uid: "fixture-5" },
+      spec: {
+        image: { repository: "registry.gitlab.com/acme/api", tag: "main" },
+        replicas: 2,
+        port: 8080,
+        source: {
+          gitlab: {
+            project: "acme/api",
+            tokenSecret: { name: "shop-gitlab-token", key: "token" },
+            imageTag: "{short_sha}",
+          },
+        },
+      },
+      status: {
+        observedGeneration: 1,
+        conditions: [
+          condition("Provisioned", true, "Provisioned"),
+          condition(
+            "WebhookRegistered",
+            false,
+            "NotRegistered",
+            "forge: saving the webhook on acme/api was refused (403 Forbidden): the token's scope allows it, but its user doesn't: it needs the Maintainer role on the project, or above. GitLab said: 403 Forbidden",
+          ),
+          condition("ReleaseChecked", true, "Checked"),
+          condition("RolledOut", true, "RolledOut"),
+          condition(
+            "Healthy",
+            false,
+            "PodsDegraded",
+            "1 of 2 pods ready. api-5d8f7c9b4-x2kqp: CrashLoopBackOff (last OOMKilled, exit code 137)",
+          ),
+          condition("Ready", true, "Ready"),
+        ],
+        release: {
+          commit: "c41e9a02",
+          tag: "c41e9a02",
+          digest: "sha256:91ab77e0f3",
+          repository: "registry.gitlab.com/acme/api",
+        },
+        deployedImage: "registry.gitlab.com/acme/api@sha256:91ab77e0f3",
+        port: 8080,
+        lastChecked: "2026-10-27T08:50:00Z",
       },
     },
     {

@@ -16,6 +16,9 @@
 //!    deployed, migrations run first, and the Deployment is only
 //!    given the new image once they've finished. An image whose port
 //!    can't be worked out isn't rolled out, nor migrated for.
+//! 6. The pods, which can go wrong after a rollout as well as during
+//!    one (see pods.rs). Cirrus watches them, so a crash loop or a
+//!    failed image pull is reported as it happens.
 //!
 //! Problems a person has to fix — a service not installed, a
 //! namespace missing a label, a migration that failed — are written
@@ -31,6 +34,7 @@ pub mod bucket;
 pub mod cleanup;
 pub mod migrations;
 pub mod network;
+pub mod pods;
 pub mod port;
 pub mod postgres;
 pub mod rabbitmq;
@@ -44,16 +48,18 @@ use std::time::Duration;
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::batch::v1::Job;
-use k8s_openapi::api::core::v1::{EnvVar, Service};
+use k8s_openapi::api::core::v1::{EnvVar, Pod, Service};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+use k8s_openapi::jiff::Timestamp;
 use kube::api::{Api, Patch, PatchParams};
 use kube::runtime::controller::{Action, Controller};
 use kube::runtime::finalizer::{Event as Finalizer, finalizer};
+use kube::runtime::reflector::ObjectRef;
 use kube::runtime::watcher;
 use kube::{Client, Resource, ResourceExt};
 use serde_json::json;
 
-use crate::conditions::{self, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
+use crate::conditions::{self, HEALTHY, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
 use crate::crd::WebApplication;
 use crate::error::{Error, Result};
 use crate::resources;
@@ -122,6 +128,16 @@ pub async fn run(client: Client, settings: Settings) {
         .owns(Api::<Deployment>::all(client.clone()), watcher::Config::default())
         .owns(Api::<Service>::all(client.clone()), watcher::Config::default())
         .owns(Api::<Job>::all(client.clone()), watcher::Config::default())
+        // Pods belong to a ReplicaSet, not to the WebApplication, so
+        // they're found by the labels Cirrus gives them
+        .watches(
+            Api::<Pod>::all(client.clone()),
+            watcher::Config::default().labels("app.kubernetes.io/managed-by=cirrus"),
+            |pod| {
+                let name = pod.labels().get("app.kubernetes.io/name")?;
+                Some(ObjectRef::<WebApplication>::new(name).within(&pod.namespace()?))
+            },
+        )
         .shutdown_on_signal()
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -237,7 +253,19 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             generation,
         );
     } else if found.checked_at.is_some() {
-        conditions::set(&mut conditions, RELEASE_CHECKED, true, "Checked", "", generation);
+        match &found.no_image {
+            None => conditions::set(&mut conditions, RELEASE_CHECKED, true, "Checked", "", generation),
+            // GitLab answered, so this waits for the next poll rather
+            // than being tried again shortly
+            Some(why) => conditions::set(
+                &mut conditions,
+                RELEASE_CHECKED,
+                false,
+                "NoImage",
+                why.clone(),
+                generation,
+            ),
+        }
     }
     let release = found.release.clone().or(previous.release.clone());
     let mut current = app.clone();
@@ -375,6 +403,21 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             "",
             generation,
         );
+    }
+
+    // 6. The pods
+    if deployed.is_some() {
+        let health = pods::assess(&pods::list(ctx, app).await?, app.spec.replicas, Timestamp::now());
+        conditions::set(
+            &mut conditions,
+            HEALTHY,
+            health.state == pods::State::Healthy,
+            health.reason(),
+            health.message,
+            generation,
+        );
+    } else {
+        conditions::set(&mut conditions, HEALTHY, false, "NotDeployed", "", generation);
     }
 
     let ready = provisioned && rolled_out;

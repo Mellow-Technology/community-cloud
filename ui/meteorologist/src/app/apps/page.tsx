@@ -19,6 +19,7 @@ import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
 import { acrossNamespaces, namespacesAllowing, reachableNamespaces } from "@/lib/namespace/access";
+import { FORGE_ORDER, forgeStatus } from "@/lib/webapp/forge";
 import { HEALTH_ORDER, appHealth } from "@/lib/webapp/health";
 import { appHref, requestedServices, shownImage } from "@/lib/webapp/present";
 import { GROUP, PLURAL } from "@/lib/webapp/types";
@@ -103,6 +104,7 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
             { label: "Name", sortable: true },
             { label: "Namespace", sortable: true },
             { label: "Health", sortable: true },
+            { label: "Forge status", sortable: true },
             ...(certificates.ok ? [{ label: "Certificate", sortable: true }] : []),
             "Image",
             "Address",
@@ -110,10 +112,15 @@ export default async function AppsPage({ searchParams }: { searchParams: Promise
           ]}
           rows={apps.value.map((app) => {
             const health = appHealth(app);
+            const forge = forgeStatus(app);
             return [
               { value: app.metadata.name, display: <Link href={appHref(app)}>{app.metadata.name}</Link> },
               app.metadata.namespace ?? "",
               { value: HEALTH_ORDER.indexOf(health.state), display: <HealthBadge health={health} /> },
+              // Applications with no forge sort after every state
+              forge
+                ? { value: FORGE_ORDER.indexOf(forge.state), display: <HealthBadge health={forge} /> }
+                : { value: FORGE_ORDER.length, display: "" },
               ...(certificates.ok ? [certificateCell(app, certificates.value)] : []),
               <span key="image" className={styles.mono}>
                 {shownImage(app)}
