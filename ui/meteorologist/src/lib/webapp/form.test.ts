@@ -98,8 +98,29 @@ describe("a new application from the form", () => {
       project: "acme/shop",
       ref: "main",
       tokenSecret: { name: "token", key: "token" },
-      imageTag: "{commit_sha}",
     });
+  });
+
+  test("leaves the image tag out for Cirrus to find, and clears one emptied", () => {
+    const app: WebApplication = {
+      apiVersion: "community-cloud.technology/v1alpha1",
+      kind: "WebApplication",
+      metadata: { name: "shop", namespace: "team" },
+      spec: {
+        image: { repository: "registry.gitlab.com/acme/shop" },
+        source: {
+          gitlab: { project: "acme/shop", tokenSecret: { name: "token" }, imageTag: "{commit_sha}" },
+        },
+      },
+    };
+    const existing = toForm(app);
+    expect(existing.gitlabImageTag).toBe("{commit_sha}");
+    const cleared = fromForm({ ...existing, gitlabImageTag: " " }, app).spec.source?.gitlab;
+    expect(cleared).not.toHaveProperty("imageTag");
+    expect(cleared).not.toHaveProperty("findImageByPushTime");
+
+    const byTime = fromForm({ ...existing, gitlabImageTag: "", gitlabFindByPushTime: true }, app).spec.source?.gitlab;
+    expect(byTime?.findImageByPushTime).toBe(true);
   });
 
   test("tidies hostnames, environment and pull secrets", () => {

@@ -48,7 +48,7 @@ spec:
       ref: main
       tokenSecret:
         name: gitlab-token     # key "token" by default
-      imageTag: "{commit_sha}" # or "{short_sha}", "{ref}", combined freely
+      # imageTag: "{ref}-{short_sha}"  # only if CI doesn't tag by commit
 ```
 
 More in [examples/](./examples):
@@ -94,11 +94,12 @@ refuses, the message says whether the token's scope or its user's role
 is what's missing.
 
 It's also false, with reason `NoImage`, when the newest successful
-pipeline published no image under the tag `imageTag` makes. That
-isn't retried, since asking again won't change it. Cirrus looks back
-through the last few pipelines for one that did publish an image and
-rolls that out, and the message lists the tags the registry does have,
-with the `imageTag` that matches them when one of the usual ones does.
+pipeline's image can't be found (see [Finding the image](#finding-the-image)).
+That isn't retried, since asking again won't change it. Cirrus looks
+back through the last few pipelines for one that did publish an image
+and rolls that out, and the message lists the tags the registry does
+have, with the `imageTag` that matches them when one of the usual ones
+does.
 
 ### Its port
 
@@ -175,14 +176,37 @@ GitLab has no webhook for an image being pushed, so Cirrus listens for
 
 1. Cirrus checks the hook's token, which is the application's own and
    is kept in `<app>-cirrus-webhook`.
-2. It works out the tag from `imageTag`, asks GitLab's registry API for
-   the tag's digest, and records the result as `status.release`. An
-   image outside the project's GitLab registry is rolled out by tag.
+2. It finds the pipeline's image in the project's registry, as below,
+   and records it, by digest, as `status.release`.
 3. The reconciler sees that the release differs from `deployedImage`
    and runs the migration Job, `<app>-migrate-<hash>`, with the new
    image. The old version keeps serving while the Job runs.
 4. Once the Job completes, the Deployment gets the new image, by
    digest.
+
+### Finding the image
+
+GitLab doesn't record which tags a pipeline pushed, so Cirrus matches
+the registry's tags back to the pipeline:
+
+1. **By name.** With `imageTag` set, the tag it makes, and only that.
+   Without it, each of the usual ways CI tags with the commit, in turn:
+   `{commit_sha}` (`$CI_COMMIT_SHA`), `{short_sha}`
+   (`$CI_COMMIT_SHORT_SHA`), and either with `{ref}-` in front. Each
+   is one lookup, so this costs at most four requests.
+2. **By push time**, only with `findImageByPushTime: true`. When
+   nothing matched by name, the tag that was pushed between the
+   pipeline starting and a minute after it finished, for CI that tags
+   with `latest` or a version. Several tags on one image are fine,
+   since the digest is what's rolled out. Different images pushed in
+   that time aren't guessed between: that's `NoImage`, and `imageTag`
+   is the way out. Each tag looked at is a request, so it looks at no
+   more than 20, and skips tags that look like another commit's.
+
+Rolling out by digest means a tag pushed again later, like `latest`,
+doesn't change what's running until Cirrus finds another pipeline's
+image. An image outside the project's own registry can't be looked
+through, so it needs `imageTag`, and is rolled out by that tag.
 
 If the migration fails, `RolledOut` is False with the Job's name, and
 the old version stays. Each image's migrations run once. To rerun them,

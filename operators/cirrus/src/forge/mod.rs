@@ -14,7 +14,7 @@ use kube::{Api, Client};
 
 use crate::crd::{GitLabSource, Release, WebApplication};
 use crate::error::{Error, Result};
-use gitlab::{GitLab, ImageTag};
+use gitlab::{Finding, GitLab, Image, Pipeline};
 
 /// A GitLab client with the token the application's spec points at.
 pub async fn gitlab_client(client: &Client, app: &WebApplication, source: &GitLabSource) -> Result<GitLab> {
@@ -42,32 +42,44 @@ pub async fn read_secret_key(client: &Client, namespace: &str, name: &str, key: 
 pub enum Lookup {
     Release(Release),
 
-    /// The pipeline succeeded but its image isn't in the registry
-    /// under the tag `imageTag` makes, with why, and what the tag
-    /// might be instead. Not a failure to retry: asking again won't
-    /// make the image appear.
+    /// The pipeline succeeded but its image can't be found in the
+    /// registry, with why, and what to set instead. Not a failure to
+    /// retry: asking again won't make the image appear.
     NoImage(String),
 }
 
-/// The release a pipeline on `sha` produced.
-pub async fn release_for(gitlab: &GitLab, app: &WebApplication, source: &GitLabSource, sha: &str) -> Result<Lookup> {
-    let tag = gitlab::render_tag(&source.image_tag, sha, &source.git_ref);
+/// The release `pipeline` produced.
+pub async fn release_for(
+    gitlab: &GitLab,
+    app: &WebApplication,
+    source: &GitLabSource,
+    pipeline: &Pipeline,
+) -> Result<Lookup> {
     let repository = app.spec.image.repository.clone();
-    let digest = match gitlab.image_tag(&source.project, &repository, &tag).await? {
-        ImageTag::Elsewhere => None,
-        ImageTag::Found(digest) => digest,
-        ImageTag::Missing(tags) => {
-            return Ok(Lookup::NoImage(gitlab::missing_tag_message(
-                &repository,
-                &source.image_tag,
-                sha,
-                &source.git_ref,
-                &tags,
-            )));
-        }
+    let finding = Finding {
+        repository: &repository,
+        template: source.image_tag.as_deref(),
+        by_push_time: source.find_image_by_push_time,
+    };
+    let (tag, digest) = match gitlab.find_image(&source.project, pipeline, &finding).await? {
+        Image::Found { tag, digest } => (tag, digest),
+        Image::Missing(why) => return Ok(Lookup::NoImage(why)),
+        // Rolled out by the tag alone, since there's no asking what's
+        // behind it; and with nothing to look through, the tag has to
+        // be given
+        Image::Elsewhere => match &source.image_tag {
+            Some(template) => (gitlab::render_tag(template, &pipeline.sha, &pipeline.git_ref), None),
+            None => {
+                return Ok(Lookup::NoImage(format!(
+                    "{repository} isn't one of {}'s own registry repositories, so its tags can't be looked \
+                     through; set imageTag to the tag CI pushes",
+                    source.project
+                )));
+            }
+        },
     };
     Ok(Lookup::Release(Release {
-        commit: sha.to_string(),
+        commit: pipeline.sha.clone(),
         tag,
         digest,
         repository,

@@ -28,7 +28,6 @@ export const DEFAULT_TAG = "latest";
 export const DEFAULT_GITLAB_URL = "https://gitlab.com";
 export const DEFAULT_GITLAB_REF = "main";
 export const DEFAULT_TOKEN_KEY = "token";
-export const DEFAULT_IMAGE_TAG = "{commit_sha}";
 
 // The condition types Cirrus sets, from conditions.rs
 export const CONDITION_READY = "Ready";
@@ -73,7 +72,9 @@ export interface GitLabSource {
   project: string;
   ref?: string;
   tokenSecret: SecretKeyRef;
+  // Left out, Cirrus finds the tag from the commit
   imageTag?: string;
+  findImageByPushTime?: boolean;
 }
 
 export interface SourceSpec {

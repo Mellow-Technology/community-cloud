@@ -29,6 +29,7 @@ use serde_json::json;
 use subtle::ConstantTimeEq;
 
 use crate::crd::{GitLabSource, WebApplication};
+use crate::forge::gitlab::Pipeline;
 use crate::forge::{self, Lookup};
 use crate::reconcile::Context;
 use crate::reconcile::source::{WEBHOOK_TOKEN_KEY, webhook_secret_name};
@@ -40,6 +41,7 @@ pub struct PipelineEvent {
 
 #[derive(Debug, Deserialize)]
 pub struct PipelineAttributes {
+    pub id: u64,
     pub status: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
@@ -58,15 +60,22 @@ pub fn token_matches(given: &str, expected: &str) -> bool {
     !expected.is_empty() && bool::from(given.as_bytes().ct_eq(expected.as_bytes()))
 }
 
-/// The commit to roll out, if this event is a successful pipeline on
-/// the tracked ref.
-pub fn commit_to_roll_out(event: &str, body: &[u8], source: &GitLabSource) -> Result<Option<String>, String> {
+/// The pipeline to roll out, if this event is a successful one on the
+/// tracked ref.
+pub fn pipeline_to_roll_out(event: &str, body: &[u8], source: &GitLabSource) -> Result<Option<Pipeline>, String> {
     if event != "Pipeline Hook" {
         return Ok(None);
     }
     let pipeline: PipelineEvent = serde_json::from_slice(body).map_err(|error| error.to_string())?;
     let attributes = pipeline.object_attributes;
-    Ok((attributes.status == "success" && attributes.git_ref == source.git_ref).then_some(attributes.sha))
+    Ok(
+        (attributes.status == "success" && attributes.git_ref == source.git_ref).then_some(Pipeline {
+            id: attributes.id,
+            sha: attributes.sha,
+            git_ref: attributes.git_ref,
+            status: attributes.status,
+        }),
+    )
 }
 
 async fn gitlab(
@@ -108,15 +117,15 @@ async fn gitlab(
         return (StatusCode::UNAUTHORIZED, "wrong token".to_string());
     }
 
-    let sha = match commit_to_roll_out(&header("X-Gitlab-Event"), &body, source) {
-        Ok(Some(sha)) => sha,
+    let pipeline = match pipeline_to_roll_out(&header("X-Gitlab-Event"), &body, source) {
+        Ok(Some(pipeline)) => pipeline,
         Ok(None) => return (StatusCode::OK, "ignored".to_string()),
         Err(error) => return (StatusCode::BAD_REQUEST, error),
     };
 
     let release = async {
         let gitlab = forge::gitlab_client(&ctx.client, &app, source).await?;
-        forge::release_for(&gitlab, &app, source, &sha).await
+        forge::release_for(&gitlab, &app, source, &pipeline).await
     };
     let release = match release.await {
         Ok(Lookup::Release(release)) => release,
@@ -167,23 +176,28 @@ mod tests {
     #[test]
     fn rolls_out_successful_pipelines_on_the_ref() {
         assert_eq!(
-            commit_to_roll_out("Pipeline Hook", &pipeline("success", "main"), &source()),
-            Ok(Some("abc123".into()))
+            pipeline_to_roll_out("Pipeline Hook", &pipeline("success", "main"), &source()),
+            Ok(Some(Pipeline {
+                id: 1,
+                sha: "abc123".into(),
+                git_ref: "main".into(),
+                status: "success".into(),
+            }))
         );
     }
 
     #[test]
     fn ignores_everything_else() {
         assert_eq!(
-            commit_to_roll_out("Pipeline Hook", &pipeline("running", "main"), &source()),
+            pipeline_to_roll_out("Pipeline Hook", &pipeline("running", "main"), &source()),
             Ok(None)
         );
         assert_eq!(
-            commit_to_roll_out("Pipeline Hook", &pipeline("success", "feature"), &source()),
+            pipeline_to_roll_out("Pipeline Hook", &pipeline("success", "feature"), &source()),
             Ok(None)
         );
-        assert_eq!(commit_to_roll_out("Push Hook", b"{}", &source()), Ok(None));
-        assert!(commit_to_roll_out("Pipeline Hook", b"not json", &source()).is_err());
+        assert_eq!(pipeline_to_roll_out("Push Hook", b"{}", &source()), Ok(None));
+        assert!(pipeline_to_roll_out("Pipeline Hook", b"not json", &source()).is_err());
     }
 
     #[test]

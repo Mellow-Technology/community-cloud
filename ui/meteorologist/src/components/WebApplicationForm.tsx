@@ -49,7 +49,7 @@ import {
   type WebApplicationForm as FormModel,
 } from "@/lib/webapp/form";
 import { pullSecretsFor, registryOf, type PullSecret } from "@/lib/webapp/registry";
-import { DEFAULT_GITLAB_REF, DEFAULT_IMAGE_TAG } from "@/lib/webapp/types";
+import { DEFAULT_GITLAB_REF } from "@/lib/webapp/types";
 import { GitLabImagePicker } from "./GitLabImagePicker";
 import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
@@ -559,11 +559,17 @@ export function WebApplicationForm({
                 />
                 <TextField
                   label="Image tag"
-                  placeholder={DEFAULT_IMAGE_TAG}
-                  hint="What the pipeline tags the image as. {commit_sha}, {short_sha} and {ref} are filled in."
+                  placeholder="Found from the commit"
+                  hint="Only if the pipeline doesn't tag the image with its commit. {commit_sha}, {short_sha} and {ref} are filled in."
                   {...text("gitlabImageTag")}
                 />
               </div>
+              <Switch
+                label="Otherwise, use the image pushed while the pipeline ran"
+                checked={form.gitlabFindByPushTime}
+                onChange={(event) => set("gitlabFindByPushTime", event.target.checked)}
+                description="For a pipeline that tags its image latest or with a version. If it pushed different images, nothing is rolled out and the image tag has to be set."
+              />
             </div>
           )}
 
