@@ -198,6 +198,17 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
                   </>
                 ),
               },
+              {
+                label: "Image tag",
+                value:
+                  gitlab && (gitlab.imageTag !== undefined ? <code>{gitlab.imageTag}</code> : "Found from the commit"),
+              },
+              {
+                label: "Push time fallback",
+                value: gitlab?.findImageByPushTime
+                  ? "On: the image pushed while the pipeline ran, if none is found by tag"
+                  : undefined,
+              },
               { label: "Webhook", value: status?.webhook && <code>{status.webhook.url}</code> },
               {
                 label: "Connection secrets",
