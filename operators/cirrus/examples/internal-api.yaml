@@ -33,4 +33,5 @@ spec:
       tokenSecret:
         name: gitlab
         key: access-token
+      # Found without this too; set, it's the only tag looked for
       imageTag: "{ref}-{short_sha}"

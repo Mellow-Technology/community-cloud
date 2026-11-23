@@ -160,7 +160,7 @@ pub async fn sync(ctx: &Context, app: &WebApplication) -> SourceResult {
                 if Some(&pipeline.sha) == known.as_ref() {
                     break;
                 }
-                match forge::release_for(&gitlab, app, source, &pipeline.sha).await? {
+                match forge::release_for(&gitlab, app, source, &pipeline).await? {
                     Lookup::Release(release) => return Ok((Some(release), passed_over)),
                     Lookup::NoImage(why) => {
                         passed_over.get_or_insert(why);

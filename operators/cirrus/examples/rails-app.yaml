@@ -83,5 +83,5 @@ spec:
       ref: main
       tokenSecret:
         name: gitlab-token
-      # The pipeline pushes registry.gitlab.com/acme/shop:<commit sha>
-      imageTag: "{commit_sha}"
+      # The pipeline pushes registry.gitlab.com/acme/shop:<commit sha>,
+      # which Cirrus finds without imageTag

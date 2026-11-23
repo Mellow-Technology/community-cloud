@@ -8,7 +8,10 @@
 //! subscribe to is its pipelines, and a successful pipeline on the
 //! tracked branch is the point at which its image has been built and
 //! pushed. So that's the signal, and the registry API is asked
-//! afterwards which digest the tag now points at. Rolling out by
+//! afterwards which of its tags is that pipeline's, and the digest
+//! behind it. GitLab doesn't record what a pipeline pushed, so the tag
+//! is matched back to the pipeline by its name, which usually has the
+//! commit in it, or failing that by when it was pushed. Rolling out by
 //! digest means a tag pushed again later can't change what's running
 //! underneath a Deployment that hasn't been told.
 //!
@@ -20,6 +23,7 @@
 //! Only the handful of endpoints Cirrus needs are here, through
 //! reqwest; a GitLab client crate would bring far more than that.
 
+use k8s_openapi::jiff::{SignedDuration, Timestamp};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
@@ -55,9 +59,13 @@ struct Repository {
     location: String,
 }
 
+// A tag's details. The list of tags has only names; the digest and
+// when it was pushed take a request per tag.
 #[derive(Debug, Deserialize)]
 struct Tag {
+    name: String,
     digest: Option<String>,
+    created_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,20 +73,42 @@ struct TagName {
     name: String,
 }
 
-/// What became of looking up an image tag.
+// One pipeline, for when it ran
+#[derive(Debug, Deserialize)]
+struct PipelineTimes {
+    created_at: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    finished_at: Option<String>,
+}
+
+/// What became of looking for a pipeline's image.
 #[derive(Debug, PartialEq)]
-pub enum ImageTag {
+pub enum Image {
     /// The repository isn't one of the project's own, so the registry
-    /// can't be asked through GitLab and the image is rolled out by tag
+    /// can't be asked through GitLab
     Elsewhere,
 
-    /// The tag is there, with its digest when the registry gave one
-    Found(Option<String>),
+    /// The image, by the tag it was found under, with its digest when
+    /// the registry gave one
+    Found { tag: String, digest: Option<String> },
 
-    /// The repository is the project's, but has no such tag. With the
-    /// tags it does have, or the first page of them, so whoever reads
-    /// the error can see what CI actually pushes.
-    Missing(Vec<String>),
+    /// The repository is the project's, but nothing in it is this
+    /// pipeline's: why, with the tags it does have, so whoever reads it
+    /// can see what CI actually pushes
+    Missing(String),
+}
+
+/// How to find a pipeline's image among the registry's tags.
+pub struct Finding<'a> {
+    /// The registry repository, e.g. registry.gitlab.com/group/app
+    pub repository: &'a str,
+
+    /// `imageTag`, when it's set; otherwise each of LIKELY_TEMPLATES
+    pub template: Option<&'a str>,
+
+    /// Whether to fall back to whatever was pushed while the pipeline ran
+    pub by_push_time: bool,
 }
 
 /// What a request needs of the token, for saying so when GitLab
@@ -195,37 +225,178 @@ impl GitLab {
             .await
     }
 
-    /// Look up a tag in `repository`, when that's one of the project's
-    /// own registry repositories.
-    pub async fn image_tag(&self, project: &str, repository: &str, tag: &str) -> Result<ImageTag> {
-        let what = format!("reading the container registry of {project}");
+    /// The image `pipeline` published, looked for as `finding` says:
+    /// by the tag `imageTag` makes or, without one, by each of the
+    /// usual ways of tagging with the commit, then, when asked for, by
+    /// when it was pushed. A tag a template makes is looked up
+    /// directly rather than searched for in the listing, which is a
+    /// page per hundred tags in name order, not newest first.
+    pub async fn find_image(&self, project: &str, pipeline: &Pipeline, finding: &Finding<'_>) -> Result<Image> {
+        let Some(repository) = self.registry_repository(project, finding.repository).await? else {
+            return Ok(Image::Elsewhere);
+        };
+        let templates = finding
+            .template
+            .map_or(LIKELY_TEMPLATES.to_vec(), |template| vec![template]);
+        let mut tried = Vec::new();
+        for template in templates {
+            let name = render_tag(template, &pipeline.sha, &pipeline.git_ref);
+            if let Some(tag) = self.tag(project, repository, &name).await? {
+                return Ok(Image::Found {
+                    tag: tag.name,
+                    digest: tag.digest,
+                });
+            }
+            tried.push(name);
+        }
+
+        let names = self.tag_names(project, repository).await?;
+        let mut pushed = None;
+        if finding.by_push_time {
+            match self
+                .pushed_during(project, repository, pipeline, &names, &tried)
+                .await?
+            {
+                Pushed::One(tag) => {
+                    return Ok(Image::Found {
+                        tag: tag.name,
+                        digest: tag.digest,
+                    });
+                }
+                other => pushed = Some(other),
+            }
+        }
+        Ok(Image::Missing(missing_tag_message(
+            finding,
+            pipeline,
+            &names,
+            pushed.as_ref(),
+        )))
+    }
+
+    /// The id of `location` among the project's registry repositories,
+    /// if it's one of them.
+    async fn registry_repository(&self, project: &str, location: &str) -> Result<Option<u64>> {
         let repositories: Vec<Repository> = self
             .get(
                 self.project_url(project, "/registry/repositories?per_page=100"),
-                &what,
+                &format!("reading the container registry of {project}"),
                 &READ,
             )
             .await?;
-        let Some(found) = repositories.iter().find(|r| r.location == repository) else {
-            return Ok(ImageTag::Elsewhere);
-        };
+        Ok(repositories.iter().find(|r| r.location == location).map(|r| r.id))
+    }
+
+    /// A tag's details, or None when there's no such tag.
+    async fn tag(&self, project: &str, repository: u64, name: &str) -> Result<Option<Tag>> {
         let url = self.project_url(
             project,
-            &format!("/registry/repositories/{}/tags/{}", found.id, urlencoding::encode(tag)),
+            &format!("/registry/repositories/{repository}/tags/{}", urlencoding::encode(name)),
         );
-        match self.get::<Tag>(url, &what, &READ).await {
-            Ok(tag) => Ok(ImageTag::Found(tag.digest)),
-            Err(Error::GitLab { status, .. }) if status == StatusCode::NOT_FOUND => {
-                let url = self.project_url(
-                    project,
-                    &format!("/registry/repositories/{}/tags?per_page=100", found.id),
-                );
-                let tags: Vec<TagName> = self.get(url, &what, &READ).await?;
-                Ok(ImageTag::Missing(tags.into_iter().map(|tag| tag.name).collect()))
-            }
+        match self
+            .get::<Tag>(url, &format!("reading the container registry of {project}"), &READ)
+            .await
+        {
+            Ok(tag) => Ok(Some(tag)),
+            Err(Error::GitLab { status, .. }) if status == StatusCode::NOT_FOUND => Ok(None),
             Err(error) => Err(error),
         }
     }
+
+    /// The first page of a repository's tag names.
+    async fn tag_names(&self, project: &str, repository: u64) -> Result<Vec<String>> {
+        let url = self.project_url(
+            project,
+            &format!("/registry/repositories/{repository}/tags?per_page=100"),
+        );
+        let tags: Vec<TagName> = self
+            .get(url, &format!("reading the container registry of {project}"), &READ)
+            .await?;
+        Ok(tags.into_iter().map(|tag| tag.name).collect())
+    }
+
+    /// When a pipeline ran: from its start (or creation) to its finish
+    /// (or last update), with PUSH_SLACK added to the end.
+    async fn pipeline_window(&self, project: &str, id: u64) -> Result<Option<(Timestamp, Timestamp)>> {
+        let times: PipelineTimes = self
+            .get(
+                self.project_url(project, &format!("/pipelines/{id}")),
+                &format!("looking up pipeline {id} on {project}"),
+                &READ,
+            )
+            .await?;
+        let parse = |text: Option<String>| text.and_then(|text| text.parse::<Timestamp>().ok());
+        let start = parse(times.started_at).or(parse(times.created_at));
+        let end = parse(times.finished_at).or(parse(times.updated_at));
+        Ok(start.zip(end).map(|(start, end)| (start, end + PUSH_SLACK)))
+    }
+
+    /// The image pushed while `pipeline` ran, among the tags not
+    /// already `tried` by name. Tags that look like another commit's
+    /// are skipped: had the pipeline tagged its image with its own
+    /// commit, a template would have found it.
+    async fn pushed_during(
+        &self,
+        project: &str,
+        repository: u64,
+        pipeline: &Pipeline,
+        names: &[String],
+        tried: &[String],
+    ) -> Result<Pushed> {
+        let Some((start, end)) = self.pipeline_window(project, pipeline.id).await? else {
+            return Ok(Pushed::Nothing);
+        };
+        let candidates = names
+            .iter()
+            .filter(|name| !tried.contains(name) && !names_a_commit(name))
+            .take(PUSH_TIME_LOOKUPS);
+        let mut found: Vec<Tag> = Vec::new();
+        for name in candidates {
+            let Some(tag) = self.tag(project, repository, name).await? else {
+                continue;
+            };
+            let pushed = tag
+                .created_at
+                .as_deref()
+                .and_then(|text| text.parse::<Timestamp>().ok());
+            if pushed.is_some_and(|pushed| start <= pushed && pushed <= end) {
+                found.push(tag);
+            }
+        }
+        let mut digests: Vec<&Option<String>> = found.iter().map(|tag| &tag.digest).collect();
+        digests.sort();
+        digests.dedup();
+        Ok(match digests.len() {
+            0 => Pushed::Nothing,
+            // Several tags on one image, like latest and v1.2: any will
+            // do, since the digest is what's rolled out
+            1 => Pushed::One(found.swap_remove(0)),
+            _ => Pushed::Several(found.into_iter().map(|tag| tag.name).collect()),
+        })
+    }
+}
+
+// What was pushed while a pipeline ran
+enum Pushed {
+    Nothing,
+    One(Tag),
+    Several(Vec<String>),
+}
+
+// How long after a pipeline finishes a push still counts as its own:
+// GitLab and its registry keep separate clocks
+const PUSH_SLACK: SignedDuration = SignedDuration::from_secs(60);
+
+// The most tags whose details are fetched looking for one pushed while
+// a pipeline ran. Each is a request, on every poll that hasn't found
+// the image yet.
+const PUSH_TIME_LOOKUPS: usize = 20;
+
+/// Whether a tag looks like one made from a commit: 7 to 40 hex
+/// digits, perhaps after a ref and a dash.
+fn names_a_commit(name: &str) -> bool {
+    let last = name.rsplit('-').next().unwrap_or(name);
+    (7..=40).contains(&last.len()) && last.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// GitLab's refusal of `what`, as an error that says what to change.
@@ -233,7 +404,14 @@ fn refusal(what: &str, needs: &Needs, status: StatusCode, body: &str) -> Error {
     let (code, said) = gitlab_says(body);
     let advice = match status {
         StatusCode::UNAUTHORIZED => Some("the token wasn't accepted; it may have expired or been revoked".to_string()),
-        StatusCode::FORBIDDEN if code.as_deref() == Some("insufficient_scope") => {
+        // A classic token without the scope, or a fine-grained one
+        // without the permission (GitLab names the one it wanted)
+        StatusCode::FORBIDDEN
+            if matches!(
+                code.as_deref(),
+                Some("insufficient_scope" | "insufficient_granular_scope")
+            ) =>
+        {
             Some(format!("the token's scope doesn't allow it: it needs {}", needs.scope))
         }
         StatusCode::FORBIDDEN => Some(format!(
@@ -279,39 +457,63 @@ pub fn render_tag(template: &str, sha: &str, git_ref: &str) -> String {
         .replace("{ref}", &git_ref.replace('/', "-"))
 }
 
-// The templates a missing tag is checked against, for suggesting one.
+// The templates tried when imageTag isn't set, and checked against a
+// missing tag for suggesting one when it is.
 // The usual ways a GitLab pipeline tags its image: $CI_COMMIT_SHA,
 // $CI_COMMIT_SHORT_SHA, and either with the branch in front.
 const LIKELY_TEMPLATES: [&str; 4] = ["{commit_sha}", "{short_sha}", "{ref}-{commit_sha}", "{ref}-{short_sha}"];
 
-/// Why a pipeline's image couldn't be found, and what `imageTag` might
-/// be instead, from the tags the registry does have.
-pub fn missing_tag_message(repository: &str, template: &str, sha: &str, git_ref: &str, tags: &[String]) -> String {
-    let tag = render_tag(template, sha, git_ref);
+/// Why a pipeline's image couldn't be found, and what to set instead,
+/// from the tags the registry does have and, when it was looked at,
+/// what was pushed while the pipeline ran.
+fn missing_tag_message(finding: &Finding<'_>, pipeline: &Pipeline, tags: &[String], pushed: Option<&Pushed>) -> String {
+    let (sha, git_ref, repository) = (&pipeline.sha, &pipeline.git_ref, finding.repository);
     let short = &sha[..sha.len().min(8)];
-    let mut message =
-        format!("pipeline {short} on {git_ref} published no image {repository}:{tag} (imageTag is \"{template}\")");
-    let suggestion = LIKELY_TEMPLATES
-        .iter()
-        .find(|candidate| tags.contains(&render_tag(candidate, sha, git_ref)));
+    let mut message = match finding.template {
+        Some(template) => format!(
+            "pipeline {short} on {git_ref} published no image {repository}:{} (imageTag is \"{template}\")",
+            render_tag(template, sha, git_ref)
+        ),
+        None => format!(
+            "pipeline {short} on {git_ref} published no image to {repository} tagged with its commit (its SHA or the \
+             first 8 characters of it, with or without \"{}-\" in front)",
+            render_tag("{ref}", sha, git_ref)
+        ),
+    };
+    // Only for a set imageTag: without one, these were all looked for
+    let suggestion = finding.template.and_then(|_| {
+        LIKELY_TEMPLATES
+            .iter()
+            .find(|candidate| tags.contains(&render_tag(candidate, sha, git_ref)))
+    });
     if let Some(candidate) = suggestion {
         message.push_str(&format!(
-            ". The registry has it as {}, so imageTag should probably be \"{candidate}\"",
+            ". The registry has it as {}, so imageTag should probably be \"{candidate}\", or left out to have it found",
             render_tag(candidate, sha, git_ref)
         ));
-    } else if tags.is_empty() {
-        message.push_str(". The repository has no tags at all, so CI may not be pushing to it");
-    } else {
-        let shown: Vec<&str> = tags.iter().take(TAGS_SHOWN).map(String::as_str).collect();
-        let more = tags.len().saturating_sub(TAGS_SHOWN);
-        message.push_str(&format!(". Its tags include {}", shown.join(", ")));
-        if more > 0 {
-            message.push_str(&format!(" and {more} more"));
-        }
-        if tags.iter().any(|tag| tag == "latest") {
-            message.push_str(". If CI only pushes latest, set imageTag to \"latest\"");
-        }
+        return message;
     }
+    if tags.is_empty() {
+        message.push_str(". The repository has no tags at all, so CI may not be pushing to it");
+        return message;
+    }
+    let shown: Vec<&str> = tags.iter().take(TAGS_SHOWN).map(String::as_str).collect();
+    let more = tags.len().saturating_sub(TAGS_SHOWN);
+    message.push_str(&format!(". Its tags include {}", shown.join(", ")));
+    if more > 0 {
+        message.push_str(&format!(" and {more} more"));
+    }
+    message.push_str(&match pushed {
+        None => ". If CI tags images some other way, set imageTag to match, or findImageByPushTime to take the \
+                  image pushed while the pipeline ran"
+            .to_string(),
+        Some(Pushed::Nothing) => ". Nothing was pushed to it while the pipeline ran either".to_string(),
+        Some(Pushed::Several(names)) => format!(
+            ". Different images were pushed while the pipeline ran ({}), so which is its can't be told; set imageTag",
+            names.join(", ")
+        ),
+        Some(Pushed::One(_)) => String::new(),
+    });
     message
 }
 
@@ -333,32 +535,81 @@ mod tests {
         );
     }
 
+    fn pipeline() -> Pipeline {
+        Pipeline {
+            id: 5,
+            sha: "0123456789abcdef".into(),
+            git_ref: "main".into(),
+            status: "success".into(),
+        }
+    }
+
+    fn finding(template: Option<&str>, by_push_time: bool) -> Finding<'_> {
+        Finding {
+            repository: "registry.gitlab.com/acme/shop",
+            template,
+            by_push_time,
+        }
+    }
+
+    fn names(tags: &[&str]) -> Vec<String> {
+        tags.iter().map(|tag| tag.to_string()).collect()
+    }
+
     #[test]
     fn suggests_the_template_the_registry_matches() {
-        let tags = vec!["latest".to_string(), "01234567".to_string()];
-        let message = missing_tag_message("r/shop", "{commit_sha}", "0123456789abcdef", "main", &tags);
-        assert!(message.contains("no image r/shop:0123456789abcdef"), "{message}");
+        let message = missing_tag_message(
+            &finding(Some("{commit_sha}"), false),
+            &pipeline(),
+            &names(&["latest", "01234567"]),
+            None,
+        );
         assert!(
-            message.contains("imageTag should probably be \"{short_sha}\""),
+            message.contains("no image registry.gitlab.com/acme/shop:0123456789abcdef"),
+            "{message}"
+        );
+        assert!(
+            message.contains("imageTag should probably be \"{short_sha}\", or left out"),
             "{message}"
         );
     }
 
     #[test]
     fn lists_tags_when_nothing_matches() {
-        let tags: Vec<String> = ["latest", "a", "b", "c", "d", "e"]
-            .iter()
-            .map(|t| t.to_string())
-            .collect();
-        let message = missing_tag_message("r/shop", "{commit_sha}", "0123456789abcdef", "main", &tags);
+        let tags = names(&["latest", "a", "b", "c", "d", "e"]);
+        let message = missing_tag_message(&finding(None, false), &pipeline(), &tags, None);
+        assert!(message.contains("tagged with its commit"), "{message}");
+        assert!(message.contains("with or without \"main-\""), "{message}");
         assert!(
             message.contains("tags include latest, a, b, c, d and 1 more"),
             "{message}"
         );
-        assert!(message.contains("set imageTag to \"latest\""), "{message}");
+        assert!(message.contains("findImageByPushTime"), "{message}");
 
-        let message = missing_tag_message("r/shop", "{commit_sha}", "0123456789abcdef", "main", &[]);
+        let message = missing_tag_message(&finding(None, true), &pipeline(), &tags, Some(&Pushed::Nothing));
+        assert!(
+            message.contains("Nothing was pushed to it while the pipeline ran"),
+            "{message}"
+        );
+
+        let several = Pushed::Several(names(&["latest", "v2"]));
+        let message = missing_tag_message(&finding(None, true), &pipeline(), &tags, Some(&several));
+        assert!(
+            message.contains("Different images were pushed while the pipeline ran (latest, v2)"),
+            "{message}"
+        );
+
+        let message = missing_tag_message(&finding(None, false), &pipeline(), &[], None);
         assert!(message.contains("no tags at all"), "{message}");
+    }
+
+    #[test]
+    fn knows_a_commit_tag() {
+        assert!(names_a_commit("a61df038"));
+        assert!(names_a_commit("main-a61df038bcfc0b979fdffbff5b8abd9400d3f243"));
+        assert!(!names_a_commit("latest"));
+        assert!(!names_a_commit("v1.2.3"));
+        assert!(!names_a_commit("cafe"));
     }
 
     #[test]
@@ -373,6 +624,18 @@ mod tests {
         assert!(scope.contains("saving the webhook on acme/shop was refused"), "{scope}");
         assert!(scope.contains("it needs the api scope"), "{scope}");
         assert!(scope.contains("GitLab said: insufficient_scope"), "{scope}");
+
+        // What a fine-grained token without the permission gets
+        let granular = refusal(
+            "saving the webhook on acme/shop",
+            &HOOKS,
+            StatusCode::FORBIDDEN,
+            r#"{"error":"insufficient_granular_scope","error_description":"Access denied: This operation requires a fine-grained personal access token with the following project permissions: [Webhook: Create]."}"#,
+        )
+        .to_string();
+        assert!(granular.contains("it needs the api scope"), "{granular}");
+        assert!(!granular.contains("Maintainer"), "{granular}");
+        assert!(granular.contains("[Webhook: Create]"), "{granular}");
 
         let role = refusal(
             "saving the webhook on acme/shop",
@@ -397,62 +660,161 @@ mod tests {
         assert_eq!(other, "forge: x answered 502 Bad Gateway: <html>bad gateway</html>");
     }
 
-    #[tokio::test]
-    async fn resolves_a_digest_from_the_project_registry() {
+    // The project's one registry repository, id 7
+    async fn registry() -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/acme%2Fshop/registry/repositories"))
             .and(header("PRIVATE-TOKEN", "t"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                {"id": 7, "location": "registry.gitlab.com/acme/shop"},
-                {"id": 8, "location": "registry.gitlab.com/acme/shop/worker"}
-            ])))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/api/v4/projects/acme%2Fshop/registry/repositories/7/tags/abc"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "abc", "digest": "sha256:feed"})))
-            .mount(&server)
-            .await;
-
-        let gitlab = GitLab::new(&server.uri(), "t");
-        let found = gitlab
-            .image_tag("acme/shop", "registry.gitlab.com/acme/shop", "abc")
-            .await
-            .unwrap();
-        assert_eq!(found, ImageTag::Found(Some("sha256:feed".into())));
-        let elsewhere = gitlab.image_tag("acme/shop", "ghcr.io/acme/shop", "abc").await.unwrap();
-        assert_eq!(elsewhere, ImageTag::Elsewhere);
-    }
-
-    #[tokio::test]
-    async fn a_missing_tag_comes_back_with_the_tags_there_are() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/v4/projects/acme%2Fshop/registry/repositories"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(json!([{"id": 7, "location": "registry.gitlab.com/acme/shop"}])),
             )
             .mount(&server)
             .await;
+        server
+    }
+
+    async fn tag(server: &MockServer, name: &str, digest: &str, created_at: &str) {
         Mock::given(method("GET"))
-            .and(path("/api/v4/projects/acme%2Fshop/registry/repositories/7/tags/abc"))
-            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"message": "404 Tag Not Found"})))
-            .mount(&server)
+            .and(path(format!(
+                "/api/v4/projects/acme%2Fshop/registry/repositories/7/tags/{name}"
+            )))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"name": name, "digest": digest, "created_at": created_at})),
+            )
+            .mount(server)
             .await;
+    }
+
+    async fn tag_list(server: &MockServer, tags: &[&str]) {
+        let tags: Vec<_> = tags.iter().map(|name| json!({"name": name})).collect();
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/acme%2Fshop/registry/repositories/7/tags"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"name": "latest"}])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tags))
+            .mount(server)
+            .await;
+    }
+
+    // Pipeline 5 ran from 10:00 to 10:10
+    async fn pipeline_times(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/acme%2Fshop/pipelines/5"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 5,
+                "created_at": "2026-11-23T09:59:00Z",
+                "started_at": "2026-11-23T10:00:00Z",
+                "finished_at": "2026-11-23T10:10:00Z",
+                "updated_at": "2026-11-23T10:10:00Z"
+            })))
+            .mount(server)
+            .await;
+    }
+
+    // Anything not mounted is a 404, which is what GitLab says of a
+    // tag that isn't there
+    #[tokio::test]
+    async fn finds_the_tag_by_the_usual_templates_when_image_tag_is_unset() {
+        let server = registry().await;
+        tag(&server, "01234567", "sha256:feed", "2026-11-23T10:05:00Z").await;
+
+        let gitlab = GitLab::new(&server.uri(), "t");
+        let found = gitlab
+            .find_image("acme/shop", &pipeline(), &finding(None, false))
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            Image::Found {
+                tag: "01234567".into(),
+                digest: Some("sha256:feed".into())
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_set_image_tag_is_the_only_one_tried() {
+        let server = registry().await;
+        tag(&server, "01234567", "sha256:feed", "2026-11-23T10:05:00Z").await;
+        tag_list(&server, &["01234567"]).await;
+
+        let gitlab = GitLab::new(&server.uri(), "t");
+        let found = gitlab
+            .find_image("acme/shop", &pipeline(), &finding(Some("{commit_sha}"), false))
+            .await
+            .unwrap();
+        let Image::Missing(why) = found else {
+            panic!("{found:?}")
+        };
+        assert!(why.contains("imageTag should probably be \"{short_sha}\""), "{why}");
+
+        let elsewhere = Finding {
+            repository: "ghcr.io/acme/shop",
+            ..finding(None, false)
+        };
+        assert_eq!(
+            gitlab.find_image("acme/shop", &pipeline(), &elsewhere).await.unwrap(),
+            Image::Elsewhere
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_what_was_pushed_while_the_pipeline_ran() {
+        let server = registry().await;
+        pipeline_times(&server).await;
+        tag_list(&server, &["0aaaaaaa", "latest", "old", "v1.2"]).await;
+        tag(&server, "latest", "sha256:new", "2026-11-23T10:08:00Z").await;
+        tag(&server, "v1.2", "sha256:new", "2026-11-23T10:08:01Z").await;
+        tag(&server, "old", "sha256:old", "2026-11-22T08:00:00Z").await;
+        // Another commit's: never looked at
+        Mock::given(method("GET"))
+            .and(path(
+                "/api/v4/projects/acme%2Fshop/registry/repositories/7/tags/0aaaaaaa",
+            ))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
             .mount(&server)
             .await;
 
         let gitlab = GitLab::new(&server.uri(), "t");
-        let missing = gitlab
-            .image_tag("acme/shop", "registry.gitlab.com/acme/shop", "abc")
+        let found = gitlab
+            .find_image("acme/shop", &pipeline(), &finding(None, true))
             .await
             .unwrap();
-        assert_eq!(missing, ImageTag::Missing(vec!["latest".into()]));
+        assert_eq!(
+            found,
+            Image::Found {
+                tag: "latest".into(),
+                digest: Some("sha256:new".into())
+            }
+        );
+
+        // Without being asked to, it doesn't
+        let missing = gitlab
+            .find_image("acme/shop", &pipeline(), &finding(None, false))
+            .await
+            .unwrap();
+        assert!(matches!(missing, Image::Missing(_)), "{missing:?}");
+    }
+
+    #[tokio::test]
+    async fn different_images_pushed_while_it_ran_are_not_guessed_between() {
+        let server = registry().await;
+        pipeline_times(&server).await;
+        tag_list(&server, &["latest", "v2"]).await;
+        tag(&server, "latest", "sha256:one", "2026-11-23T10:04:00Z").await;
+        tag(&server, "v2", "sha256:two", "2026-11-23T10:06:00Z").await;
+
+        let gitlab = GitLab::new(&server.uri(), "t");
+        let found = gitlab
+            .find_image("acme/shop", &pipeline(), &finding(None, true))
+            .await
+            .unwrap();
+        let Image::Missing(why) = found else {
+            panic!("{found:?}")
+        };
+        assert!(why.contains("Different images"), "{why}");
     }
 
     #[tokio::test]

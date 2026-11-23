@@ -186,9 +186,16 @@ pub struct GitLabSource {
     /// manage the project's webhook.
     pub token_secret: SecretKeyRef,
     /// The tag a successful pipeline publishes the image under.
-    /// "{commit_sha}", "{short_sha}" and "{ref}" are replaced.
-    #[serde(default = "default_image_tag")]
-    pub image_tag: String,
+    /// "{commit_sha}", "{short_sha}" and "{ref}" are replaced. Left
+    /// out, the tag is found: the commit's SHA, whole or its first 8
+    /// characters, with or without "{ref}-" in front.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_tag: Option<String>,
+    /// When no tag is found by name, take the image pushed while the
+    /// pipeline ran, as the registry dates it. For CI that tags images
+    /// by something other than the commit, like "latest" or a version.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub find_image_by_push_time: bool,
 }
 
 fn default_gitlab_url() -> String {
@@ -197,10 +204,6 @@ fn default_gitlab_url() -> String {
 
 fn default_ref() -> String {
     "main".to_string()
-}
-
-fn default_image_tag() -> String {
-    "{commit_sha}".to_string()
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]

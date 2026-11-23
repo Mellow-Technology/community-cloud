@@ -24,7 +24,6 @@ import {
   API_VERSION,
   DEFAULT_GITLAB_REF,
   DEFAULT_GITLAB_URL,
-  DEFAULT_IMAGE_TAG,
   DEFAULT_REPLICAS,
   DEFAULT_TAG,
   DEFAULT_TOKEN_KEY,
@@ -89,6 +88,7 @@ export interface WebApplicationForm {
   gitlabTokenSecretName: string;
   gitlabTokenSecretKey: string;
   gitlabImageTag: string;
+  gitlabFindByPushTime: boolean;
 
   env: EnvRow[];
   // Variables the form can't edit — those read from a Secret or a
@@ -135,7 +135,8 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     gitlabRef: DEFAULT_GITLAB_REF,
     gitlabTokenSecretName: "",
     gitlabTokenSecretKey: DEFAULT_TOKEN_KEY,
-    gitlabImageTag: DEFAULT_IMAGE_TAG,
+    gitlabImageTag: "",
+    gitlabFindByPushTime: false,
     env: [],
     preservedEnv: [],
   };
@@ -232,7 +233,8 @@ export function toForm(app: WebApplication): WebApplicationForm {
     gitlabRef: gitlab?.ref ?? DEFAULT_GITLAB_REF,
     gitlabTokenSecretName: gitlab?.tokenSecret.name ?? "",
     gitlabTokenSecretKey: gitlab?.tokenSecret.key ?? DEFAULT_TOKEN_KEY,
-    gitlabImageTag: gitlab?.imageTag ?? DEFAULT_IMAGE_TAG,
+    gitlabImageTag: gitlab?.imageTag ?? "",
+    gitlabFindByPushTime: gitlab?.findImageByPushTime ?? false,
     env: env
       .filter((variable) => variable.valueFrom === undefined)
       .map((variable) => ({ name: variable.name, value: variable.value ?? "" })),
@@ -399,9 +401,14 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
           name: form.gitlabTokenSecretName.trim(),
           key: nonEmpty(form.gitlabTokenSecretKey) ?? DEFAULT_TOKEN_KEY,
         },
-        imageTag: nonEmpty(form.gitlabImageTag) ?? DEFAULT_IMAGE_TAG,
+        imageTag: nonEmpty(form.gitlabImageTag),
+        findImageByPushTime: form.gitlabFindByPushTime || undefined,
       },
     };
+    // Left out rather than written empty, so Cirrus finds the tag itself
+    const gitlab = spec.source.gitlab!;
+    if (gitlab.imageTag === undefined) delete gitlab.imageTag;
+    if (gitlab.findImageByPushTime === undefined) delete gitlab.findImageByPushTime;
   } else if (spec.source !== undefined) {
     delete spec.source.gitlab;
     if (Object.keys(spec.source).length === 0) {

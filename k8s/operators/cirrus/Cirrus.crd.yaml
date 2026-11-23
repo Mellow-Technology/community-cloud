@@ -276,11 +276,19 @@ spec:
                   gitlab:
                     nullable: true
                     properties:
+                      findImageByPushTime:
+                        description: |-
+                          When no tag is found by name, take the image pushed while the
+                          pipeline ran, as the registry dates it. For CI that tags images
+                          by something other than the commit, like "latest" or a version.
+                        type: boolean
                       imageTag:
-                        default: '{commit_sha}'
                         description: |-
                           The tag a successful pipeline publishes the image under.
-                          "{commit_sha}", "{short_sha}" and "{ref}" are replaced.
+                          "{commit_sha}", "{short_sha}" and "{ref}" are replaced. Left
+                          out, the tag is found: the commit's SHA, whole or its first 8
+                          characters, with or without "{ref}-" in front.
+                        nullable: true
                         type: string
                       project:
                         description: The project's path, e.g. group/app, or its numeric id.
