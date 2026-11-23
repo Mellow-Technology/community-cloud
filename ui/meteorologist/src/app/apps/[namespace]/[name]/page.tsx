@@ -22,7 +22,10 @@ import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { PageHeader } from "@/components/PageHeader";
+import { ProjectBuild } from "@/components/ProjectBuild";
 import styles from "@/components/page.module.scss";
+import { getPublicUrl } from "@/lib/config";
+import { BUILDS_CONFIG_MAP, DEFAULT_DOCKERFILE, buildSettingsFrom, includeUrl } from "@/lib/gitlab/builds";
 import { getKube } from "@/lib/kube";
 import { describeError, isNotFound, settle } from "@/lib/kube/client";
 import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
@@ -70,9 +73,10 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
   const kube = await getKube();
   const allowed = (verb: string) =>
     kube.canI({ verb, resource: PLURAL, group: GROUP, namespace: decodeURIComponent(namespace) }).catch(() => false);
-  const [found, certificates, canEdit, canDelete] = await Promise.all([
+  const [found, certificates, builds, canEdit, canDelete] = await Promise.all([
     settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
     settle(() => kube.listCertificates(decodeURIComponent(namespace))),
+    settle(() => kube.getConfigMap(decodeURIComponent(namespace), BUILDS_CONFIG_MAP)),
     allowed("update"),
     allowed("delete"),
   ]);
@@ -96,6 +100,8 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
   const status = app.status;
   const gitlab = app.spec.source?.gitlab;
   const editHref = `/apps/${namespace}/${name}/edit`;
+  const buildSettings = builds.ok ? buildSettingsFrom(builds.value) : undefined;
+  const appNamespace = app.metadata.namespace ?? decodeURIComponent(namespace);
 
   return (
     <>
@@ -223,6 +229,23 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
           />
         </Card>
       </Grid>
+
+      {gitlab &&
+        (builds.ok ? (
+          <ProjectBuild
+            namespace={appNamespace}
+            project={gitlab.project}
+            own={buildSettings?.projects[gitlab.project.toLowerCase()]}
+            defaultDockerfile={buildSettings?.dockerfile ?? DEFAULT_DOCKERFILE}
+            url={buildSettings && includeUrl(getPublicUrl(), appNamespace, buildSettings.key, gitlab.project)}
+            imageTag={gitlab.imageTag}
+          />
+        ) : (
+          <section className={styles.section}>
+            <h2 className={styles.heading}>Building on GitLab CI</h2>
+            <ErrorNotice error={builds.error} title="Couldn't read this namespace's GitLab build settings" />
+          </section>
+        ))}
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Conditions</h2>

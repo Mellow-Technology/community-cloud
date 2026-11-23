@@ -2,26 +2,31 @@
  * @file
  * One namespace, in tabs: General (its capabilities, its Postgres, what
  * it's using and its settings), DNS (the providers publishing it), and
- * Integration (its GitLab connections).
+ * Forges (its GitLab connections). Applications, the other tab, is a
+ * route of its own: ./applications/page.tsx.
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Button } from "gui-mellow/Button";
 import { Card } from "gui-mellow/Card";
 import { Grid } from "gui-mellow/Grid";
+import { Stat } from "gui-mellow/Stat";
 import { StatusDot } from "gui-mellow/StatusDot";
 import { Table } from "gui-mellow/Table";
 
 import { CapabilitySwitch } from "@/components/CapabilitySwitch";
 import { DetailList } from "@/components/DetailList";
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { GitLabBuilds } from "@/components/GitLabBuilds";
 import { GitLabConnections } from "@/components/GitLabConnections";
 import { NamespaceDns } from "@/components/NamespaceDns";
+import { NamespaceHeader } from "@/components/NamespaceHeader";
 import { NamespaceSettingsForm } from "@/components/NamespaceSettingsForm";
 import { NamespaceTabs } from "@/components/NamespaceTabs";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
+import { getPublicUrl } from "@/lib/config";
+import { BUILDS_CONFIG_MAP, buildSettingsFrom, includeUrl } from "@/lib/gitlab/builds";
 import { connectionsIn } from "@/lib/gitlab/connections";
 import { getKube } from "@/lib/kube";
 import { isForbidden, isNotFound, settle } from "@/lib/kube/client";
@@ -35,15 +40,9 @@ import {
 } from "@/lib/namespace/settings";
 import { namespacesAllowing } from "@/lib/namespace/access";
 import { namespaceTab } from "@/lib/namespace/tabs";
+import { quotaFigures } from "@/lib/namespace/usage";
 import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresDatabase } from "@/lib/postgres";
 import { GROUP, PLURAL } from "@/lib/webapp/types";
-
-// What a quota's keys mean, in the order they're shown
-const QUOTA_LABELS: Record<string, string> = {
-  "requests.cpu": "CPU reserved",
-  "limits.memory": "Memory",
-  "requests.storage": "Storage",
-};
 
 /**
  * @param props
@@ -95,26 +94,40 @@ export default async function NamespacePage({
   }
 
   const namespace = found.value;
-  const [quotas, limitRange, serviceAccount, secrets, clusters, apps, regions, dns, labelling, limiting, deploying] =
-    await Promise.all([
-      settle(() => kube.listResourceQuotas(name)),
-      settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
-      settle(() => kube.getServiceAccount(name, DEFAULT_SERVICE_ACCOUNT)),
-      settle(() => kube.listSecrets(name)),
-      settle(() => kube.listPostgresClusters(name)),
-      settle(() => kube.listWebApplications(name)),
-      settle(() => kube.listRegions()),
-      settle(() => kube.listDnsProviders()),
-      namespacesAllowing(kube, { verb: "patch", resource: "namespaces" }, [name]),
-      namespacesAllowing(kube, { verb: "patch", resource: "resourcequotas" }, [name]),
-      namespacesAllowing(kube, { verb: "create", resource: PLURAL, group: GROUP }, [name]),
-    ]);
+  const [
+    quotas,
+    limitRange,
+    serviceAccount,
+    secrets,
+    clusters,
+    apps,
+    regions,
+    dns,
+    builds,
+    labelling,
+    limiting,
+    deploying,
+  ] = await Promise.all([
+    settle(() => kube.listResourceQuotas(name)),
+    settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
+    settle(() => kube.getServiceAccount(name, DEFAULT_SERVICE_ACCOUNT)),
+    settle(() => kube.listSecrets(name)),
+    settle(() => kube.listPostgresClusters(name)),
+    settle(() => kube.listWebApplications(name)),
+    settle(() => kube.listRegions()),
+    settle(() => kube.listDnsProviders()),
+    settle(() => kube.getConfigMap(name, BUILDS_CONFIG_MAP)),
+    namespacesAllowing(kube, { verb: "patch", resource: "namespaces" }, [name]),
+    namespacesAllowing(kube, { verb: "patch", resource: "resourcequotas" }, [name]),
+    namespacesAllowing(kube, { verb: "create", resource: PLURAL, group: GROUP }, [name]),
+  ]);
   const canLabel = labelling.size > 0;
   // Saving the settings writes the namespace and its quota, so it
   // takes both. The "edit" role has neither, on purpose: a team
   // shouldn't be able to raise its own limits.
   const canChangeSettings = canLabel && limiting.size > 0;
   const connections = secrets.ok ? connectionsIn(secrets.value) : [];
+  const buildSettings = builds.ok ? buildSettingsFrom(builds.value) : undefined;
   const usedBy: Record<string, string[]> = {};
   for (const app of apps.ok ? apps.value : []) {
     const secret = app.spec.source?.gitlab?.tokenSecret.name;
@@ -129,26 +142,14 @@ export default async function NamespacePage({
     : undefined;
   const usingPostgres = apps.ok ? apps.value.filter((app) => app.spec.postgres !== undefined) : [];
   const settingsReadable = quotas.ok && limitRange.ok && serviceAccount.ok;
+  const usage = quotaFigures(ours);
 
   return (
     <>
-      <PageHeader
-        eyebrow="Namespace"
-        title={name}
-        back={{ href: "/namespaces", label: "Namespaces" }}
-        actions={
-          <>
-            <Button href={`/apps?namespace=${encodeURIComponent(name)}`} variant="secondary">
-              Applications
-            </Button>
-            {deploying.size > 0 && (
-              <Button href={`/apps/new?namespace=${encodeURIComponent(name)}`}>New application</Button>
-            )}
-          </>
-        }
-      />
+      <NamespaceHeader name={name} canDeploy={deploying.size > 0} />
 
       <NamespaceTabs
+        namespace={name}
         selected={namespaceTab(tab)}
         panels={{
           general: (
@@ -209,20 +210,25 @@ export default async function NamespacePage({
                     </p>
                   )}
                 </Card>
-
-                {ours?.status?.hard && (
-                  <Card title="Using" level={2}>
-                    <DetailList
-                      items={Object.entries(QUOTA_LABELS)
-                        .filter(([key]) => ours.status?.hard?.[key] !== undefined)
-                        .map(([key, label]) => ({
-                          label,
-                          value: `${ours.status?.used?.[key] ?? "0"} of ${ours.status?.hard?.[key]}`,
-                        }))}
-                    />
-                  </Card>
-                )}
               </Grid>
+
+              {usage.length > 0 && (
+                <section className={styles.section}>
+                  <h2 className={styles.heading}>Usage</h2>
+                  <Grid min="180px" gap={4}>
+                    {usage.map((each) => (
+                      <Stat
+                        key={each.key}
+                        label={each.label}
+                        value={each.used}
+                        total={each.limit}
+                        unit={each.unit}
+                        meter={each.comparable}
+                      />
+                    ))}
+                  </Grid>
+                </section>
+              )}
 
               {quotas.ok && quotas.value.some((quota) => quota.metadata.name !== SETTINGS_NAME) && (
                 <section className={styles.section}>
@@ -285,14 +291,33 @@ export default async function NamespacePage({
               )}
             </section>
           ),
-          integration: secrets.ok ? (
-            <GitLabConnections namespace={name} connections={connections} usedBy={usedBy} />
-          ) : isForbidden(secrets.error) ? (
-            <p className={styles.empty}>
-              GitLab connections are kept in Secrets, and you don&apos;t have access to the Secrets in this namespace.
-            </p>
-          ) : (
-            <ErrorNotice error={secrets.error} title="Couldn't list this namespace's Secrets" />
+          forges: (
+            <>
+              {secrets.ok ? (
+                <GitLabConnections namespace={name} connections={connections} usedBy={usedBy} />
+              ) : isForbidden(secrets.error) ? (
+                <p className={styles.empty}>
+                  GitLab connections are kept in Secrets, and you don&apos;t have access to the Secrets in this
+                  namespace.
+                </p>
+              ) : (
+                <ErrorNotice error={secrets.error} title="Couldn't list this namespace's Secrets" />
+              )}
+              {builds.ok ? (
+                <GitLabBuilds
+                  namespace={name}
+                  configured={buildSettings !== undefined}
+                  dockerfile={buildSettings?.dockerfile}
+                  projects={Object.entries(buildSettings?.projects ?? {}).map(([project, dockerfile]) => ({
+                    project,
+                    dockerfile,
+                  }))}
+                  exampleUrl={buildSettings && includeUrl(getPublicUrl(), name, buildSettings.key, "group/project")}
+                />
+              ) : (
+                <ErrorNotice error={builds.error} title="Couldn't read this namespace's GitLab build settings" />
+              )}
+            </>
           ),
         }}
       />

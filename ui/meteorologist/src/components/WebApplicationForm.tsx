@@ -25,7 +25,7 @@
  * draws them.
  */
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import { Disclosure } from "gui-mellow/Accordion";
 import { Alert } from "gui-mellow/Alert";
 import { Badge } from "gui-mellow/Badge";
@@ -51,6 +51,7 @@ import {
 import { pullSecretsFor, registryOf, type PullSecret } from "@/lib/webapp/registry";
 import { DEFAULT_GITLAB_REF } from "@/lib/webapp/types";
 import { GitLabImagePicker } from "./GitLabImagePicker";
+import { projectsFor } from "@/lib/gitlab/projects";
 import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
 import styles from "./WebApplicationForm.module.scss";
@@ -114,6 +115,17 @@ export function WebApplicationForm({
       ? [...connections, { name: form.gitlabTokenSecretName, url: form.gitlabUrl }]
       : connections;
   const fromGitLab = form.imageSource === "gitlab";
+
+  // GitLab is slow to list projects, so each connection's are asked for
+  // as the form opens, and are there by the time anyone reaches the
+  // project field. See lib/gitlab/projects.ts.
+  const connectionNames = connectionChoices.map((each) => each.name).join("\n");
+  useEffect(() => {
+    if (form.namespace === "") return;
+    for (const name of connectionNames.split("\n").filter(Boolean)) {
+      void projectsFor(form.namespace, name);
+    }
+  }, [form.namespace, connectionNames]);
 
   // Registry credentials follow the image, until someone chooses them:
   // the namespace's Secrets for the image's registry. Worked out here
@@ -248,7 +260,7 @@ export function WebApplicationForm({
                   <Button
                     size="sm"
                     variant="secondary"
-                    href={`/namespaces/${encodeURIComponent(form.namespace)}?tab=integration`}
+                    href={`/namespaces/${encodeURIComponent(form.namespace)}?tab=forges`}
                   >
                     Add one
                   </Button>

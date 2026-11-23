@@ -18,7 +18,7 @@ import { TextField } from "gui-mellow/Field";
 import { Table } from "gui-mellow/Table";
 
 import { createGitLabConnection, deleteGitLabConnection } from "@/lib/actions";
-import { suggestedName, tokenPages, type GitLabConnection } from "@/lib/gitlab/connections";
+import { PROJECT_PAGE, suggestedName, tokenPages, type GitLabConnection } from "@/lib/gitlab/connections";
 import { DEFAULT_GITLAB_URL } from "@/lib/webapp/types";
 import pageStyles from "./page.module.scss";
 import styles from "./WebApplicationForm.module.scss";
@@ -61,7 +61,7 @@ export function GitLabConnections({
           message:
             created.value.projects === 0
               ? `Added ${connectionName}, but the token can't see any projects yet. Add its user to the projects, or give it a wider scope.`
-              : `Added ${connectionName}. Its token can see ${created.value.projects === 50 ? "50 or more" : created.value.projects} project${created.value.projects === 1 ? "" : "s"}.`,
+              : `Added ${connectionName}. Its token can see ${created.value.projects >= PROJECT_PAGE ? `${PROJECT_PAGE} or more` : created.value.projects} project${created.value.projects === 1 ? "" : "s"}.`,
         });
         router.refresh();
       } else {

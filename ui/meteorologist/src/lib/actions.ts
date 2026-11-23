@@ -29,6 +29,16 @@ import {
 import { DNS_NAMESPACE } from "./dns/types";
 import { gitLabFor } from "./gitlab/api";
 import {
+  BUILDS_CONFIG_MAP,
+  buildSettingsFrom,
+  buildsConfigMap,
+  dockerfileProblem,
+  normaliseDockerfile,
+  withProjectDockerfile,
+  type BuildSettings,
+} from "./gitlab/builds";
+import { newKey } from "./gitlab/buildKeys";
+import {
   CONNECTION_KEY,
   CONNECTION_LABEL,
   URL_ANNOTATION,
@@ -39,7 +49,7 @@ import {
   type GitLabProject,
 } from "./gitlab/connections";
 import { getKube } from "./kube";
-import { describeError, isForbidden, type KubeClient } from "./kube/client";
+import { KubeError, describeError, isForbidden, type KubeClient } from "./kube/client";
 import {
   CREATED_BY,
   DEFAULT_SERVICE_ACCOUNT,
@@ -297,12 +307,113 @@ export async function findGitLabImages(
 ): Promise<ActionResult<{ images: string[]; suggested?: string }>> {
   return run(async () => {
     const { url, token } = await connectionWithToken(await getKube(), namespace, connection);
-    const repositories = await gitLabFor(url, token).listRepositories(project.id);
-    const suggested = imageFor(project, repositories);
+    const gitlab = gitLabFor(url, token);
+    const repositories = await gitlab.listRepositories(project.id);
+    // Before its first image, where one will go is the only suggestion,
+    // and listings don't carry it
+    const registryPrefix =
+      project.registryPrefix ?? (repositories.length !== 1 ? await gitlab.registryPrefix(project.id) : undefined);
+    const suggested = imageFor({ ...project, registryPrefix }, repositories);
     // Before the first image there are no repositories, only where one will go
     const images = repositories.length > 0 ? repositories : suggested ? [suggested] : [];
     return { images, suggested };
   });
+}
+
+/**
+ * Changes a namespace's GitLab build settings, making them, with a new
+ * key, when there are none yet. Tried again once if they changed in
+ * between reading and writing.
+ *
+ * @param namespace
+ * @param change
+ */
+async function changeBuildSettings(
+  namespace: string,
+  change: (settings: BuildSettings) => BuildSettings,
+): Promise<void> {
+  const kube = await getKube();
+  for (let attempt = 1; ; attempt += 1) {
+    const existing = await kube.getConfigMap(namespace, BUILDS_CONFIG_MAP);
+    const settings = buildSettingsFrom(existing) ?? { key: newKey(), projects: {} };
+    try {
+      await kube.saveConfigMap(buildsConfigMap(namespace, change(settings), CREATED_BY, existing));
+      return;
+    } catch (error) {
+      if (attempt >= 2 || !(error instanceof KubeError && error.status === 409)) {
+        throw error;
+      }
+    }
+  }
+}
+
+/**
+ * Sets where a namespace's projects keep their Dockerfile unless they
+ * say otherwise. Blank is the repository's top-level Dockerfile.
+ *
+ * @param namespace
+ * @param dockerfile
+ * @returns
+ */
+export async function saveGitLabBuildDefault(namespace: string, dockerfile: string): Promise<ActionResult> {
+  const problem = dockerfileProblem(dockerfile);
+  if (problem !== undefined) {
+    return { ok: false, error: problem };
+  }
+  const result = await run(async () => {
+    await changeBuildSettings(namespace, (settings) => ({
+      ...settings,
+      dockerfile: normaliseDockerfile(dockerfile) || undefined,
+    }));
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Gives a namespace's build URLs a new key. Every project including
+ * the old one fails to start a pipeline until its include is changed.
+ *
+ * @param namespace
+ * @returns
+ */
+export async function changeGitLabBuildKey(namespace: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    await changeBuildSettings(namespace, (settings) => ({ ...settings, key: newKey() }));
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Sets where one project keeps its Dockerfile. Blank goes back to the
+ * namespace's default.
+ *
+ * @param namespace
+ * @param project its path, as group/name
+ * @param dockerfile
+ * @returns
+ */
+export async function saveProjectDockerfile(
+  namespace: string,
+  project: string,
+  dockerfile: string,
+): Promise<ActionResult> {
+  const problem = dockerfileProblem(dockerfile);
+  if (problem !== undefined) {
+    return { ok: false, error: problem };
+  }
+  if (project.trim() === "") {
+    return { ok: false, error: "Choose the application's GitLab project first." };
+  }
+  const result = await run(async () => {
+    await changeBuildSettings(namespace, (settings) => withProjectDockerfile(settings, project.trim(), dockerfile));
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
 }
 
 /**

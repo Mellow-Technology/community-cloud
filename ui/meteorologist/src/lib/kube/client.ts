@@ -275,6 +275,23 @@ export interface KubeClient {
   listConfigMaps(namespace: string, labelSelector: string): Promise<ConfigMap[]>;
 
   /**
+   * One ConfigMap, or nothing when it isn't there.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getConfigMap(namespace: string, name: string): Promise<ConfigMap | undefined>;
+
+  /**
+   * Makes a ConfigMap, or replaces one when it carries the
+   * resourceVersion it was read at; a 409 when it changed since.
+   *
+   * @param configMap
+   */
+  saveConfigMap(configMap: ConfigMap): Promise<void>;
+
+  /**
    * The Deployments and StatefulSets in a namespace, as far as how
    * many of each are ready.
    *

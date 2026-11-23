@@ -6,13 +6,18 @@
 # API server's address and the CA to check it with, from the
 # kube-root-ca.crt ConfigMap every namespace has.
 #
-# Its own access is one thing: listing namespaces. Kubernetes can't say
+# Its own access is two things. Listing namespaces: Kubernetes can't say
 # which namespaces someone has access to, so people who can't list them
 # have their access tried against this list, as themselves, and only
 # see the ones that answer. See "Limited access" in
 # ui/meteorologist/README.md, which also says why this may not last.
+# And getting one ConfigMap by name, meteorologist-gitlab-builds, in any
+# namespace: GitLab fetches a project's CI build from Meteorologist
+# without signing in, so that's read with no one to read it as. It holds
+# Dockerfile paths and the key the build's URL carries, nothing more.
+# See "GitLab CI builds" in the README.
 # The usual token isn't mounted; the one for this is in its own
-# volume, and only that one read uses it.
+# volume, and only those reads use it.
 #
 # Its sign in is the "meteorologist" client in Authentik
 # (Meteorologist.blueprint.yaml), which the API server trusts once the
@@ -51,6 +56,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: meteorologist-namespace-lister
+subjects:
+  - kind: ServiceAccount
+    name: meteorologist
+    namespace: community-cloud
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: meteorologist-gitlab-builds-reader
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+rules:
+  # By name only: get, never list or watch, so no other ConfigMap
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["meteorologist-gitlab-builds"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: meteorologist-gitlab-builds-reader
+  labels:
+    app.kubernetes.io/name: meteorologist
+    app.kubernetes.io/managed-by: "community-cloud"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: meteorologist-gitlab-builds-reader
 subjects:
   - kind: ServiceAccount
     name: meteorologist

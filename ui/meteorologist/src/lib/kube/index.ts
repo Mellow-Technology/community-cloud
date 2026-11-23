@@ -14,7 +14,7 @@ import "server-only";
 
 import { SESSION_COOKIE, sessionIdentity, unsealSession } from "../auth/session";
 import { getFixtureNamespaces, getKubeMode, type KubeMode } from "../config";
-import { apiServerClientForDevKubeconfig, apiServerClientForToken } from "./apiServer";
+import { apiServerClientForDevKubeconfig, apiServerClientForOwnAccount, apiServerClientForToken } from "./apiServer";
 import type { KubeClient } from "./client";
 import { fixtureClient, limitedToNamespaces } from "./fixtures";
 
@@ -52,6 +52,25 @@ export async function getKube(): Promise<KubeClient> {
     redirect("/auth/login");
   }
   return apiServerClientForToken(session.idToken);
+}
+
+/**
+ * The client for a request no one is signed in for, as Meteorologist's
+ * own account. Only for what that account is allowed, which is next to
+ * nothing: see apiServerClientForOwnAccount. In the development modes
+ * it's the same client a page gets.
+ *
+ * @returns
+ */
+export async function getOwnKube(): Promise<KubeClient> {
+  const mode = getKubeMode();
+  if (mode === "fixtures") {
+    return fixtureClient();
+  }
+  if (mode === "kubeconfig") {
+    return apiServerClientForDevKubeconfig();
+  }
+  return apiServerClientForOwnAccount();
 }
 
 /**

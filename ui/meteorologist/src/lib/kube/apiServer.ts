@@ -405,6 +405,33 @@ function clientFor(config: KubeConfig): KubeClient {
         })),
       ),
 
+    getConfigMap: (namespace, name) =>
+      optional(async () => {
+        const configMap = await core.readNamespacedConfigMap({ namespace, name });
+        return {
+          metadata: {
+            name,
+            namespace,
+            resourceVersion: configMap.metadata?.resourceVersion,
+            labels: configMap.metadata?.labels,
+            annotations: configMap.metadata?.annotations,
+          },
+          data: configMap.data,
+        };
+      }),
+
+    saveConfigMap: (configMap) =>
+      attempt(async () => {
+        const namespace = configMap.metadata.namespace ?? "";
+        const { name, resourceVersion, labels, annotations } = configMap.metadata;
+        const body = { metadata: { name, namespace, resourceVersion, labels, annotations }, data: configMap.data };
+        if (configMap.metadata.resourceVersion === undefined) {
+          await core.createNamespacedConfigMap({ namespace, body });
+        } else {
+          await core.replaceNamespacedConfigMap({ namespace, name: configMap.metadata.name, body });
+        }
+      }),
+
     listWorkloads: (namespace) =>
       attempt(async () => {
         const [deployments, statefulSets] = await Promise.all([
@@ -591,6 +618,22 @@ function clientFor(config: KubeConfig): KubeClient {
  */
 export function apiServerClientForToken(idToken: string): KubeClient {
   return clientFor(configForToken(idToken));
+}
+
+/**
+ * The API, as Meteorologist's own account, for the reads no one is
+ * signed in for. RBAC lets it list namespaces and get the GitLab build
+ * settings ConfigMap, and nothing else.
+ *
+ * @returns
+ */
+export async function apiServerClientForOwnAccount(): Promise<KubeClient> {
+  const file = getNamespaceListerTokenFile();
+  if (file === undefined) {
+    throw new KubeError(403, "Meteorologist has no account of its own to read with.", "Forbidden");
+  }
+  // Read each time, since the kubelet replaces it before it expires
+  return clientFor(configForToken((await readFile(file, "utf8")).trim()));
 }
 
 /**

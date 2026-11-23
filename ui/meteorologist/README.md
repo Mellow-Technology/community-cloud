@@ -26,9 +26,13 @@ know about:
   capability means adding one entry there.
 
   A namespace can be created from here, and each one has a page in
-  three tabs: General (capabilities, Postgres, usage and settings), DNS
-  and Integration (GitLab connections). The tab shown is in the
-  address, as `?tab=dns` or `?tab=integration`. The settings are all
+  four tabs: General (capabilities, Postgres, usage against its quota
+  and settings), Applications (the applications list, for that
+  namespace alone), DNS and Forges (GitLab connections). The tab shown
+  is in the address, as `?tab=dns` or `?tab=forges`, except
+  Applications, which is its own route,
+  `/namespaces/<name>/applications`. Links to the old `?tab=integration`
+  still land on Forges. The settings are all
   made the way Kubernetes itself does them, so they hold for
   everything in the namespace, not just what Cirrus makes:
   - **Region**: the `placement.community-cloud.technology/region`
@@ -49,7 +53,7 @@ know about:
     pulls with them unless it names its own. Each one made here
     records its registry in the `community-cloud.technology/registry`
     annotation.
-  - **GitLab connections** (the Integration tab): GitLab
+  - **GitLab connections** (the Forges tab): GitLab
     tokens kept in the namespace, apart from any one application. Each
     is an Opaque Secret labelled
     `community-cloud.technology/gitlab-connection=true`, with its
@@ -58,6 +62,10 @@ know about:
     before it's saved, and is what the application form lists projects
     and their registry images with. Cirrus uses the same Secret for its
     webhook and pipeline checks.
+  - **GitLab CI builds** (also the Forges tab): a build Meteorologist
+    serves for a project's `.gitlab-ci.yml` to include, so a project
+    needs nothing more than a Dockerfile. See
+    [GitLab CI builds](#gitlab-ci-builds).
   - **DNS**: the `DnsProvider`s (Cirrus's cluster-scoped resource)
     publishing the namespace's hostnames. From here a namespace can
     join an existing provider, stop, or get a new one with its own
@@ -158,8 +166,9 @@ To change how the API is reached, you only touch those files.
 5. `src/proxy.ts` refreshes the ID token shortly before it expires.
 
 Everything is done as the person. Meteorologist's own account can list
-namespaces and nothing else (see [Limited access](#limited-access)); the
-pod otherwise only provides the API server's address and CA.
+namespaces (see [Limited access](#limited-access)) and get one ConfigMap
+by name (see [GitLab CI builds](#gitlab-ci-builds)), and nothing else;
+the pod otherwise only provides the API server's address and CA.
 
 **The API server only accepts tokens issued to clients it knows
 about.** Installed by the installer's `meteorologist` package, its
@@ -194,8 +203,8 @@ whether someone may do something in a namespace, but not which
 namespaces they have access to. So Meteorologist's own account lists
 every namespace's name, using a token in its own volume, and each name
 is tried as the person. They only see the ones the API server gives
-them. It's the one read not made as the person, and the only access the
-pod has.
+them. It's one of two reads not made as the person; the other is the
+GitLab CI build, below.
 
 That was chosen over binding `list namespaces` to
 `system:authenticated`, or to each group, either of which would show
@@ -204,6 +213,35 @@ costs are that a bug here could expose namespace names and labels, and
 that a page load makes one request per namespace in the cluster for
 these people. It's expected to be replaced with something more
 sophisticated; see CC-41.
+
+### GitLab CI builds
+
+`src/lib/gitlab/builds.ts`. A project's `.gitlab-ci.yml` includes one
+remote file, which Meteorologist serves at
+`/ci/gitlab/<namespace>/<key>/<group>/<project>.yml`. It builds with
+Docker in Docker on every push to the default branch, tags the image
+with `$CI_COMMIT_SHORT_SHA` (one of the tags Cirrus looks for) and
+`latest`, and pushes both to the project's registry. The only thing that
+differs between projects is where the Dockerfile is: the namespace's
+default is set on the Forges tab, and a project with its own path sets
+it on its application's page, which also has the include line to copy.
+The path ends up in the build as the `DOCKERFILE` variable, so a CI/CD
+variable on the project overrides it too.
+
+The settings are the ConfigMap `meteorologist-gitlab-builds` in the
+namespace: `key`, `dockerfile` (the default), and `projects`, a JSON
+object of Dockerfile paths by project path. People change it as
+themselves, so it takes the `edit` role.
+
+GitLab fetches the file signed in as no one, so `src/proxy.ts` lets
+`/ci/gitlab/` through, and it's read with Meteorologist's own account,
+which may get a ConfigMap of that name in any namespace and no other
+(`k8s/apps/meteorologist/Meteorologist.yaml`). The key stands in for
+signing in: a wrong one, or any other way of not finding the file, is
+the same 404. It's in the path rather than a query parameter because
+GitLab only includes a remote file whose last path segment, query and
+all, ends in `.yml` or `.yaml`. Changing the key (Forges tab) breaks
+every project's include until its line is replaced.
 
 ### Live status
 
