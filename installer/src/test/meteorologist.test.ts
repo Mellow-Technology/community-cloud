@@ -145,15 +145,30 @@ describe("installing Meteorologist", () => {
     assert.match(pod.containers[0].image, /^ghcr\.io\/mellow-technology\/meteorologist:\d+\.\d+\.\d+$/);
   });
 
-  it("can list namespaces with its own account, and do nothing else", async () => {
+  it("can list namespaces and get its GitLab build settings with its own account, and do nothing else", async () => {
     const documents = await render("embed://apps/meteorologist/Meteorologist.yaml");
     const roles = documents.filter((each) => each.kind === "ClusterRole" || each.kind === "Role");
     const bindings = documents.filter((each) => each.kind === "ClusterRoleBinding" || each.kind === "RoleBinding");
 
-    assert.equal(roles.length, 1);
-    assert.deepEqual(roles[0].rules, [{ apiGroups: [""], resources: ["namespaces"], verbs: ["list"] }]);
-    assert.equal(bindings.length, 1);
-    assert.equal(bindings[0].roleRef.name, roles[0].metadata.name);
+    assert.deepEqual(
+      roles.flatMap((role: any) => role.rules),
+      [
+        { apiGroups: [""], resources: ["namespaces"], verbs: ["list"] },
+        {
+          apiGroups: [""],
+          resources: ["configmaps"],
+          resourceNames: ["meteorologist-gitlab-builds"],
+          verbs: ["get"],
+        },
+      ],
+    );
+    assert.deepEqual(
+      bindings.map((binding: any) => [binding.roleRef.name, binding.subjects]),
+      roles.map((role: any) => [
+        role.metadata.name,
+        [{ kind: "ServiceAccount", name: "meteorologist", namespace: "community-cloud" }],
+      ]),
+    );
   });
 
   it("gives the lister's token a short life, in the file Meteorologist reads", async () => {

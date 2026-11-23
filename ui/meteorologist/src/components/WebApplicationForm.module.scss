@@ -6,6 +6,11 @@
   max-width: 860px;
 }
 
+// A section as wide as the form, outside it
+.narrow {
+  max-width: 860px;
+}
+
 .fields {
   display: grid;
   gap: var(--gm-space-4);

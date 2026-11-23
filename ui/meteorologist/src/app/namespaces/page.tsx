@@ -111,7 +111,11 @@ export default async function NamespacesPage() {
                   {
                     value: count,
                     display:
-                      count > 0 ? <Link href={`/apps?namespace=${encodeURIComponent(name)}`}>{count}</Link> : "0",
+                      count > 0 ? (
+                        <Link href={`/namespaces/${encodeURIComponent(name)}/applications`}>{count}</Link>
+                      ) : (
+                        "0"
+                      ),
                   },
                 ];
               })}

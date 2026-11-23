@@ -17,10 +17,13 @@ import { ComboboxField, type ComboboxOption } from "gui-mellow/Combobox";
 import { SelectField } from "gui-mellow/Field";
 
 import { findGitLabImages, findGitLabProjects } from "@/lib/actions";
-import type { GitLabConnection, GitLabProject } from "@/lib/gitlab/connections";
+import { PROJECT_PAGE, type GitLabConnection, type GitLabProject } from "@/lib/gitlab/connections";
+import { projectsFor } from "@/lib/gitlab/projects";
+import { matchProjects, mergeProjects } from "@/lib/gitlab/search";
 import styles from "./WebApplicationForm.module.scss";
 
-// How long typing has to pause before GitLab is searched
+// How long typing has to pause before GitLab is searched, for a
+// listing too long to have every project in it
 const SEARCH_DELAY_MS = 250;
 
 export interface GitLabChoice {
@@ -65,50 +68,73 @@ export function GitLabImagePicker({
   onChoose: (choice: GitLabChoice) => void;
   onImage: (image: string) => void;
 }) {
-  const [projects, setProjects] = useState<GitLabProject[]>();
+  // Every project the connection can see, or GitLab's first page of them
+  const [all, setAll] = useState<GitLabProject[]>();
+  // What GitLab found for the newest search, when the listing may be
+  // missing a match
+  const [searched, setSearched] = useState<{ text: string; projects: GitLabProject[] }>();
+  const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [problem, setProblem] = useState<string>();
   const [searching, setSearching] = useState(false);
-  // What the shown projects were searched for
-  const [query, setQuery] = useState("");
   const [looking, startLooking] = useTransition();
   const chosen = connections.find((each) => each.name === connection);
   // Only the newest search's answer is shown, however the answers arrive
   const latest = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const truncated = all !== undefined && all.length >= PROJECT_PAGE;
 
-  const find = async (text: string) => {
+  // The listing the form asked for when it opened, or asked for now.
+  // The form keys this by namespace and connection, so a change of
+  // either starts afresh rather than showing the last one's projects.
+  useEffect(() => {
+    if (namespace === "" || connection === "") {
+      return;
+    }
+    let current = true;
+    void projectsFor(namespace, connection).then((found) => {
+      if (!current) return;
+      setProblem(found.ok ? undefined : found.error);
+      setAll(found.ok ? found.value : []);
+    });
+    return () => {
+      current = false;
+      clearTimeout(timer.current);
+    };
+  }, [namespace, connection]);
+
+  const find = async (query: string) => {
     const asked = (latest.current += 1);
     setSearching(true);
-    const found = await findGitLabProjects(namespace, connection, text);
+    const found = await findGitLabProjects(namespace, connection, query);
     if (asked !== latest.current) {
       return;
     }
     setSearching(false);
-    setQuery(text);
-    setProblem(found.ok ? undefined : found.error);
-    setProjects(found.ok ? found.value : undefined);
-  };
-
-  // Typing searches GitLab once it pauses, rather than on every key
-  const search = (text: string) => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => void find(text), SEARCH_DELAY_MS);
-  };
-
-  // The newest projects, as soon as there's a connection to ask with.
-  // The form keys this by namespace and connection, so a change of
-  // either starts afresh rather than showing the last one's projects.
-  useEffect(() => {
-    if (namespace !== "" && connection !== "") {
-      search("");
+    if (found.ok) {
+      setSearched({ text: query, projects: found.value });
+    } else {
+      setProblem(found.error);
     }
-    return () => clearTimeout(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namespace, connection]);
+  };
+
+  // Typing filters the listing straight away. GitLab is only asked,
+  // once typing pauses, when the listing was cut short.
+  const search = (next: string) => {
+    setText(next);
+    clearTimeout(timer.current);
+    latest.current += 1;
+    setSearching(false);
+    if (truncated && next.trim() !== "") {
+      timer.current = setTimeout(() => void find(next), SEARCH_DELAY_MS);
+    }
+  };
+
+  const listed =
+    all === undefined ? [] : mergeProjects(matchProjects(all, text), searched?.text === text ? searched.projects : []);
 
   const choose = (path: string) => {
-    const picked = projects?.find((each) => each.path === path);
+    const picked = listed.find((each) => each.path === path);
     if (picked === undefined || chosen === undefined) {
       return;
     }
@@ -127,9 +153,8 @@ export function GitLabImagePicker({
   };
 
   // The chosen project stays listed, unless a search has left it out
-  const listed = projects ?? [];
   const options: ComboboxOption[] = [
-    ...(project !== "" && query === "" && !listed.some((each) => each.path === project)
+    ...(project !== "" && text.trim() === "" && !listed.some((each) => each.path === project)
       ? [{ value: project, label: project }]
       : []),
     ...listed.map((each) => ({ value: each.path, label: each.path, description: each.name })),
@@ -146,7 +171,7 @@ export function GitLabImagePicker({
           <>
             A token kept in {namespace || "the namespace"}.{" "}
             {namespace !== "" && (
-              <a href={`/namespaces/${encodeURIComponent(namespace)}?tab=integration`}>Manage connections</a>
+              <a href={`/namespaces/${encodeURIComponent(namespace)}?tab=forges`}>Manage connections</a>
             )}
           </>
         }
@@ -173,7 +198,7 @@ export function GitLabImagePicker({
             value={project}
             options={options}
             filter={false}
-            loading={searching}
+            loading={all === undefined || searching}
             onInputChange={search}
             onChange={choose}
             emptyMessage="The token can't see a project matching that. Is it a member of the project?"

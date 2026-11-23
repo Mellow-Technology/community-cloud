@@ -11,7 +11,7 @@
 import "server-only";
 
 import { getKubeMode } from "../config";
-import type { GitLabProject } from "./connections";
+import { PROJECT_PAGE, type GitLabProject } from "./connections";
 
 /**
  * What Meteorologist asks of a GitLab.
@@ -33,14 +33,20 @@ export interface GitLabApi {
    * @returns
    */
   listRepositories(projectId: number): Promise<string[]>;
+
+  /**
+   * Where a project's images go, which the short form a listing uses
+   * leaves out.
+   *
+   * @param projectId
+   * @returns
+   */
+  registryPrefix(projectId: number): Promise<string | undefined>;
 }
 
 // Long enough for a slow self-hosted GitLab, short enough that a form
 // waiting on it doesn't look hung
 const TIMEOUT_MS = 10_000;
-
-// Enough to find a project by scrolling; searching finds the rest
-const PER_PAGE = 50;
 
 /**
  * A GitLab failure, as a sentence.
@@ -72,7 +78,6 @@ interface RawProject {
   name_with_namespace: string;
   web_url: string;
   default_branch?: string | null;
-  container_registry_image_prefix?: string | null;
 }
 
 /**
@@ -105,8 +110,11 @@ function realGitLab(url: string, token: string): GitLabApi {
       const query = new URLSearchParams({
         membership: "true",
         order_by: "last_activity_at",
-        per_page: String(PER_PAGE),
+        per_page: String(PROJECT_PAGE),
         archived: "false",
+        // GitLab's short form: what's here is all the picker shows, and
+        // it takes about half as long as the full one
+        simple: "true",
       });
       if (search !== undefined && search.trim() !== "") {
         query.set("search", search.trim());
@@ -119,9 +127,12 @@ function realGitLab(url: string, token: string): GitLabApi {
         name: project.name_with_namespace,
         webUrl: project.web_url,
         defaultBranch: project.default_branch ?? undefined,
-        registryPrefix: project.container_registry_image_prefix ?? undefined,
       }));
     },
+
+    registryPrefix: async (projectId) =>
+      (await get<{ container_registry_image_prefix?: string | null }>(`/projects/${projectId}`))
+        .container_registry_image_prefix ?? undefined,
 
     listRepositories: async (projectId) =>
       (await get<Array<{ location: string }>>(`/projects/${projectId}/registry/repositories?per_page=100`)).map(
@@ -159,16 +170,18 @@ const FIXTURE_PROJECTS: GitLabProject[] = [
 ];
 
 const fixtureGitLab: GitLabApi = {
+  // Without the registry prefix, as GitLab's short form leaves it out
   listProjects: async (search) =>
     FIXTURE_PROJECTS.filter(
       (project) => search === undefined || project.path.toLowerCase().includes(search.trim().toLowerCase()),
-    ),
+    ).map((project) => ({ ...project, registryPrefix: undefined })),
   listRepositories: async (projectId) =>
     projectId === 103
       ? ["registry.gitlab.com/acme/platform/api/server", "registry.gitlab.com/acme/platform/api/worker"]
       : FIXTURE_PROJECTS.filter((project) => project.id === projectId && project.id !== 102).map(
           (project) => project.registryPrefix ?? "",
         ),
+  registryPrefix: async (projectId) => FIXTURE_PROJECTS.find((project) => project.id === projectId)?.registryPrefix,
 };
 
 /**

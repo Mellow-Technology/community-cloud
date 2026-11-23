@@ -770,6 +770,14 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
       within("configmaps", namespace);
       return client.listConfigMaps(namespace, labelSelector);
     },
+    getConfigMap: async (namespace, name) => {
+      within("configmaps", namespace);
+      return client.getConfigMap(namespace, name);
+    },
+    saveConfigMap: async (configMap) => {
+      within("configmaps", configMap.metadata.namespace);
+      return client.saveConfigMap(configMap);
+    },
     listWorkloads: async (namespace) => {
       within("deployments", namespace);
       return client.listWorkloads(namespace);
@@ -1061,6 +1069,33 @@ export function fixtureClient(): KubeClient {
     listPostgresClusters: async (namespace) => copy(inNamespace(store().postgres, namespace)),
 
     listCertificates: async (namespace) => copy(inNamespace(store().certificates, namespace)),
+
+    getConfigMap: async (namespace, name) => copy(store().configMaps.get(key(namespace, name))),
+
+    saveConfigMap: async (configMap) => {
+      const namespace = configMap.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      const id = key(namespace, configMap.metadata.name);
+      const existing = store().configMaps.get(id);
+      if (
+        configMap.metadata.resourceVersion === undefined
+          ? existing !== undefined
+          : existing?.metadata.resourceVersion !== configMap.metadata.resourceVersion
+      ) {
+        throw new KubeError(
+          409,
+          existing === undefined
+            ? `configmaps "${configMap.metadata.name}" not found`
+            : `Operation cannot be fulfilled on configmaps "${configMap.metadata.name}": the object has been modified`,
+          "Conflict",
+        );
+      }
+      store().version += 1;
+      store().configMaps.set(
+        id,
+        copy({ ...configMap, metadata: { ...configMap.metadata, resourceVersion: String(store().version) } }),
+      );
+    },
 
     listConfigMaps: async (namespace, labelSelector) =>
       copy(

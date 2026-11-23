@@ -35,13 +35,19 @@ export interface GitLabConnection {
 /**
  * A project the token can see.
  */
+// The most projects one listing returns, which is GitLab's largest
+// page. A listing this long may have left some out, so searching asks
+// GitLab rather than only looking through what's already here.
+export const PROJECT_PAGE = 100;
+
 export interface GitLabProject {
   id: number;
   path: string;
   name: string;
   webUrl: string;
   defaultBranch?: string;
-  // Where its images go, e.g. registry.gitlab.com/group/app
+  // Where its images go, e.g. registry.gitlab.com/group/app. Not in a
+  // listing, which is GitLab's short form; looked up when it's needed.
   registryPrefix?: string;
 }
 
