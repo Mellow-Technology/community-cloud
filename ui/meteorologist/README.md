@@ -5,7 +5,12 @@ to Community Cloud, which a general Kubernetes UI like Headlamp doesn't
 know about:
 
 - **Overview**: how every WebApplication is doing, worked out from the
-  conditions Cirrus sets, and which ones need looking at. This, the
+  conditions Cirrus sets, and which ones need looking at. Health is the
+  application's own: whether Cirrus rolled it out and how its pods are
+  doing, from Cirrus's `Healthy` condition. Whether Cirrus can hear
+  about new releases (the GitLab webhook, and checking for the newest
+  pipeline) is shown apart, as its forge status, so a running
+  application with a broken webhook isn't called degraded. This, the
   applications list and each application's page update by themselves
   (see [Live status](#live-status)).
 - **Namespaces**: which Community Cloud capabilities each namespace has,
@@ -216,7 +221,8 @@ by name:
 
 - `METEOROLOGIST_KUBE_MODE=fixtures` uses a pretend cluster held in
   memory. It has namespaces and applications in every state the pages
-  draw (healthy, migrating, blocked, not yet seen by Cirrus). Changes
+  draw (healthy, migrating, blocked, crash looping with no webhook,
+  not yet seen by Cirrus). Changes
   last until the server restarts. Nothing reaches a real cluster.
   `METEOROLOGIST_FIXTURE_NAMESPACES=team-shop,sandbox` shows the pages
   as someone with the `edit` role in only those namespaces.

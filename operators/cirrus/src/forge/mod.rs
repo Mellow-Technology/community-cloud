@@ -14,7 +14,7 @@ use kube::{Api, Client};
 
 use crate::crd::{GitLabSource, Release, WebApplication};
 use crate::error::{Error, Result};
-use gitlab::GitLab;
+use gitlab::{GitLab, ImageTag};
 
 /// A GitLab client with the token the application's spec points at.
 pub async fn gitlab_client(client: &Client, app: &WebApplication, source: &GitLabSource) -> Result<GitLab> {
@@ -38,15 +38,38 @@ pub async fn read_secret_key(client: &Client, namespace: &str, name: &str, key: 
         .map_err(|_| Error::Config(format!("\"{key}\" in {namespace}/{name} isn't text")))
 }
 
+/// What a pipeline left to roll out.
+pub enum Lookup {
+    Release(Release),
+
+    /// The pipeline succeeded but its image isn't in the registry
+    /// under the tag `imageTag` makes, with why, and what the tag
+    /// might be instead. Not a failure to retry: asking again won't
+    /// make the image appear.
+    NoImage(String),
+}
+
 /// The release a pipeline on `sha` produced.
-pub async fn release_for(gitlab: &GitLab, app: &WebApplication, source: &GitLabSource, sha: &str) -> Result<Release> {
+pub async fn release_for(gitlab: &GitLab, app: &WebApplication, source: &GitLabSource, sha: &str) -> Result<Lookup> {
     let tag = gitlab::render_tag(&source.image_tag, sha, &source.git_ref);
     let repository = app.spec.image.repository.clone();
-    let digest = gitlab.resolve_digest(&source.project, &repository, &tag).await?;
-    Ok(Release {
+    let digest = match gitlab.image_tag(&source.project, &repository, &tag).await? {
+        ImageTag::Elsewhere => None,
+        ImageTag::Found(digest) => digest,
+        ImageTag::Missing(tags) => {
+            return Ok(Lookup::NoImage(gitlab::missing_tag_message(
+                &repository,
+                &source.image_tag,
+                sha,
+                &source.git_ref,
+                &tags,
+            )));
+        }
+    };
+    Ok(Lookup::Release(Release {
         commit: sha.to_string(),
         tag,
         digest,
         repository,
-    })
+    }))
 }

@@ -2,32 +2,41 @@
  * @file
  * How an application is doing, in one word, from what Cirrus says.
  *
- * Cirrus reports four conditions rather than one state, which is right
+ * Cirrus reports several conditions rather than one state, which is right
  * for an operator and too much for a list of applications. This boils
  * them down to the handful of states a person scanning the list cares
  * about, and keeps the message that explains the state, so the detail
  * is one click away rather than lost.
  *
+ * It's about the application itself: whether it's running what it
+ * should, and whether its pods are well. `Ready` only says Cirrus
+ * finished rolling out, so the pods come from `Healthy`, which Cirrus
+ * keeps from watching them (operators/cirrus/src/reconcile/pods.rs). Whether Cirrus can hear about new releases — the forge's
+ * webhook, and checking GitLab for the newest pipeline — is apart, in
+ * ./forge.ts. An application running fine with a broken webhook is
+ * healthy, and its forge status says what's wrong with the webhook.
+ *
  * The reasons it looks at are the ones Cirrus sets, in
- * operators/cirrus/src/reconcile/mod.rs.
+ * operators/cirrus/src/reconcile/mod.rs and pods.rs. A Cirrus from
+ * before `Healthy` existed doesn't set it, and then `Ready` alone
+ * decides, as it used to.
  */
 import {
+  CONDITION_HEALTHY,
   CONDITION_PROVISIONED,
   CONDITION_READY,
-  CONDITION_RELEASE_CHECKED,
   CONDITION_ROLLED_OUT,
-  CONDITION_WEBHOOK,
   type WebApplication,
 } from "./types";
 import type { Condition } from "../kube/types";
 
 /**
  * - healthy: running the image it should, with everything it asked for
- * - degraded: running, but something around it isn't right, such as
- *   the forge's webhook, or GitLab not answering when asked for the
- *   newest release
+ * - degraded: serving, but a pod is stuck or has restarted recently.
+ *   For a cc-office service, short of what it asked for (../office.ts)
  * - progressing: on its way, such as mid-rollout or migrating
- * - failing: stuck until someone does something
+ * - failing: stuck until someone does something, such as nothing
+ *   serving because every pod is crash looping
  * - pending: Cirrus hasn't looked at this version of it yet
  * - deleting: asked to be deleted, and waiting on Cirrus to clean up
  *   what it made outside the namespace
@@ -59,6 +68,10 @@ const PRESENTATION: Record<HealthState, { tone: HealthTone; label: string }> = {
 
 // Reasons that mean waiting won't help
 const FAILING_REASONS = new Set(["Blocked", "MigrationFailed"]);
+
+// Healthy's reasons for pods that are well enough to serve, and not
+const PODS_DEGRADED = "PodsDegraded";
+const PODS_FAILING = "PodsFailing";
 
 /**
  * One of an object's conditions, by type.
@@ -105,28 +118,31 @@ export function appHealth(app: WebApplication): Health {
   }
 
   const ready = findCondition(conditions, CONDITION_READY);
-  const webhook = findCondition(conditions, CONDITION_WEBHOOK);
-  const checked = findCondition(conditions, CONDITION_RELEASE_CHECKED);
+  const pods = findCondition(conditions, CONDITION_HEALTHY);
+  const steps = [CONDITION_PROVISIONED, CONDITION_ROLLED_OUT].map((type) => findCondition(conditions, type));
 
-  if (ready?.status === "True") {
-    if (checked?.status === "False") {
-      return health("degraded", checked.message || "Cirrus couldn't ask GitLab for the newest release.");
-    }
-    return webhook?.status === "False"
-      ? health("degraded", webhook.message || "The forge's webhook isn't registered, so new releases won't arrive.")
-      : health("healthy");
+  // What Cirrus is stuck on that waiting won't fix
+  const blocked = steps.find((step) => step?.status === "False" && FAILING_REASONS.has(step.reason ?? ""));
+  if (blocked) {
+    return health("failing", blocked.message || blocked.reason);
   }
 
-  // What's holding it up, in the order Cirrus works through them
-  for (const type of [CONDITION_PROVISIONED, CONDITION_ROLLED_OUT]) {
-    const condition = findCondition(conditions, type);
-    if (condition?.status === "False") {
-      const message = condition.message || condition.reason;
-      return FAILING_REASONS.has(condition.reason ?? "") ? health("failing", message) : health("progressing", message);
-    }
+  // The pods, whatever the rollout is doing: a new image crash looping
+  // is worth saying while the old pods still serve
+  if (pods?.status === "False" && pods.reason === PODS_FAILING) {
+    return health("failing", pods.message || "No pod is serving.");
+  }
+  if (pods?.status === "False" && pods.reason === PODS_DEGRADED) {
+    return health("degraded", pods.message || "A pod isn't well.");
   }
 
-  return health("progressing", ready?.message || undefined);
+  if (ready?.status === "True" && pods?.status !== "False") {
+    return health("healthy");
+  }
+
+  // What's still on its way, in the order Cirrus works through it
+  const waiting = [...steps, pods].find((condition) => condition?.status === "False");
+  return health("progressing", waiting?.message || waiting?.reason || ready?.message || undefined);
 }
 
 /**

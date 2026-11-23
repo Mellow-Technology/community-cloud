@@ -14,6 +14,8 @@ pub const PROVISIONED: &str = "Provisioned";
 pub const ROLLED_OUT: &str = "RolledOut";
 pub const WEBHOOK: &str = "WebhookRegistered";
 pub const RELEASE_CHECKED: &str = "ReleaseChecked";
+// How its pods are doing, after the rollout as well as during it
+pub const HEALTHY: &str = "Healthy";
 
 /// Set a condition in `conditions`, keeping its transition time when
 /// its status hasn't changed.

@@ -67,11 +67,38 @@ server's pruning would.
 
 `kubectl get webapp` shows the deployed image, readiness and address.
 `kubectl describe webapp shop` shows the conditions — `Provisioned`,
-`RolledOut`, `WebhookRegistered`, `ReleaseChecked` and `Ready` — and
-what each is waiting on. `ReleaseChecked` is false when Cirrus couldn't
-ask GitLab for the newest release; it tries again within a couple of
-minutes, and until then runs the last release it found, or
-`spec.image.tag` if it never found one.
+`RolledOut`, `Healthy`, `WebhookRegistered`, `ReleaseChecked` and
+`Ready` — and what each is waiting on.
+
+`Ready` means Cirrus has done its part: everything is provisioned and
+the newest image rolled out. `Healthy` is how the pods are doing
+since then, read from the pods themselves, which Cirrus watches:
+
+| Reason | When |
+|---|---|
+| `PodsReady` | every pod asked for is ready |
+| `PodsStarting` | fewer are ready than asked for, with nothing wrong yet |
+| `PodsDegraded` | something is serving, but a pod is stuck, or a container restarted in the last 15 minutes |
+| `PodsFailing` | nothing is serving, and a pod is stuck |
+| `NotDeployed` | there's no Deployment yet |
+
+A pod is stuck when a container is in `CrashLoopBackOff`,
+`ImagePullBackOff` or another state that waiting won't fix, when it
+can't be scheduled, or when it's been running for five minutes
+without passing its readiness check. The message names the pods and
+why, such as the last exit of a crash looping container. `ReleaseChecked` is false when Cirrus couldn't
+ask GitLab for the newest release (reason `CheckFailed`); it tries
+again within a couple of minutes, and until then runs the last release
+it found, or `spec.image.tag` if it never found one. When GitLab
+refuses, the message says whether the token's scope or its user's role
+is what's missing.
+
+It's also false, with reason `NoImage`, when the newest successful
+pipeline published no image under the tag `imageTag` makes. That
+isn't retried, since asking again won't change it. Cirrus looks back
+through the last few pipelines for one that did publish an image and
+rolls that out, and the message lists the tags the registry does have,
+with the `imageTag` that matches them when one of the usual ones does.
 
 ### Its port
 
@@ -167,7 +194,9 @@ runs `spec.image`.
 
 The GitLab token in `tokenSecret` needs the `api` scope and the
 Maintainer role on the project, so Cirrus can manage the project's
-webhook and read its registry.
+webhook and read its registry. GitLab checks both: a token with the
+right scope still can't save a webhook if its user, or the bot behind
+a group or project token, is only a Developer.
 
 ## Deleting
 

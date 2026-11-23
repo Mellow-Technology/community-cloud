@@ -29,7 +29,7 @@ use serde_json::json;
 use subtle::ConstantTimeEq;
 
 use crate::crd::{GitLabSource, WebApplication};
-use crate::forge;
+use crate::forge::{self, Lookup};
 use crate::reconcile::Context;
 use crate::reconcile::source::{WEBHOOK_TOKEN_KEY, webhook_secret_name};
 
@@ -119,7 +119,14 @@ async fn gitlab(
         forge::release_for(&gitlab, &app, source, &sha).await
     };
     let release = match release.await {
-        Ok(release) => release,
+        Ok(Lookup::Release(release)) => release,
+        // Answered as handled: GitLab sending it again won't put the
+        // image in the registry, and GitLab disables hooks that keep
+        // failing. The poll reports it in ReleaseChecked.
+        Ok(Lookup::NoImage(why)) => {
+            tracing::warn!(%namespace, %name, %why, "the pipeline published no image to roll out");
+            return (StatusCode::OK, format!("nothing to roll out: {why}"));
+        }
         Err(error) => {
             tracing::warn!(%namespace, %name, %error, "couldn't work out the pipeline's image");
             return (StatusCode::BAD_GATEWAY, error.to_string());

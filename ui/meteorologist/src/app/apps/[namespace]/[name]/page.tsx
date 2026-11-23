@@ -28,6 +28,7 @@ import { describeError, isNotFound, settle } from "@/lib/kube/client";
 import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
 import { certificateStatus, findCertificate } from "@/lib/webapp/certificate";
 import { deletionSummary } from "@/lib/webapp/deletion";
+import { forgeStatus } from "@/lib/webapp/forge";
 import { appHealth } from "@/lib/webapp/health";
 import { portLabel, requestedServices, specImage } from "@/lib/webapp/present";
 import { GROUP, PLURAL } from "@/lib/webapp/types";
@@ -90,6 +91,7 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
 
   const app = found.value;
   const health = appHealth(app);
+  const forge = forgeStatus(app);
   const certificate = certificates.ok ? certificateStatus(app, findCertificate(app, certificates.value)) : undefined;
   const status = app.status;
   const gitlab = app.spec.source?.gitlab;
@@ -139,6 +141,15 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
               },
               { label: "Running", value: status?.deployedImage && <code>{status.deployedImage}</code> },
               { label: "Spec image", value: <code>{specImage(app)}</code> },
+              {
+                label: "Forge status",
+                value: forge && (
+                  <>
+                    <HealthBadge health={forge} />
+                    {forge.message && <span className={styles.detail}>{forge.message}</span>}
+                  </>
+                ),
+              },
               {
                 label: "Latest release",
                 value: status?.release && (

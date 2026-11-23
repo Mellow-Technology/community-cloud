@@ -13,9 +13,16 @@
 //! one never checked is due at once, so its first rollout is the
 //! newest release rather than `spec.image.tag`. Only a check that
 //! worked counts as checked. One that failed — a bad token, GitLab
-//! down, a pipeline whose image tag isn't in the registry — is tried
-//! again on the next pass rather than ten minutes later, since until
-//! it works the application may be running a stale tag.
+//! down — is tried again on the next pass rather than ten minutes
+//! later, since until it works the application may be running a
+//! stale tag.
+//!
+//! A pipeline that succeeded without publishing an image under the
+//! tag `imageTag` makes is different: GitLab answered, and asking
+//! again won't change what it says. It counts as checked, is reported
+//! in `ReleaseChecked`, and doesn't stand in the way. The poll looks
+//! past it to the newest pipeline that did publish one, so a pipeline
+//! that only ran tests can't hold up the one before it.
 //!
 //! Each webhook is registered with a token of its own, kept in
 //! `<app>-cirrus-webhook`, so a request for one application can't be
@@ -33,11 +40,17 @@ use super::postgres::{generate_password, secret_text};
 use super::{Context, owner_reference};
 use crate::crd::{Release, WebApplication, WebhookStatus, labels};
 use crate::error::Result;
-use crate::forge;
+use crate::forge::{self, Lookup};
 
 // Slow enough to be no burden on GitLab across many applications;
 // quick enough that a lost webhook costs minutes, not a day
 pub const POLL_INTERVAL_MINUTES: i64 = 10;
+
+// How many successful pipelines the poll looks through for one with an
+// image. Each costs a registry lookup, and more than a few in a row
+// without an image means imageTag is wrong rather than that some
+// pipelines don't build.
+pub const PIPELINES_LOOKED_AT: u8 = 5;
 
 pub const WEBHOOK_TOKEN_KEY: &str = "token";
 
@@ -53,6 +66,8 @@ pub struct SourceResult {
     pub release: Option<Release>,
     // Set only when the forge was asked and answered
     pub checked_at: Option<String>,
+    // A newer pipeline the check passed over, for having no image
+    pub no_image: Option<String>,
     // Why the forge couldn't be asked, or didn't answer
     pub problem: Option<String>,
 }
@@ -136,18 +151,30 @@ pub async fn sync(ctx: &Context, app: &WebApplication) -> SourceResult {
     if poll_due(status.last_checked.as_deref(), now) {
         let known = status.release.as_ref().map(|release| release.commit.clone());
         let found = async {
-            match gitlab
-                .latest_successful_pipeline(&source.project, &source.git_ref)
-                .await?
-            {
-                Some(pipeline) if Some(&pipeline.sha) != known.as_ref() => {
-                    forge::release_for(&gitlab, app, source, &pipeline.sha).await.map(Some)
+            let pipelines = gitlab
+                .successful_pipelines(&source.project, &source.git_ref, PIPELINES_LOOKED_AT)
+                .await?;
+            // Newest first, stopping at what's already running
+            let mut passed_over = None;
+            for pipeline in pipelines {
+                if Some(&pipeline.sha) == known.as_ref() {
+                    break;
                 }
-                _ => Ok(None),
+                match forge::release_for(&gitlab, app, source, &pipeline.sha).await? {
+                    Lookup::Release(release) => return Ok((Some(release), passed_over)),
+                    Lookup::NoImage(why) => {
+                        passed_over.get_or_insert(why);
+                    }
+                }
             }
+            Ok::<_, crate::error::Error>((None, passed_over))
         };
         match found.await {
-            Ok(release) => {
+            Ok((release, passed_over)) => {
+                result.no_image = passed_over.map(|why| match &release {
+                    Some(release) => format!("{why}. Rolling out {} instead, the newest that has one", release.commit),
+                    None => why,
+                });
                 result.release = release;
                 result.checked_at = Some(now.to_string());
             }
