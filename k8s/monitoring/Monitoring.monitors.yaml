@@ -21,6 +21,10 @@ spec:
   selector:
     matchLabels:
       k8s-app: cilium
+  # Cilium's dashboards pick out its series by k8s_app="cilium", which
+  # its own ServiceMonitor copies from the Service; here it comes from
+  # the pod
+  podTargetLabels: [k8s-app]
   podMetricsEndpoints:
     - port: prometheus
       relabelings:
@@ -40,6 +44,8 @@ spec:
   selector:
     matchLabels:
       io.cilium/app: operator
+  # The operator's dashboard picks out its series by io_cilium_app="operator"
+  podTargetLabels: [io.cilium/app]
   podMetricsEndpoints:
     - port: prometheus
 ---
