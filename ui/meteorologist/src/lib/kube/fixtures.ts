@@ -319,6 +319,10 @@ function seed(): FixtureStore {
       spec: {
         image: { repository: "ghcr.io/acme/files", tag: "latest" },
         bucket: {},
+        volumes: [
+          { name: "uploads", mountPath: "/srv/files/uploads", size: "200Gi", type: "hdd" },
+          { name: "thumbs", mountPath: "/srv/files/thumbs", size: "10Gi" },
+        ],
       },
       status: {
         observedGeneration: 1,

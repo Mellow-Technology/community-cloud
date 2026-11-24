@@ -90,6 +90,13 @@ pub struct WebApplicationSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bucket: Option<BucketSpec>,
 
+    /// Volumes of its own on the nodes' disks, mounted into every copy.
+    /// Each is one claim the copies share, so they all run on the node
+    /// the volume is on, and a rollout replaces them rather than
+    /// running old and new side by side.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<VolumeSpec>,
+
     /// A vhost of its own in the cluster's shared RabbitMQ.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rabbitmq: Option<RabbitMqSpec>,
@@ -145,6 +152,64 @@ pub struct BucketSpec {
     /// The most the bucket may hold, as a Kubernetes quantity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<String>,
+}
+
+/// A volume of the application's own: a PersistentVolumeClaim on one
+/// of Community Cloud's storage types, mounted at a path.
+///
+/// Deleting the application leaves the claim and what's on it, as for
+/// its database and bucket; an application made again with the same
+/// name and volume picks it up.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeSpec {
+    /// What it's called, unique within the application: lower-case
+    /// letters, digits and hyphens. The claim is named
+    /// <application>-<name>.
+    pub name: String,
+    /// Where it's mounted in the container, e.g. /var/lib/app/uploads.
+    pub mount_path: String,
+    /// How big, as a Kubernetes quantity, e.g. 10Gi. It can grow;
+    /// shrinking isn't possible.
+    pub size: String,
+    /// Which disks it's on. It can't change once the volume is made.
+    #[serde(default, rename = "type")]
+    pub storage_type: StorageType,
+}
+
+/// Community Cloud's storage types: TopoLVM device classes, each a
+/// volume group of one kind of disk, and each with a StorageClass
+/// (k8s/storage/StorageClass). All of them are local to a node.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageType {
+    /// NVMe SSDs: the fastest, and what's used unless told otherwise.
+    #[default]
+    Fast,
+    /// SSDs behind a SATA controller: fast, often larger.
+    Sata,
+    /// Spinning disks: the slowest and the largest.
+    Hdd,
+}
+
+impl StorageType {
+    /// The StorageClass for it.
+    pub fn storage_class(self) -> &'static str {
+        match self {
+            StorageType::Fast => "cc-local-ssd-fast",
+            StorageType::Sata => "cc-local-ssd-sata",
+            StorageType::Hdd => "cc-local-hdd",
+        }
+    }
+
+    /// What it's called in the resource.
+    pub fn name(self) -> &'static str {
+        match self {
+            StorageType::Fast => "fast",
+            StorageType::Sata => "sata",
+            StorageType::Hdd => "hdd",
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]

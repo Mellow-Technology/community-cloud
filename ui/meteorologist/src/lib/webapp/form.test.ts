@@ -309,3 +309,41 @@ test("a namespace's only connection is chosen for you", () => {
   expect(soleConnection({ gitlabConnections: [work, { ...work, name: "other" }] }).gitlabTokenSecretName).toBe("");
   expect(soleConnection(undefined).gitlabTokenSecretName).toBe("");
 });
+
+describe("volumes", () => {
+  const rows = [
+    { name: "uploads", mountPath: "/app/uploads", size: "200Gi", type: "hdd" as const },
+    { name: "cache", mountPath: "/app/cache", size: "10Gi", type: "fast" as const },
+  ];
+
+  test("are written with fast left out, as it's Cirrus's default, and blank rows dropped", () => {
+    const app = fromForm(form({ volumes: [...rows, { name: "", mountPath: "", size: "", type: "fast" }] }));
+    expect(app.spec.volumes).toEqual([
+      { name: "uploads", mountPath: "/app/uploads", size: "200Gi", type: "hdd" },
+      { name: "cache", mountPath: "/app/cache", size: "10Gi" },
+    ]);
+    expect(fromForm(form()).spec.volumes).toBeUndefined();
+  });
+
+  test("come back as they were", () => {
+    const app = fromForm(form({ volumes: rows }));
+    expect(toForm(app).volumes).toEqual(rows);
+  });
+
+  test("are checked as Cirrus checks them", () => {
+    expect(validateForm(form({ volumes: rows })).volumes).toBeUndefined();
+    const bad = (row: Partial<(typeof rows)[number]>) =>
+      validateForm(form({ volumes: [{ ...rows[0]!, ...row }] })).volumes;
+    expect(bad({ name: "Uploads" })).toContain("lower-case");
+    expect(bad({ mountPath: "uploads" })).toContain("absolute path");
+    expect(bad({ mountPath: "/" })).toContain("absolute path");
+    expect(bad({ size: "lots" })).toContain("size");
+    expect(bad({ size: "" })).toContain("size");
+    expect(
+      validateForm(form({ volumes: [rows[0]!, { ...rows[1]!, mountPath: "/app/uploads/thumbs" }] })).volumes,
+    ).toContain("overlaps");
+    expect(validateForm(form({ volumes: [rows[0]!, { ...rows[1]!, name: "uploads" }] })).volumes).toContain(
+      "two volumes",
+    );
+  });
+});

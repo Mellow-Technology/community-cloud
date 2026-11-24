@@ -46,10 +46,11 @@ import {
   validateForm,
   type EnvRow,
   type ImageSource,
+  type VolumeRow,
   type WebApplicationForm as FormModel,
 } from "@/lib/webapp/form";
 import { pullSecretsFor, registryOf, type PullSecret } from "@/lib/webapp/registry";
-import { DEFAULT_GITLAB_REF } from "@/lib/webapp/types";
+import { DEFAULT_GITLAB_REF, STORAGE_TYPES, type StorageType } from "@/lib/webapp/types";
 import { GitLabImagePicker } from "./GitLabImagePicker";
 import { projectsFor } from "@/lib/gitlab/projects";
 import { postgresDatabase } from "@/lib/postgres";
@@ -517,6 +518,13 @@ export function WebApplicationForm({
             />
           )}
           {warningFor("bucket")}
+          <VolumeEditor
+            rows={form.volumes}
+            appName={form.name}
+            replicas={form.replicas}
+            error={shownErrors.volumes}
+            onChange={(volumes) => set("volumes", volumes)}
+          />
           <Switch
             label="A RabbitMQ vhost"
             checked={form.rabbitmq}
@@ -851,6 +859,101 @@ function EnvEditor({ rows, error, onChange }: { rows: EnvRow[]; error?: string; 
       <div>
         <Button variant="secondary" size="sm" onClick={() => onChange([...rows, { name: "", value: "" }])}>
           Add a variable
+        </Button>
+      </div>
+    </fieldset>
+  );
+}
+
+/**
+ * The application's volumes: a name, where it's mounted, how big, and
+ * which disks, to a row.
+ *
+ * @param props
+ * @param props.rows
+ * @param props.appName for the claims' names
+ * @param props.replicas as typed, to say what sharing a volume means
+ * @param props.error
+ * @param props.onChange
+ * @returns
+ */
+function VolumeEditor({
+  rows,
+  appName,
+  replicas,
+  error,
+  onChange,
+}: {
+  rows: VolumeRow[];
+  appName: string;
+  replicas: string;
+  error?: string;
+  onChange: (rows: VolumeRow[]) => void;
+}) {
+  const update = (index: number, change: Partial<VolumeRow>) =>
+    onChange(rows.map((row, at) => (at === index ? { ...row, ...change } : row)));
+  const several = Number(replicas) > 1;
+
+  return (
+    <fieldset className={styles.list}>
+      <legend className={styles.legend}>Volumes</legend>
+      <p className={styles.note}>
+        Disk of its own, kept across restarts and rollouts, on one of Community Cloud&apos;s storage types. Each is a
+        claim, <code>{appName || "<app>"}-&lt;name&gt;</code>, on one node, shared by every copy
+        {several ? ", so all its copies run on that node" : ""}, and a rollout stops the old copy before starting the
+        new one. A volume can grow but not shrink, and its type can&apos;t change. Deleting the application keeps them
+        and what&apos;s on them.
+      </p>
+      {rows.map((row, index) => (
+        <div className={styles.listRow} key={index}>
+          <TextField
+            label="Name"
+            className={styles.grow}
+            placeholder="uploads"
+            value={row.name}
+            onChange={(event) => update(index, { name: event.target.value })}
+            autoCapitalize="none"
+            spellCheck={false}
+          />
+          <TextField
+            label="Mounted at"
+            className={styles.grow}
+            placeholder="/app/uploads"
+            value={row.mountPath}
+            onChange={(event) => update(index, { mountPath: event.target.value })}
+            autoCapitalize="none"
+            spellCheck={false}
+          />
+          <TextField
+            label="Size"
+            placeholder="10Gi"
+            value={row.size}
+            onChange={(event) => update(index, { size: event.target.value })}
+          />
+          <SelectField
+            label="Type"
+            value={row.type}
+            options={STORAGE_TYPES.map((type) => ({ value: type.value, label: type.label }))}
+            onChange={(event) => update(index, { type: event.target.value as StorageType })}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove ${row.name || `volume ${index + 1}`}`}
+            onClick={() => onChange(rows.filter((_, at) => at !== index))}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+      {error && <p className={styles.error}>{error}</p>}
+      <div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onChange([...rows, { name: "", mountPath: "", size: "", type: "fast" }])}
+        >
+          Add a volume
         </Button>
       </div>
     </fieldset>

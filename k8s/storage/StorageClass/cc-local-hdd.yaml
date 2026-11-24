@@ -1,0 +1,32 @@
+# Named for the storage type
+# local - data is node local
+# hdd - data is stored on spinning disks
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+
+# For what wants room more than speed: uploads, archives, media. Asked
+# for by name, as a WebApplication's volume of type "hdd" does.
+metadata:
+  name: cc-local-hdd
+  # Not the default. Kubernetes allows exactly one default storage
+  # class, and more than one means a claim that doesn't name a class
+  # gets none of them — "cc-local-ssd-fast" is the one.
+
+# We use XFS, on the spinning disks' volume group
+parameters:
+  csi.storage.k8s.io/fstype: xfs
+  topolvm.io/device-class: hdd
+
+# TopoLVM is used to provision this storage
+provisioner: topolvm.io
+
+# Data loss is generally a very bad thing(tm)
+# Thus we add a manual step to reclaim unused storage
+reclaimPolicy: Retain
+
+# TopoLVM supports volume size expansion and expanding
+# rather than running out of space is generally a good thing(tm)
+allowVolumeExpansion: true
+
+# We use this binding mode for TopoLVM as it helps with scheduling
+volumeBindingMode: WaitForFirstConsumer

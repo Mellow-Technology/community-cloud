@@ -10,7 +10,7 @@
  */
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 
@@ -170,5 +170,18 @@ describe("the values file", () => {
 
     assert.ok(source.includes("cmd/lvmd/app/root.go"), "the check that is fatal");
     assert.ok(source.includes("vgservice.go"), "the runtime that already tolerates it");
+  });
+});
+
+describe("storage classes", () => {
+  // Every device class that can hold volumes has a class asking for it
+  // by name, which is what a WebApplication's volume types map onto.
+  it("has one for each device class but the unimplemented cache", () => {
+    const dir = join(REPO_ROOT, "k8s", "storage", "StorageClass");
+    const named = readdirSync(dir).map((file) => {
+      const text = readFileSync(join(dir, file), "utf8");
+      return text.match(/topolvm\.io\/device-class:\s*(\S+)/)?.[1];
+    });
+    assert.deepEqual(named.toSorted(), ["hdd", "ssd", "ssd-sata"]);
   });
 });

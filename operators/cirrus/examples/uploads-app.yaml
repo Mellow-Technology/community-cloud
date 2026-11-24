@@ -1,0 +1,26 @@
+# An application that keeps files on disk: uploads on the spinning
+# disks, which have room, and a cache on the NVMe, which is fast.
+#
+# Each volume is one claim, shop-uploads and shop-cache, shared by
+# every copy, so the copies all run on the node the volumes are on, and
+# a rollout stops the old copy before starting the new one. Deleting
+# the WebApplication leaves both claims and what's on them.
+apiVersion: community-cloud.technology/v1alpha1
+kind: WebApplication
+metadata:
+  name: shop
+  namespace: acme
+spec:
+  image:
+    repository: registry.gitlab.com/acme/shop
+    tag: main
+  hostnames: [shop.acme.example]
+  volumes:
+    - name: uploads
+      mountPath: /app/public/uploads
+      size: 200Gi
+      type: hdd
+    - name: cache
+      mountPath: /app/tmp/cache
+      size: 10Gi
+      # type: fast is the default

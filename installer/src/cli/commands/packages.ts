@@ -1124,6 +1124,7 @@ const builtInPackages: PackageDefinition[] = [
       after: [
         "embed://storage/StorageClass/cc-local-ssd-fast.yaml",
         "embed://storage/StorageClass/cc-local-ssd-sata.yaml",
+        "embed://storage/StorageClass/cc-local-hdd.yaml",
       ],
     },
   },

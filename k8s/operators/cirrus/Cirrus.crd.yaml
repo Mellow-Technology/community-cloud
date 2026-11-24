@@ -320,6 +320,49 @@ spec:
                     - tokenSecret
                     type: object
                 type: object
+              volumes:
+                description: |-
+                  Volumes of its own on the nodes' disks, mounted into every copy.
+                  Each is one claim the copies share, so they all run on the node
+                  the volume is on, and a rollout replaces them rather than
+                  running old and new side by side.
+                items:
+                  description: |-
+                    A volume of the application's own: a PersistentVolumeClaim on one
+                    of Community Cloud's storage types, mounted at a path.
+
+                    Deleting the application leaves the claim and what's on it, as for
+                    its database and bucket; an application made again with the same
+                    name and volume picks it up.
+                  properties:
+                    mountPath:
+                      description: Where it's mounted in the container, e.g. /var/lib/app/uploads.
+                      type: string
+                    name:
+                      description: |-
+                        What it's called, unique within the application: lower-case
+                        letters, digits and hyphens. The claim is named
+                        <application>-<name>.
+                      type: string
+                    size:
+                      description: |-
+                        How big, as a Kubernetes quantity, e.g. 10Gi. It can grow;
+                        shrinking isn't possible.
+                      type: string
+                    type:
+                      default: fast
+                      description: Which disks it's on. It can't change once the volume is made.
+                      enum:
+                      - fast
+                      - sata
+                      - hdd
+                      type: string
+                  required:
+                  - mountPath
+                  - name
+                  - size
+                  type: object
+                type: array
             required:
             - image
             type: object

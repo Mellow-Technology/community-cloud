@@ -15,8 +15,8 @@
  *
  * The data is kept on purpose. CloudNativePG leaves the database when
  * its Database resource goes, and SeaweedFS leaves the bucket and its
- * contents, so a slip of the hand costs an application, not what it
- * stored. RabbitMQ is the exception: deleting the vhost deletes its
+ * contents, and Cirrus doesn't own the volumes' claims, so a slip of
+ * the hand costs an application, not what it stored. RabbitMQ is the exception: deleting the vhost deletes its
  * queues, and so whatever messages were waiting in them.
  *
  * Confirming takes the application's name, typed, which is checked
@@ -55,6 +55,12 @@ export function deletionSummary(app: WebApplication): DeletionSummary {
   if (spec.bucket !== undefined) {
     removed.push("Its bucket's access keys.");
     kept.push("Its bucket, and everything in it.");
+  }
+  if (spec.volumes?.length) {
+    const claims = spec.volumes.map((volume) => `${name}-${volume.name}`).join(", ");
+    kept.push(
+      `Its ${spec.volumes.length === 1 ? "volume" : "volumes"}, ${claims}, and what's on them. Making ${name} again with the same volumes picks them up.`,
+    );
   }
   if (spec.rabbitmq !== undefined) {
     removed.push("Its RabbitMQ vhost and user, with any messages still waiting in its queues.");

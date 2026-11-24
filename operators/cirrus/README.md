@@ -11,6 +11,7 @@ services the cluster already runs:
 | `postgres: {}` | a role and a database in the namespace's own Postgres, `cirrus-postgres` | CloudNativePG |
 | `bucket: {}` | a bucket, an S3 user limited to it, and its keys | the SeaweedFS operator |
 | `rabbitmq: {}` | a vhost, and a user limited to it | RabbitMQ's topology operator |
+| `volumes` | a PersistentVolumeClaim for each, on one of Community Cloud's storage types, mounted into every copy | TopoLVM |
 | `migrations` | a Job, run with each new image before the rollout | Kubernetes |
 | `source.gitlab` | a project webhook; each successful pipeline on `ref` rolls out | GitLab's API |
 
@@ -58,6 +59,7 @@ More in [examples/](./examples):
 | [`static-site.yaml`](./examples/static-site.yaml) | The least there is: an image on two hostnames, no source |
 | [`rails-app.yaml`](./examples/rails-app.yaml) | Everything at once — Postgres, a bucket, RabbitMQ, migrations, GitLab — with the labelled namespace and token Secret it needs |
 | [`internal-api.yaml`](./examples/internal-api.yaml) | No hostname, a self-managed GitLab, a release branch and a custom image tag |
+| [`uploads-app.yaml`](./examples/uploads-app.yaml) | Volumes: uploads on spinning disks and a cache on NVMe |
 | [`dns-provider.yaml`](./examples/dns-provider.yaml) | A DnsProvider publishing one namespace's hostnames in Cloudflare, and its credentials |
 
 `tests/examples.rs` reads every WebApplication and DnsProvider in there with the
@@ -156,6 +158,51 @@ done with it.
 A namespace already placed elsewhere when its Postgres was made keeps
 it where it is until it's restarted, as for any pod.
 
+### Volumes
+
+```yaml
+  volumes:
+    - name: uploads
+      mountPath: /app/public/uploads
+      size: 200Gi
+      type: hdd          # fast (the default), sata or hdd
+```
+
+Each volume is a PersistentVolumeClaim, `<application>-<name>`, on one
+of Community Cloud's storage types. Those are TopoLVM device classes,
+each a volume group of one kind of disk, with a StorageClass of its own
+(`k8s/storage/StorageClass`):
+
+| `type` | StorageClass | Disks |
+|---|---|---|
+| `fast` | `cc-local-ssd-fast` | NVMe |
+| `sata` | `cc-local-ssd-sata` | SSDs behind a SATA controller |
+| `hdd` | `cc-local-hdd` | spinning disks |
+
+They're local to a node. A volume is made on the node its first pod is
+scheduled to, and a type no node has a volume group for waits forever,
+so check which nodes have which (`storage.community-cloud.technology/classes`
+on the nodes) before asking for `sata` or `hdd`.
+
+So each volume is shared by every copy of the application, which all
+run on that node, and an application with volumes is rolled out by
+stopping the old copies before starting the new (`Recreate`) rather
+than side by side: a rolling update's extra copy could wait forever for
+a node it can't have. There's a moment with nothing running.
+
+A volume can grow, by raising its `size`, but not shrink, and its
+`type` can't change; asking for either leaves the volume as it is and
+says so in `Provisioned`. Names, mount paths and sizes are checked the
+same way: lower-case names, unique; absolute mount paths that don't
+overlap; sizes as quantities such as `10Gi`.
+
+The claims count against the namespace's storage quota, like any
+other.
+
+Migrations don't mount the volumes: a migration Job runs while the
+application is still up on the old image, and could be scheduled on
+another node.
+
 ### The namespace
 
 Two of Community Cloud's capabilities are labels on a namespace, and
@@ -229,8 +276,10 @@ WebApplication and is removed with it, its Postgres role and
 Database resources included. What's in `cc-office` (the vhost, the
 user and the permission) and the GitLab webhook are removed by
 Cirrus's finalizer. **Data is kept:** CloudNativePG keeps the
-database, the namespace's Postgres stays, and SeaweedFS keeps the
-bucket. Removing a `postgres`, `bucket` or `rabbitmq` block
+database, the namespace's Postgres stays, SeaweedFS keeps the bucket,
+and the volumes' claims aren't owned by the application, so they and
+what's on them stay; an application made again with the same name and
+volumes picks them up. Removing a `postgres`, `bucket` or `rabbitmq` block
 from a live WebApplication stops Cirrus maintaining those resources but
 doesn't delete them. They're removed when the WebApplication is
 deleted.

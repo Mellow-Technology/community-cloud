@@ -54,6 +54,19 @@ describe("what deleting an application does", () => {
   });
 });
 
+test("keeps the volumes, and says how to get them back", () => {
+  const summary = deletionSummary(
+    app({
+      volumes: [
+        { name: "uploads", mountPath: "/u", size: "1Gi" },
+        { name: "cache", mountPath: "/c", size: "1Gi" },
+      ],
+    }),
+  );
+  expect(summary.kept[0]).toContain("shop-uploads, shop-cache");
+  expect(summary.kept[0]).toContain("picks them up");
+});
+
 describe("confirming a delete", () => {
   test("takes exactly the name, spaces around it aside", () => {
     expect(confirmsDeletion("shop", "shop")).toBe(true);

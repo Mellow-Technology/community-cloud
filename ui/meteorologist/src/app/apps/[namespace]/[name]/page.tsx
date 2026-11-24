@@ -34,7 +34,7 @@ import { deletionSummary } from "@/lib/webapp/deletion";
 import { forgeStatus } from "@/lib/webapp/forge";
 import { appHealth } from "@/lib/webapp/health";
 import { portLabel, requestedServices, specImage } from "@/lib/webapp/present";
-import { GROUP, PLURAL } from "@/lib/webapp/types";
+import { GROUP, PLURAL, STORAGE_TYPES, type StorageType } from "@/lib/webapp/types";
 
 interface Params {
   namespace: string;
@@ -61,6 +61,17 @@ function when(iso: string | undefined): string | undefined {
   return iso
     ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC"
     : undefined;
+}
+
+/**
+ * A storage type as people read it.
+ *
+ * @param type
+ * @returns
+ */
+function storageLabel(type: StorageType | undefined): string {
+  const found = STORAGE_TYPES.find((each) => each.value === (type ?? "fast"));
+  return found ? `${found.value} (${found.storageClass})` : String(type);
 }
 
 /**
@@ -195,6 +206,21 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
                   ),
               },
               { label: "Bucket quota", value: app.spec.bucket?.quota },
+              {
+                label: "Volumes",
+                value: app.spec.volumes?.length ? (
+                  <>
+                    {app.spec.volumes.map((volume) => (
+                      <span key={volume.name} className={styles.detail}>
+                        <code>{volume.mountPath}</code>: {volume.size}, {storageLabel(volume.type)}, in{" "}
+                        <code>
+                          {app.metadata.name}-{volume.name}
+                        </code>
+                      </span>
+                    ))}
+                  </>
+                ) : undefined,
+              },
               {
                 label: "Source",
                 value: gitlab && (

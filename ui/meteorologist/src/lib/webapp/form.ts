@@ -20,6 +20,7 @@
  */
 import type { GitLabConnection } from "../gitlab/connections";
 import type { EnvVar, ResourceRequirements } from "../kube/types";
+import { parseQuantity } from "../quantity";
 import {
   API_VERSION,
   DEFAULT_GITLAB_REF,
@@ -28,6 +29,8 @@ import {
   DEFAULT_TAG,
   DEFAULT_TOKEN_KEY,
   KIND,
+  type StorageType,
+  type VolumeSpec,
   type WebApplication,
   type WebApplicationSpec,
 } from "./types";
@@ -73,6 +76,7 @@ export interface WebApplicationForm {
   postgres: boolean;
   bucket: boolean;
   bucketQuota: string;
+  volumes: VolumeRow[];
   rabbitmq: boolean;
 
   migrations: boolean;
@@ -124,6 +128,7 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     postgres: false,
     bucket: false,
     bucketQuota: "",
+    volumes: [],
     rabbitmq: false,
     migrations: false,
     migrationCommand: "",
@@ -221,6 +226,12 @@ export function toForm(app: WebApplication): WebApplicationForm {
     postgres: spec.postgres !== undefined,
     bucket: spec.bucket !== undefined,
     bucketQuota: spec.bucket?.quota ?? "",
+    volumes: (spec.volumes ?? []).map((volume) => ({
+      name: volume.name,
+      mountPath: volume.mountPath,
+      size: volume.size,
+      type: volume.type ?? "fast",
+    })),
     rabbitmq: spec.rabbitmq !== undefined,
     migrations: spec.migrations !== undefined,
     migrationCommand: (spec.migrations?.command ?? []).join("\n"),
@@ -379,6 +390,18 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
     delete spec.bucket;
   }
 
+  const volumes = form.volumes
+    .filter((row) => row.name.trim() !== "")
+    .map((row): VolumeSpec => {
+      const volume: VolumeSpec = { name: row.name.trim(), mountPath: row.mountPath.trim(), size: row.size.trim() };
+      // Fast is Cirrus's default, so it's left out
+      if (row.type !== "fast") {
+        volume.type = row.type;
+      }
+      return volume;
+    });
+  setOrDelete(spec, "volumes", volumes.length > 0 ? volumes : undefined);
+
   if (form.migrations) {
     const args = splitLines(form.migrationArgs);
     const migrations = { ...spec.migrations, command: splitLines(form.migrationCommand) };
@@ -500,6 +523,11 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     errors.hostnames = `${badHost} isn't a hostname. Use the full name, such as app.example.org.`;
   }
 
+  const volumeProblem = volumesProblem(form.volumes);
+  if (volumeProblem !== undefined) {
+    errors.volumes = volumeProblem;
+  }
+
   const envNames = form.env.map((row) => row.name.trim()).filter((envName) => envName !== "");
   const badEnv = envNames.find((envName) => !ENV_NAME.test(envName));
   const repeated = envNames.find((envName, index) => envNames.indexOf(envName) !== index);
@@ -538,4 +566,55 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
   }
 
   return errors;
+}
+
+/**
+ * A volume as the form edits it.
+ */
+export interface VolumeRow {
+  name: string;
+  mountPath: string;
+  size: string;
+  type: StorageType;
+}
+
+// A volume's name: a DNS label, as it's half of its claim's name
+const VOLUME_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+
+/**
+ * What's wrong with the volumes, as Cirrus would say it, or nothing.
+ * Rows with nothing in them are ignored.
+ *
+ * @param rows
+ * @returns
+ */
+export function volumesProblem(rows: VolumeRow[]): string | undefined {
+  const used = rows.filter((row) => row.name.trim() !== "" || row.mountPath.trim() !== "" || row.size.trim() !== "");
+  const names: string[] = [];
+  const paths: string[] = [];
+  for (const row of used) {
+    const name = row.name.trim();
+    if (name === "" || name.length > 63 || !VOLUME_NAME.test(name)) {
+      return "Name each volume with lower-case letters, digits and hyphens.";
+    }
+    if (names.includes(name)) {
+      return `There are two volumes called ${name}.`;
+    }
+    names.push(name);
+    const path = row.mountPath.trim().replace(/\/+$/, "");
+    if (!row.mountPath.trim().startsWith("/") || path === "") {
+      return `Mount ${name} at an absolute path other than /, such as /data.`;
+    }
+    const overlaps = paths.find(
+      (other) => other === path || path.startsWith(`${other}/`) || other.startsWith(`${path}/`),
+    );
+    if (overlaps !== undefined) {
+      return `${name} is mounted at ${path}, which overlaps ${overlaps}.`;
+    }
+    paths.push(path);
+    if (!QUANTITY.test(row.size.trim()) || !(parseQuantity(row.size.trim()) ?? 0)) {
+      return `Give ${name} a size, such as 10Gi.`;
+    }
+  }
+  return undefined;
 }

@@ -81,13 +81,22 @@ it's a decision rather than a detail.
 |---|---|---|
 | `StorageClass/cc-local-ssd-fast.yaml` | `cc-local-ssd-fast` | `ssd` |
 | `StorageClass/cc-local-ssd-sata.yaml` | `cc-local-ssd-sata` | `ssd-sata` |
+| `StorageClass/cc-local-hdd.yaml` | `cc-local-hdd` | `hdd` |
 
-Both use XFS, `Retain`, `allowVolumeExpansion`, and
+All three use XFS, `Retain`, `allowVolumeExpansion`, and
 `WaitForFirstConsumer` — which matters for local storage, since the
 volume can only be made once the pod's node is known.
 
 `cc-local-ssd-fast` is the cluster default, so a PVC that doesn't ask
 for a class gets fast local storage.
+
+A class only gets volumes on nodes that have its volume group, and a
+claim on one no node has waits forever. `ssd-cache` has no class
+until it's implemented (see above).
+
+These are what a WebApplication's `volumes` mean by their `type`:
+`fast` is `cc-local-ssd-fast`, `sata` is `cc-local-ssd-sata`, and `hdd`
+is `cc-local-hdd` (see operators/cirrus/README.md).
 
 `Retain` means deleting a PVC leaves the volume behind. Reclaiming it
 is a manual step, on the grounds that losing data is worse than
