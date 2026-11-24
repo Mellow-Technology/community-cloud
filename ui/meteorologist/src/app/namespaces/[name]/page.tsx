@@ -307,12 +307,17 @@ export default async function NamespacePage({
                 <GitLabBuilds
                   namespace={name}
                   configured={buildSettings !== undefined}
-                  dockerfile={buildSettings?.dockerfile}
-                  projects={Object.entries(buildSettings?.projects ?? {}).map(([project, dockerfile]) => ({
+                  build={buildSettings?.build ?? {}}
+                  projects={Object.entries(buildSettings?.projects ?? {}).map(([project, build]) => ({
                     project,
-                    dockerfile,
+                    build,
                   }))}
-                  exampleUrl={buildSettings && includeUrl(getPublicUrl(), name, buildSettings.key, "group/project")}
+                  exampleUrls={
+                    buildSettings && {
+                      dockerfile: includeUrl(getPublicUrl(), "dockerfile", name, buildSettings.key, "group/project"),
+                      bake: includeUrl(getPublicUrl(), "bake", name, buildSettings.key, "group/project"),
+                    }
+                  }
                 />
               ) : (
                 <ErrorNotice error={builds.error} title="Couldn't read this namespace's GitLab build settings" />

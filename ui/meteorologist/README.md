@@ -62,9 +62,9 @@ know about:
     before it's saved, and is what the application form lists projects
     and their registry images with. Cirrus uses the same Secret for its
     webhook and pipeline checks.
-  - **GitLab CI builds** (also the Forges tab): a build Meteorologist
+  - **GitLab CI builds** (also the Forges tab): builds Meteorologist
     serves for a project's `.gitlab-ci.yml` to include, so a project
-    needs nothing more than a Dockerfile. See
+    needs nothing more than a Dockerfile or a bake file. See
     [GitLab CI builds](#gitlab-ci-builds).
   - **DNS**: the `DnsProvider`s (Cirrus's cluster-scoped resource)
     publishing the namespace's hostnames. From here a namespace can
@@ -216,25 +216,39 @@ sophisticated; see CC-41.
 
 ### GitLab CI builds
 
-`src/lib/gitlab/builds.ts`. A project's `.gitlab-ci.yml` includes one
-remote file, which Meteorologist serves at
-`/ci/gitlab/<namespace>/<key>/<group>/<project>.yml`. It builds with
-Docker in Docker on every push to the default branch, tags the image
-with `$CI_COMMIT_SHORT_SHA` (one of the tags Cirrus looks for) and
-`latest`, and pushes both to the project's registry. The only thing that
-differs between projects is where the Dockerfile is: the namespace's
-default is set on the Forges tab, and a project with its own path sets
-it on its application's page, which also has the include line to copy.
-The path ends up in the build as the `DOCKERFILE` variable, so a CI/CD
-variable on the project overrides it too.
+`src/lib/gitlab/builds.ts` and `src/lib/gitlab/serveBuild.ts`. A
+project's `.gitlab-ci.yml` includes one remote file from Meteorologist.
+There are two, side by side, and the path picks which:
+
+- **Dockerfile**, at `/ci/gitlab/<namespace>/<key>/<group>/<project>.yml`:
+  `docker build` with a Dockerfile, `Dockerfile` unless another path is
+  given, in the repository's top directory. The path is the `DOCKERFILE`
+  variable, so a CI/CD variable on the project overrides it too.
+- **Bake**, at `/ci/gitlab-bake/<namespace>/<key>/<group>/<project>.yml`:
+  `docker buildx bake` with a target (`default` unless another is named)
+  from a bake file (bake's own search, `docker-bake.hcl` then compose
+  files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`. The
+  tags are set with `--set "*.tags=…"`, which replaces any the file
+  gives, so the target should build one image; a group of several would
+  push them all to the same tags.
+
+Either runs Docker in Docker on every push to the default branch, tags
+the image with `$CI_COMMIT_SHORT_SHA` (one of the tags Cirrus looks for)
+and `latest`, and pushes both to the project's registry. Where each
+finds its Dockerfile, bake file and target is set for the namespace on
+the Forges tab, and a project with any of them somewhere else sets them
+on its application's page, which also has both include lines to copy.
 
 The settings are the ConfigMap `meteorologist-gitlab-builds` in the
-namespace: `key`, `dockerfile` (the default), and `projects`, a JSON
-object of Dockerfile paths by project path. People change it as
-themselves, so it takes the `edit` role.
+namespace: `key`; the namespace's `dockerfile`, `bakeFile` and
+`bakeTarget`; and `projects`, a JSON object by project path of whichever
+of those a project has of its own, the rest being the namespace's. A
+project's entry may also be a string, a Dockerfile path, which is how
+they were written before bake. People change it as themselves, so it
+takes the `edit` role.
 
 GitLab fetches the file signed in as no one, so `src/proxy.ts` lets
-`/ci/gitlab/` through, and it's read with Meteorologist's own account,
+`/ci/gitlab/` and `/ci/gitlab-bake/` through, and it's read with Meteorologist's own account,
 which may get a ConfigMap of that name in any namespace and no other
 (`k8s/apps/meteorologist/Meteorologist.yaml`). The key stands in for
 signing in: a wrong one, or any other way of not finding the file, is
