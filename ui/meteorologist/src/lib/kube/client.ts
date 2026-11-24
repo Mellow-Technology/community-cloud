@@ -26,6 +26,7 @@ import type {
 } from "./types";
 import type { ClusterUsage } from "../cluster";
 import type { DnsProvider } from "../dns/types";
+import type { Bucket, NewS3Credentials, S3CredentialsSummary, S3Identity } from "../storage/types";
 import type { WebApplication } from "../webapp/types";
 
 /**
@@ -317,6 +318,114 @@ export interface KubeClient {
    * @returns
    */
   listCertificates(namespace?: string): Promise<Certificate[]>;
+
+  /**
+   * SeaweedFS's Buckets, in one namespace or in all of them. Empty when
+   * SeaweedFS's operator isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listBuckets(namespace?: string): Promise<Bucket[]>;
+
+  /**
+   * One Bucket.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getBucket(namespace: string, name: string): Promise<Bucket>;
+
+  /**
+   * Makes a Bucket.
+   *
+   * @param bucket
+   * @returns
+   */
+  createBucket(bucket: Bucket): Promise<Bucket>;
+
+  /**
+   * Replaces a Bucket's spec, at the resourceVersion it carries; a 409
+   * when it changed since.
+   *
+   * @param bucket
+   * @returns
+   */
+  replaceBucket(bucket: Bucket): Promise<Bucket>;
+
+  /**
+   * Deletes a Bucket, if it's there. What happens to its contents is
+   * its reclaim policy's to say.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteBucket(namespace: string, name: string): Promise<void>;
+
+  /**
+   * SeaweedFS's S3Identities, its S3 users, in one namespace or in all
+   * of them. Empty when SeaweedFS's operator isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listS3Identities(namespace?: string): Promise<S3Identity[]>;
+
+  /**
+   * One S3Identity.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getS3Identity(namespace: string, name: string): Promise<S3Identity>;
+
+  /**
+   * Makes an S3Identity: asks SeaweedFS's operator for a user.
+   *
+   * @param identity
+   * @returns
+   */
+  createS3Identity(identity: S3Identity): Promise<S3Identity>;
+
+  /**
+   * Replaces an S3Identity's spec, at the resourceVersion it carries; a
+   * 409 when it changed since.
+   *
+   * @param identity
+   * @returns
+   */
+  replaceS3Identity(identity: S3Identity): Promise<S3Identity>;
+
+  /**
+   * SeaweedFS's S3Credentials, the key pairs it writes into Secrets for
+   * its users, in one namespace or in all of them: where the keys are
+   * and the access key's ID, never the secret key. Empty when
+   * SeaweedFS's operator isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listS3Credentials(namespace?: string): Promise<S3CredentialsSummary[]>;
+
+  /**
+   * Asks SeaweedFS's operator for a new key pair for a user, written
+   * into a Secret by the name given.
+   *
+   * @param credentials
+   * @returns
+   */
+  createS3Credentials(credentials: NewS3Credentials): Promise<S3CredentialsSummary>;
+
+  /**
+   * Deletes an S3Credentials, if it's there. Whether the key stops
+   * working is its reclaim policy's to say.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteS3Credentials(namespace: string, name: string): Promise<void>;
 
   /**
    * WebApplications, in one namespace or in all of them.

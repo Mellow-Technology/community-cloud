@@ -106,6 +106,28 @@ know about:
   the database and the bucket's contents are kept. An application
   waiting on that shows as Deleting.
 
+- **Storage**, in two tabs, each with its own address and the
+  namespace filter carried between them:
+  - **Buckets** (`/storage`): list, view, create, edit and delete
+    SeaweedFS `Bucket` resources (`seaweed.seaweedfs.com/v1`,
+    `src/lib/storage/`). The list
+    starts with how many are ready, how much is stored against their
+    quotas, and how many objects there are; each row shows its status,
+    how full it is, its versioning, who may use it, and whether Cirrus
+    (for an application) or the installer (for a package) looks after
+    it, since those set their own fields again. A bucket's page has its
+    usage, settings, access and conditions. The form sets the quota and
+    whether it's enforced, versioning (which, once on, can only be
+    suspended), object lock (only when it's made), per-user access from
+    the namespace's S3Identities, anonymous reads, what happens to the
+    contents when it's deleted, and placement. A new bucket's name in
+    SeaweedFS is `<namespace>-<name>` unless another is typed, as Cirrus
+    names them, since every namespace's buckets share one list. SeaweedFS
+    only makes buckets for namespaces with the Buckets capability.
+  - **Users** (`/storage/users`): SeaweedFS's S3 users, from its
+    `S3Identity` resources, with the Secret each one's keys are in (from
+    its `S3Credentials`, by name only), every bucket that names it and
+    what it may do there, and what looks after it. **Add user** (`/storage/users/new`) makes an S3Identity, with its first key if asked (on by default, since nothing can use a user without one), and then opens the user's Access Keys tab, where the secret key can be seen. S3Identity, S3Credentials and Bucket are all namespaced, but a user's name in SeaweedFS is one list across every namespace, so it's `<namespace>-<name>` unless another is typed, and can't change later. A user's name opens its page, which shows its keys and the buckets it may use above two tabs. **Edit** (`/storage/users/<namespace>/<name>/edit`) changes what can change on an S3Identity: its display name and email, whether it's disabled, and whether deleting it takes the user out of SeaweedFS (its reclaim policy); its name in SeaweedFS can't change once set. **Access Keys** (`…/keys`) lists its key pairs, its `S3Credentials`, with each access key's ID, the Secret it's in and when it was made. The secret key is read from the Secret only when asked, as the person asking, so only those who can read Secrets there see it. It makes new keys, into a Secret named for the user unless another is given, so a key can be replaced without a gap, and deletes old ones, which takes the key out of SeaweedFS unless its reclaim policy is Retain.
 - **Office**: the office applications the installer put on the
   cluster, such as ProjectSend, Plane and Twenty, each with its
   address, its health, how people sign in, and how an administrator

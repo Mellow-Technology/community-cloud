@@ -23,6 +23,8 @@ import type { NodeUsage } from "../cluster";
 import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
 import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
 import { RECORD_KEY, RECORD_LABEL, RECORD_NAMESPACE, type PackageRecord } from "../office";
+import { parseQuantity } from "../quantity";
+import type { Bucket, S3CredentialsSummary, S3Identity } from "../storage/types";
 import { API_VERSION, GROUP, KIND, PLURAL, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
 import type {
@@ -49,6 +51,9 @@ interface FixtureStore {
   postgres: Map<string, PostgresCluster>;
   certificates: Map<string, Certificate>;
   configMaps: Map<string, ConfigMap>;
+  buckets: Map<string, Bucket>;
+  s3Identities: S3Identity[];
+  s3Credentials: S3CredentialsSummary[];
   workloads: Map<string, Workload>;
   regions: string[];
   version: number;
@@ -202,6 +207,146 @@ function packageRecord(record: Omit<PackageRecord, "description"> & { descriptio
  */
 function workload(kind: Workload["kind"], name: string, ready: number, desired = 1): Workload {
   return { kind, name, namespace: "cc-office", ready, desired };
+}
+
+/**
+ * A Bucket as SeaweedFS's operator would have it, Ready and counted
+ * unless told otherwise.
+ *
+ * @param namespace
+ * @param name
+ * @param parts
+ * @param parts.labels
+ * @param parts.ownerReferences
+ * @param parts.spec
+ * @param parts.status
+ * @returns
+ */
+function fixtureBucket(
+  namespace: string,
+  name: string,
+  parts: {
+    labels?: Record<string, string>;
+    ownerReferences?: Bucket["metadata"]["ownerReferences"];
+    spec?: Partial<Bucket["spec"]>;
+    status?: Bucket["status"];
+  },
+): Bucket {
+  const spec: Bucket["spec"] = {
+    clusterRef: { name: "seaweed", namespace: "seaweedfs" },
+    anonymousRead: false,
+    objectLock: false,
+    reclaimPolicy: "Retain",
+    versioning: "Off",
+    ...parts.spec,
+  };
+  const quota = spec.quota?.size === undefined ? undefined : parseQuantity(String(spec.quota.size));
+  return {
+    apiVersion: "seaweed.seaweedfs.com/v1",
+    kind: "Bucket",
+    metadata: {
+      name,
+      namespace,
+      generation: 1,
+      resourceVersion: "1",
+      creationTimestamp: CREATED,
+      labels: parts.labels,
+      ownerReferences: parts.ownerReferences,
+    },
+    spec,
+    status: {
+      bucketName: spec.name ?? name,
+      phase: "Ready",
+      versioning: spec.versioning,
+      objectLockEnabled: spec.objectLock,
+      observedGeneration: 1,
+      conditions: [{ type: "Ready", status: "True", reason: "Reconciled", lastTransitionTime: CREATED }],
+      ...(quota === undefined ? {} : { quota: { enforced: spec.quota?.enforce ?? true, sizeBytes: quota } }),
+      ...parts.status,
+      usage: parts.status?.usage ? { lastUpdated: CREATED, ...parts.status.usage } : undefined,
+    },
+  };
+}
+
+/**
+ * An S3Identity as SeaweedFS's operator would have it: Ready, its user
+ * named for the resource unless it says otherwise.
+ *
+ * @param namespace
+ * @param name
+ * @param parts
+ * @param parts.labels
+ * @param parts.ownerReferences
+ * @param parts.spec
+ * @returns
+ */
+function fixtureIdentity(
+  namespace: string,
+  name: string,
+  parts: {
+    labels?: Record<string, string>;
+    ownerReferences?: S3Identity["metadata"]["ownerReferences"];
+    spec?: Partial<S3Identity["spec"]>;
+  } = {},
+): S3Identity {
+  const spec: S3Identity["spec"] = {
+    seaweedRef: { name: "seaweed", namespace: "seaweedfs" },
+    disabled: false,
+    reclaimPolicy: "Delete",
+    ...parts.spec,
+  };
+  return {
+    apiVersion: "seaweed.seaweedfs.com/v1",
+    kind: "S3Identity",
+    metadata: {
+      name,
+      namespace,
+      generation: 1,
+      resourceVersion: "1",
+      creationTimestamp: CREATED,
+      labels: parts.labels,
+      ownerReferences: parts.ownerReferences,
+    },
+    spec,
+    status: {
+      identityName: spec.name ?? name,
+      phase: "Ready",
+      observedGeneration: 1,
+      conditions: [{ type: "Ready", status: "True", reason: "Reconciled", lastTransitionTime: CREATED }],
+    },
+  };
+}
+
+/**
+ * A key pair as SeaweedFS's operator would report it: Ready, with an
+ * access key's ID. Made-up IDs, nothing real.
+ *
+ * @param namespace
+ * @param name
+ * @param identity
+ * @param secretName
+ * @param accessKey
+ * @returns
+ */
+function fixtureCredentials(
+  namespace: string,
+  name: string,
+  identity: string,
+  secretName: string,
+  accessKey: string,
+): S3CredentialsSummary {
+  return {
+    namespace,
+    name,
+    identity,
+    secretName,
+    accessKeyField: "accessKey",
+    secretKeyField: "secretKey",
+    accessKey,
+    phase: "Ready",
+    reclaimPolicy: "Delete",
+    createdAt: CREATED,
+  };
 }
 
 /**
@@ -400,6 +545,14 @@ function seed(): FixtureStore {
     namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
     webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
     secrets: new Map<string, FixtureSecret>([
+      [
+        "cc-office/methods-s3",
+        {
+          type: "Opaque",
+          data: { accessKey: "FXMETHODS00000000001", secretKey: "fixture-secret-for-methods" },
+          creationTimestamp: CREATED,
+        },
+      ],
       [
         "team-shop/shop-gitlab-token",
         {
@@ -610,6 +763,86 @@ function seed(): FixtureStore {
         packageRecord({ name: "cert-manager", namespace: "cert-manager", chartVersion: "v1.19.1", rollout: [] }),
       ].map((each) => [key(RECORD_NAMESPACE, each.metadata.name), each]),
     ),
+    buckets: new Map(
+      [
+        fixtureBucket("cc-office", "authentik", {
+          labels: { "app.kubernetes.io/managed-by": "community-cloud" },
+          spec: {
+            access: [{ user: "authentik", actions: ["Read", "Write", "List", "Tagging"] }],
+            quota: { size: "20Gi", enforce: true },
+            anonymousRead: true,
+          },
+          status: { usage: { sizeBytes: 563160, objectCount: 41 } },
+        }),
+        fixtureBucket("cc-office", "methods", {
+          labels: { "app.kubernetes.io/managed-by": "community-cloud" },
+          spec: {
+            access: [{ user: "methods", actions: ["Read", "Write", "List", "Tagging"] }],
+            quota: { size: "20Gi", enforce: true },
+          },
+          status: { usage: { sizeBytes: 4975208, objectCount: 230 } },
+        }),
+        fixtureBucket("cc-office", "cc-office-plane", {
+          ownerReferences: [
+            { apiVersion: "community-cloud.technology/v1alpha1", kind: "WebApplication", name: "plane" },
+          ],
+          spec: {
+            name: "cc-office-plane",
+            access: [{ user: "cc-office-plane", actions: ["Read", "Write", "List", "Tagging"] }],
+            quota: { size: "20Gi", enforce: true },
+          },
+          status: { usage: { sizeBytes: 15.2 * 1024 ** 3, objectCount: 18210 } },
+        }),
+        fixtureBucket("cc-office", "archive", {
+          spec: {
+            name: "cc-office-archive",
+            access: [{ user: "reporting", actions: ["Read", "List"] }],
+            versioning: "Enabled",
+            objectLock: true,
+            reclaimPolicy: "Retain",
+            placement: { replication: "001" },
+          },
+          status: {
+            phase: "Failed",
+            conditions: [
+              {
+                type: "Ready",
+                status: "False",
+                reason: "CreateFailed",
+                message: "object lock needs a bucket made with it from the start",
+                lastTransitionTime: CREATED,
+              },
+            ],
+          },
+        }),
+        fixtureBucket("seaweedfs", "toadbase", {
+          spec: { access: [{ user: "anvAdmin", actions: ["Admin"] }] },
+          status: { usage: { sizeBytes: 5433028304, objectCount: 1204 } },
+        }),
+      ].map((each) => [key(each.metadata.namespace ?? "", each.metadata.name), each]),
+    ),
+    s3Identities: [
+      fixtureIdentity("cc-office", "authentik", { labels: { "app.kubernetes.io/managed-by": "community-cloud" } }),
+      fixtureIdentity("cc-office", "methods", { labels: { "app.kubernetes.io/managed-by": "community-cloud" } }),
+      fixtureIdentity("cc-office", "cc-office-plane", {
+        ownerReferences: [{ apiVersion: "community-cloud.technology/v1alpha1", kind: "WebApplication", name: "plane" }],
+      }),
+      fixtureIdentity("cc-office", "reporting", {
+        spec: { account: { displayName: "Reporting jobs", email: "ops@example.test" } },
+      }),
+      fixtureIdentity("seaweedfs", "anvadmin", { spec: { name: "anvAdmin" } }),
+      fixtureIdentity("seaweedfs", "old-backups", { spec: { disabled: true } }),
+    ],
+    s3Credentials: [
+      fixtureCredentials("cc-office", "authentik", "authentik", "authentik-s3", "FXAUTHENTIK000000001"),
+      fixtureCredentials("cc-office", "methods", "methods", "methods-s3", "FXMETHODS00000000001"),
+      fixtureCredentials("cc-office", "cc-office-plane", "cc-office-plane", "plane-s3", "FXPLANE000000000001"),
+      {
+        ...fixtureCredentials("seaweedfs", "anvadmin", "anvadmin", "seaweedfs-legacy-anvadmin", "FXANVADMIN000000001"),
+        secretNamespace: "community-cloud",
+        reclaimPolicy: "Retain",
+      },
+    ],
     workloads: new Map(
       [
         workload("statefulset", "redis", 1),
@@ -680,7 +913,7 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.configMaps === undefined) {
+  if (holder.__meteorologistFixtures?.buckets === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
@@ -791,6 +1024,45 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
       within("secrets", namespace);
       return client.listSecrets(namespace);
     },
+    listBuckets: scoped("buckets", client.listBuckets),
+    getBucket: async (namespace, name) => {
+      within("buckets", namespace);
+      return client.getBucket(namespace, name);
+    },
+    createBucket: async (bucket) => {
+      within("buckets", bucket.metadata.namespace);
+      return client.createBucket(bucket);
+    },
+    replaceBucket: async (bucket) => {
+      within("buckets", bucket.metadata.namespace);
+      return client.replaceBucket(bucket);
+    },
+    deleteBucket: async (namespace, name) => {
+      within("buckets", namespace);
+      return client.deleteBucket(namespace, name);
+    },
+    listS3Identities: scoped("s3identities", client.listS3Identities),
+    listS3Credentials: scoped("s3credentials", client.listS3Credentials),
+    createS3Credentials: async (credentials) => {
+      within("s3credentials", credentials.namespace);
+      return client.createS3Credentials(credentials);
+    },
+    deleteS3Credentials: async (namespace, name) => {
+      within("s3credentials", namespace);
+      return client.deleteS3Credentials(namespace, name);
+    },
+    getS3Identity: async (namespace, name) => {
+      within("s3identities", namespace);
+      return client.getS3Identity(namespace, name);
+    },
+    createS3Identity: async (identity) => {
+      within("s3identities", identity.metadata.namespace);
+      return client.createS3Identity(identity);
+    },
+    replaceS3Identity: async (identity) => {
+      within("s3identities", identity.metadata.namespace);
+      return client.replaceS3Identity(identity);
+    },
     getWebApplication: async (namespace, name) => {
       within("webapplications", namespace);
       return client.getWebApplication(namespace, name);
@@ -844,6 +1116,203 @@ export function fixtureClient(): KubeClient {
       const ns = requireNamespace(name);
       ns.metadata.labels = merged(ns.metadata.labels, patch);
       return copy(ns);
+    },
+
+    listBuckets: async (namespace) =>
+      copy(
+        [...store().buckets.values()].filter(
+          (bucket) => namespace === undefined || bucket.metadata.namespace === namespace,
+        ),
+      ),
+
+    getBucket: async (namespace, name) => {
+      const found = store().buckets.get(key(namespace, name));
+      if (found === undefined) {
+        throw new KubeError(404, `buckets.seaweed.seaweedfs.com "${name}" not found`, "NotFound");
+      }
+      return copy(found);
+    },
+
+    // As SeaweedFS's operator would leave it a moment later: Ready, with
+    // the name and settings it was asked for
+    createBucket: async (bucket) => {
+      const namespace = bucket.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      const id = key(namespace, bucket.metadata.name);
+      if (store().buckets.has(id)) {
+        throw new KubeError(
+          409,
+          `buckets.seaweed.seaweedfs.com "${bucket.metadata.name}" already exists`,
+          "AlreadyExists",
+        );
+      }
+      store().version += 1;
+      const created = fixtureBucket(namespace, bucket.metadata.name, {
+        labels: bucket.metadata.labels,
+        spec: bucket.spec,
+      });
+      created.metadata.resourceVersion = String(store().version);
+      store().buckets.set(id, created);
+      return copy(created);
+    },
+
+    replaceBucket: async (bucket) => {
+      const id = key(bucket.metadata.namespace ?? "", bucket.metadata.name);
+      const existing = store().buckets.get(id);
+      if (existing === undefined) {
+        throw new KubeError(404, `buckets.seaweed.seaweedfs.com "${bucket.metadata.name}" not found`, "NotFound");
+      }
+      if (bucket.metadata.resourceVersion !== existing.metadata.resourceVersion) {
+        throw new KubeError(409, "the object has been modified", "Conflict");
+      }
+      store().version += 1;
+      const quota = bucket.spec.quota?.size === undefined ? undefined : parseQuantity(String(bucket.spec.quota.size));
+      const replaced: Bucket = copy({
+        ...existing,
+        metadata: {
+          ...existing.metadata,
+          labels: bucket.metadata.labels,
+          annotations: bucket.metadata.annotations,
+          generation: (existing.metadata.generation ?? 1) + 1,
+          resourceVersion: String(store().version),
+        },
+        spec: bucket.spec,
+        status: {
+          ...existing.status,
+          versioning: bucket.spec.versioning,
+          quota: quota === undefined ? undefined : { enforced: bucket.spec.quota?.enforce ?? true, sizeBytes: quota },
+        },
+      });
+      store().buckets.set(id, replaced);
+      return copy(replaced);
+    },
+
+    deleteBucket: async (namespace, name) => {
+      store().buckets.delete(key(namespace, name));
+    },
+
+    listS3Identities: async (namespace) =>
+      copy(store().s3Identities.filter((each) => namespace === undefined || each.metadata.namespace === namespace)),
+
+    getS3Identity: async (namespace, name) => {
+      const found = store().s3Identities.find(
+        (each) => each.metadata.namespace === namespace && each.metadata.name === name,
+      );
+      if (found === undefined) {
+        throw new KubeError(404, `s3identities.seaweed.seaweedfs.com "${name}" not found`, "NotFound");
+      }
+      return copy(found);
+    },
+
+    // As SeaweedFS's operator would leave it a moment later: Ready
+    createS3Identity: async (identity) => {
+      const namespace = identity.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      if (
+        store().s3Identities.some(
+          (each) => each.metadata.namespace === namespace && each.metadata.name === identity.metadata.name,
+        )
+      ) {
+        throw new KubeError(
+          409,
+          `s3identities.seaweed.seaweedfs.com "${identity.metadata.name}" already exists`,
+          "AlreadyExists",
+        );
+      }
+      store().version += 1;
+      const created = fixtureIdentity(namespace, identity.metadata.name, {
+        labels: identity.metadata.labels,
+        spec: identity.spec,
+      });
+      created.metadata.resourceVersion = String(store().version);
+      store().s3Identities.push(created);
+      return copy(created);
+    },
+
+    replaceS3Identity: async (identity) => {
+      const at = store().s3Identities.findIndex(
+        (each) =>
+          each.metadata.namespace === identity.metadata.namespace && each.metadata.name === identity.metadata.name,
+      );
+      const existing = store().s3Identities[at];
+      if (existing === undefined) {
+        throw new KubeError(
+          404,
+          `s3identities.seaweed.seaweedfs.com "${identity.metadata.name}" not found`,
+          "NotFound",
+        );
+      }
+      if (identity.metadata.resourceVersion !== existing.metadata.resourceVersion) {
+        throw new KubeError(409, "the object has been modified", "Conflict");
+      }
+      if ((identity.spec.name ?? "") !== (existing.spec.name ?? "") && (existing.spec.name ?? "") !== "") {
+        throw new KubeError(422, "spec.name: identity name is immutable once set", "Invalid");
+      }
+      store().version += 1;
+      const replaced: S3Identity = copy({
+        ...existing,
+        metadata: {
+          ...existing.metadata,
+          labels: identity.metadata.labels,
+          annotations: identity.metadata.annotations,
+          generation: (existing.metadata.generation ?? 1) + 1,
+          resourceVersion: String(store().version),
+        },
+        spec: identity.spec,
+      });
+      store().s3Identities[at] = replaced;
+      return copy(replaced);
+    },
+
+    listS3Credentials: async (namespace) =>
+      copy(store().s3Credentials.filter((each) => namespace === undefined || each.namespace === namespace)),
+
+    // As SeaweedFS's operator would leave it a moment later: Ready, with
+    // a made-up key pair in its Secret
+    createS3Credentials: async (credentials) => {
+      requireNamespace(credentials.namespace);
+      if (
+        store().s3Credentials.some((each) => each.namespace === credentials.namespace && each.name === credentials.name)
+      ) {
+        throw new KubeError(
+          409,
+          `s3credentials.seaweed.seaweedfs.com "${credentials.name}" already exists`,
+          "AlreadyExists",
+        );
+      }
+      store().version += 1;
+      const accessKey =
+        `FX${String(store().version).padStart(4, "0")}${credentials.name.toUpperCase().replace(/[^A-Z0-9]/g, "")}`.slice(
+          0,
+          20,
+        );
+      const created: S3CredentialsSummary = {
+        ...fixtureCredentials(
+          credentials.namespace,
+          credentials.name,
+          credentials.identity,
+          credentials.secretName,
+          accessKey,
+        ),
+        reclaimPolicy: credentials.reclaimPolicy,
+        createdAt: now(),
+      };
+      store().s3Credentials.push(created);
+      store().secrets.set(key(credentials.namespace, credentials.secretName), {
+        type: "Opaque",
+        data: { accessKey, secretKey: `fixture-secret-for-${credentials.name}` },
+        creationTimestamp: now(),
+      });
+      return copy(created);
+    },
+
+    deleteS3Credentials: async (namespace, name) => {
+      const found = store().s3Credentials.find((each) => each.namespace === namespace && each.name === name);
+      store().s3Credentials = store().s3Credentials.filter((each) => each !== found);
+      // The Secret is the S3Credentials', so it goes with it
+      if (found?.secretName && !found.secretNamespace) {
+        store().secrets.delete(key(namespace, found.secretName));
+      }
     },
 
     listWebApplications: async (namespace) =>

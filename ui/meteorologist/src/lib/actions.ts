@@ -50,7 +50,7 @@ import {
   type GitLabProject,
 } from "./gitlab/connections";
 import { getKube } from "./kube";
-import { KubeError, describeError, isForbidden, type KubeClient } from "./kube/client";
+import { KubeError, describeError, isForbidden, settle, type KubeClient } from "./kube/client";
 import {
   CREATED_BY,
   DEFAULT_SERVICE_ACCOUNT,
@@ -67,6 +67,17 @@ import {
   type NamespaceForm,
 } from "./namespace/settings";
 import { findAdminSecret, readPackageRecords } from "./office";
+import { fromBucketForm, validateBucketForm, type BucketForm } from "./storage/form";
+import { newKeyNames, secretNameProblem } from "./storage/keys";
+import { SEAWEED_REF, type ReclaimPolicy, type S3Identity } from "./storage/types";
+import {
+  fromUserForm,
+  newIdentity,
+  validateNewUserForm,
+  validateUserForm,
+  type NewUserForm,
+  type UserForm,
+} from "./storage/userForm";
 import { confirmsDeletion } from "./webapp/deletion";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
 import { REGISTRY_ANNOTATION, normaliseRegistry } from "./webapp/registry";
@@ -174,6 +185,248 @@ export async function deleteWebApplication(namespace: string, name: string, type
   }
   const result = await run(async () => {
     await (await getKube()).deleteWebApplication(namespace, name);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Makes a Bucket from the form, or saves one being edited, starting
+ * from the resource as it is at the version the form was opened with,
+ * so what the form doesn't show is kept and a change someone else made
+ * in the meantime is refused rather than overwritten.
+ *
+ * @param form
+ * @param resourceVersion the version the form was opened with, when
+ *   editing
+ * @returns where the bucket can be seen
+ */
+export async function saveBucket(
+  form: BucketForm,
+  resourceVersion?: string,
+): Promise<ActionResult<{ namespace: string; name: string }>> {
+  const result = await run(async () => {
+    const kube = await getKube();
+    const current =
+      resourceVersion === undefined ? undefined : await kube.getBucket(form.namespace.trim(), form.name.trim());
+    const first = Object.values(validateBucketForm(form, current))[0];
+    if (first !== undefined) {
+      throw new Error(first);
+    }
+    if (current === undefined) {
+      const created = await kube.createBucket(fromBucketForm(form));
+      return { namespace: created.metadata.namespace ?? form.namespace, name: created.metadata.name };
+    }
+    current.metadata.resourceVersion = resourceVersion;
+    const saved = await kube.replaceBucket(fromBucketForm(form, current));
+    return { namespace: saved.metadata.namespace ?? form.namespace, name: saved.metadata.name };
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Saves an S3Identity, SeaweedFS's S3 user, from the form, starting
+ * from the resource as it is at the version the form was opened with.
+ *
+ * @param form
+ * @param resourceVersion the version the form was opened with
+ * @returns
+ */
+export async function saveS3Identity(form: UserForm, resourceVersion: string): Promise<ActionResult> {
+  const first = Object.values(validateUserForm(form))[0];
+  if (first !== undefined) {
+    return { ok: false, error: first };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const current = await kube.getS3Identity(form.namespace, form.name);
+    current.metadata.resourceVersion = resourceVersion;
+    await kube.replaceS3Identity(fromUserForm(form, current));
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Asks SeaweedFS's operator for a key pair for a user, into the Secret
+ * named or one named for the user, keeping clear of names in use.
+ *
+ * @param kube
+ * @param namespace
+ * @param identity the S3Identity's resource name
+ * @param secretName blank for the one suggested
+ * @param reclaimPolicy
+ * @param seaweedRef the SeaweedFS the user is in
+ * @returns the S3Credentials' name
+ */
+async function makeKey(
+  kube: KubeClient,
+  namespace: string,
+  identity: string,
+  secretName: string,
+  reclaimPolicy: ReclaimPolicy,
+  seaweedRef: S3Identity["spec"]["seaweedRef"],
+): Promise<string> {
+  const [existing, secrets] = await Promise.all([
+    kube.listS3Credentials(namespace),
+    // Only to keep clear of names in use; someone who can't list
+    // Secrets just gets the suggestion, and the API server's refusal if
+    // it's taken
+    settle(() => kube.listSecrets(namespace)),
+  ]);
+  const taken = secrets.ok ? secrets.value.map((secret) => secret.name) : [];
+  const problem = secretNameProblem(secretName, taken);
+  if (problem !== undefined) {
+    throw new Error(problem);
+  }
+  const names = newKeyNames(identity, existing, taken);
+  const created = await kube.createS3Credentials({
+    namespace,
+    name: names.name,
+    identity,
+    secretName: secretName.trim() || names.secretName,
+    reclaimPolicy,
+    seaweedRef,
+    labels: CREATED_BY,
+  });
+  return created.name;
+}
+
+/**
+ * Asks SeaweedFS's operator for a new key pair for a user, written into
+ * a Secret in the user's namespace: the one named, or one named for the
+ * user.
+ *
+ * @param namespace
+ * @param identity the S3Identity's resource name
+ * @param secretName blank for the one suggested
+ * @param reclaimPolicy whether deleting it takes the key out of SeaweedFS
+ * @returns the S3Credentials' name
+ */
+export async function createAccessKey(
+  namespace: string,
+  identity: string,
+  secretName: string,
+  reclaimPolicy: ReclaimPolicy,
+): Promise<ActionResult<{ name: string }>> {
+  if (reclaimPolicy !== "Delete" && reclaimPolicy !== "Retain") {
+    return { ok: false, error: "Delete the key with it, or keep it." };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const user = await kube.getS3Identity(namespace, identity);
+    return { name: await makeKey(kube, namespace, identity, secretName, reclaimPolicy, user.spec.seaweedRef) };
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Makes an S3Identity, SeaweedFS's S3 user, from the form, and its
+ * first key with it when asked. A key that can't be made doesn't undo
+ * the user: it's said, and one can be made from the user's page.
+ *
+ * @param form
+ * @returns where the user can be seen, and why its key wasn't made if
+ *   it wasn't
+ */
+export async function createS3User(
+  form: NewUserForm,
+): Promise<ActionResult<{ namespace: string; name: string; keyError?: string }>> {
+  const first = Object.values(validateNewUserForm(form))[0];
+  if (first !== undefined) {
+    return { ok: false, error: first };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const created = await kube.createS3Identity(newIdentity(form, SEAWEED_REF, CREATED_BY));
+    const namespace = created.metadata.namespace ?? form.namespace.trim();
+    const name = created.metadata.name;
+    if (!form.createKey) {
+      return { namespace, name };
+    }
+    try {
+      await makeKey(kube, namespace, name, form.secretName, form.keyReclaimPolicy, created.spec.seaweedRef);
+      return { namespace, name };
+    } catch (error) {
+      unstable_rethrow(error);
+      return { namespace, name, keyError: describeError(error) };
+    }
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Deletes a key, once its S3Credentials' name has been typed to
+ * confirm. Whether the key stops working is its reclaim policy's to
+ * say (see lib/storage/keys.ts).
+ *
+ * @param namespace
+ * @param name the S3Credentials'
+ * @param typed what was typed to confirm
+ * @returns
+ */
+export async function deleteAccessKey(namespace: string, name: string, typed: string): Promise<ActionResult> {
+  if (!confirmsDeletion(typed, name)) {
+    return { ok: false, error: `Type ${name} to delete it.` };
+  }
+  const result = await run(async () => {
+    await (await getKube()).deleteS3Credentials(namespace, name);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * A key's secret half, read from its Secret as the person asking, so
+ * only someone who may read Secrets there sees it.
+ *
+ * @param namespace
+ * @param name the S3Credentials'
+ * @returns
+ */
+export async function revealSecretKey(namespace: string, name: string): Promise<ActionResult<string>> {
+  try {
+    const kube = await getKube();
+    const credentials = (await kube.listS3Credentials(namespace)).find((each) => each.name === name);
+    if (credentials?.secretName === undefined) {
+      return { ok: false, error: "SeaweedFS's operator hasn't said where this key is yet." };
+    }
+    const field = credentials.secretKeyField ?? "secretKey";
+    const value = await kube.readSecretValue(credentials.secretNamespace ?? namespace, credentials.secretName, field);
+    if (value === undefined) {
+      return { ok: false, error: `There's no "${field}" in the Secret ${credentials.secretName} yet.` };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    unstable_rethrow(error);
+    if (isForbidden(error)) {
+      return { ok: false, error: "Only people who can read Secrets in this namespace can see a secret key." };
+    }
+    return { ok: false, error: describeError(error) };
+  }
+}
+
+/**
+ * Deletes a Bucket, once its name has been typed to confirm. Its
+ * contents go too only when its reclaim policy is Delete.
+ *
+ * @param namespace
+ * @param name
+ * @param typed what was typed to confirm
+ * @returns
+ */
+export async function deleteBucket(namespace: string, name: string, typed: string): Promise<ActionResult> {
+  if (!confirmsDeletion(typed, name)) {
+    return { ok: false, error: `Type ${name} to delete it.` };
+  }
+  const result = await run(async () => {
+    await (await getKube()).deleteBucket(namespace, name);
     return undefined;
   });
   revalidatePath("/", "layout");

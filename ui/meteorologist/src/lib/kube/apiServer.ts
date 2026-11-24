@@ -34,6 +34,14 @@ import { getApiServerOverride, getDevKubeconfig, getNamespaceListerTokenFile, ha
 import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
 import { DNS_PLURAL, type DnsProvider } from "../dns/types";
 import { parseQuantity } from "../quantity";
+import {
+  BUCKET_GROUP,
+  BUCKET_PLURAL,
+  BUCKET_VERSION,
+  type Bucket,
+  type S3CredentialsSummary,
+  type S3Identity,
+} from "../storage/types";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
 import type {
@@ -214,6 +222,51 @@ async function optional<T>(call: () => Promise<T>): Promise<T | undefined> {
 }
 
 /**
+ * An S3Credentials as the API server has it, as far as it's read here.
+ */
+interface RawCredentials {
+  metadata: { name: string; namespace?: string; creationTimestamp?: string | Date };
+  spec?: {
+    identityRef?: { name?: string };
+    reclaimPolicy?: S3CredentialsSummary["reclaimPolicy"];
+    secretRef?: { name?: string; namespace?: string; accessKeyField?: string; secretKeyField?: string };
+  };
+  status?: {
+    accessKey?: string;
+    secretName?: string;
+    phase?: S3CredentialsSummary["phase"];
+    conditions?: Array<{ type?: string; status?: string; message?: string }>;
+  };
+}
+
+/**
+ * Where an S3Credentials' keys are, and its access key's ID, without
+ * anything secret.
+ *
+ * @param raw
+ * @param namespace the one it was listed in, when it was
+ * @returns
+ */
+function credentialsSummary(raw: RawCredentials, namespace?: string): S3CredentialsSummary {
+  const ready = raw.status?.conditions?.find((condition) => condition.type === "Ready");
+  const created = raw.metadata.creationTimestamp;
+  return {
+    namespace: raw.metadata.namespace ?? namespace ?? "",
+    name: raw.metadata.name,
+    identity: raw.spec?.identityRef?.name ?? "",
+    secretName: raw.status?.secretName ?? raw.spec?.secretRef?.name,
+    secretNamespace: raw.spec?.secretRef?.namespace,
+    accessKeyField: raw.spec?.secretRef?.accessKeyField,
+    secretKeyField: raw.spec?.secretRef?.secretKeyField,
+    accessKey: raw.status?.accessKey,
+    phase: raw.status?.phase,
+    message: ready?.status === "True" ? undefined : ready?.message || undefined,
+    reclaimPolicy: raw.spec?.reclaimPolicy,
+    createdAt: created instanceof Date ? created.toISOString() : created,
+  };
+}
+
+/**
  * The client for one KubeConfig.
  *
  * @param config
@@ -226,6 +279,9 @@ function clientFor(config: KubeConfig): KubeClient {
   const authentication = config.makeApiClient(AuthenticationV1Api);
   const authorization = config.makeApiClient(AuthorizationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
+  const buckets = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: BUCKET_PLURAL };
+  const identities = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3identities" };
+  const credentialsKind = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3credentials" };
   const dns = { group: GROUP, version: VERSION, plural: DNS_PLURAL };
   const merge = setHeaderOptions("Content-Type", PatchStrategy.MergePatch);
   const apply = setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply);
@@ -525,6 +581,113 @@ function clientFor(config: KubeConfig): KubeClient {
             : await custom.listNamespacedCustomObject({ ...CERTIFICATES, namespace });
         return (list as { items: Certificate[] }).items;
       })) ?? [],
+
+    listBuckets: async (namespace) =>
+      // A 404 means SeaweedFS's operator isn't installed, so there are none
+      (await optional(async () => {
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(buckets)
+            : await custom.listNamespacedCustomObject({ ...buckets, namespace });
+        return (list as { items: Bucket[] }).items;
+      })) ?? [],
+
+    getBucket: (namespace, name) =>
+      attempt(async () => (await custom.getNamespacedCustomObject({ ...buckets, namespace, name })) as Bucket),
+
+    createBucket: (bucket) =>
+      attempt(
+        async () =>
+          (await custom.createNamespacedCustomObject({
+            ...buckets,
+            namespace: bucket.metadata.namespace ?? "",
+            body: bucket,
+          })) as Bucket,
+      ),
+
+    replaceBucket: (bucket) =>
+      attempt(async () => {
+        const { status: _status, ...body } = bucket;
+        return (await custom.replaceNamespacedCustomObject({
+          ...buckets,
+          namespace: bucket.metadata.namespace ?? "",
+          name: bucket.metadata.name,
+          body,
+        })) as Bucket;
+      }),
+
+    deleteBucket: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteNamespacedCustomObject({ ...buckets, namespace, name }));
+      }),
+
+    listS3Identities: async (namespace) =>
+      (await optional(async () => {
+        const kind = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3identities" };
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(kind)
+            : await custom.listNamespacedCustomObject({ ...kind, namespace });
+        return (list as { items: S3Identity[] }).items;
+      })) ?? [],
+
+    getS3Identity: (namespace, name) =>
+      attempt(async () => (await custom.getNamespacedCustomObject({ ...identities, namespace, name })) as S3Identity),
+
+    createS3Identity: (identity) =>
+      attempt(
+        async () =>
+          (await custom.createNamespacedCustomObject({
+            ...identities,
+            namespace: identity.metadata.namespace ?? "",
+            body: identity,
+          })) as S3Identity,
+      ),
+
+    replaceS3Identity: (identity) =>
+      attempt(async () => {
+        const { status: _status, ...body } = identity;
+        return (await custom.replaceNamespacedCustomObject({
+          ...identities,
+          namespace: identity.metadata.namespace ?? "",
+          name: identity.metadata.name,
+          body,
+        })) as S3Identity;
+      }),
+
+    listS3Credentials: async (namespace) =>
+      (await optional(async () => {
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(credentialsKind)
+            : await custom.listNamespacedCustomObject({ ...credentialsKind, namespace });
+        return (list as { items: RawCredentials[] }).items.map((each) => credentialsSummary(each, namespace));
+      })) ?? [],
+
+    createS3Credentials: (credentials) =>
+      attempt(async () => {
+        const created = (await custom.createNamespacedCustomObject({
+          ...credentialsKind,
+          namespace: credentials.namespace,
+          body: {
+            apiVersion: `${BUCKET_GROUP}/${BUCKET_VERSION}`,
+            kind: "S3Credentials",
+            metadata: { name: credentials.name, namespace: credentials.namespace, labels: credentials.labels },
+            spec: {
+              seaweedRef: credentials.seaweedRef,
+              identityRef: { name: credentials.identity },
+              secretRef: { name: credentials.secretName },
+              reclaimPolicy: credentials.reclaimPolicy,
+            },
+          },
+        })) as RawCredentials;
+        return credentialsSummary(created, credentials.namespace);
+      }),
+
+    deleteS3Credentials: (namespace, name) =>
+      attempt(async () => {
+        await optional(() => custom.deleteNamespacedCustomObject({ ...credentialsKind, namespace, name }));
+      }),
 
     listWebApplications: (namespace) =>
       attempt(async () => {
