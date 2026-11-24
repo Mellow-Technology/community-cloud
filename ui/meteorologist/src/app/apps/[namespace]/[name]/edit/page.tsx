@@ -10,7 +10,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { WebApplicationForm } from "@/components/WebApplicationForm";
 import { getKube } from "@/lib/kube";
 import { isNotFound, settle } from "@/lib/kube/client";
+import { reachableNamespaces } from "@/lib/namespace/access";
 import { namespaceChoices } from "@/lib/namespace/choices";
+import { offeringChoices } from "@/lib/offerings/choices";
 import { toForm } from "@/lib/webapp/form";
 
 export const metadata: Metadata = { title: "Edit application" };
@@ -28,6 +30,9 @@ export default async function EditAppPage({ params }: { params: Promise<{ namesp
     settle(() => kube.getNamespace(decodeURIComponent(namespace))),
   ]);
   const choices = ns.ok ? await namespaceChoices(kube, [ns.value], ns.value.metadata.name) : [];
+  // Any namespace's offerings may be shared with this one
+  const reached = await settle(() => reachableNamespaces(kube));
+  const offerings = await offeringChoices(kube, reached.ok ? reached.value : ns.ok ? [ns.value] : []);
   const back = { href: `/apps/${namespace}/${name}`, label: decodeURIComponent(name) };
 
   if (!found.ok) {
@@ -54,6 +59,7 @@ export default async function EditAppPage({ params }: { params: Promise<{ namesp
         initial={toForm(found.value)}
         resourceVersion={found.value.metadata.resourceVersion ?? ""}
         namespaces={choices}
+        offerings={offerings}
       />
     </>
   );

@@ -12,6 +12,8 @@ services the cluster already runs:
 | `bucket: {}` | a bucket, an S3 user limited to it, and its keys | the SeaweedFS operator |
 | `rabbitmq: {}` | a vhost, and a user limited to it | RabbitMQ's topology operator |
 | `volumes` | a PersistentVolumeClaim for each, on one of Community Cloud's storage types, mounted into every copy; or a RAM disk | TopoLVM, Kubernetes |
+| `connections` | environment variables for each ServiceOffering it uses: `<NAME>_HOST`, `_PORT`, `_URL`… | ServiceOfferings |
+| `offers` | a ServiceOffering for its own Service, so others can connect to it | ServiceOfferings |
 | `migrations` | a Job, run with each new image before the rollout | Kubernetes |
 | `source.gitlab` | a project webhook; each successful pipeline on `ref` rolls out | GitLab's API |
 
@@ -60,6 +62,7 @@ More in [examples/](./examples):
 | [`rails-app.yaml`](./examples/rails-app.yaml) | Everything at once — Postgres, a bucket, RabbitMQ, migrations, GitLab — with the labelled namespace and token Secret it needs |
 | [`internal-api.yaml`](./examples/internal-api.yaml) | No hostname, a self-managed GitLab, a release branch and a custom image tag |
 | [`uploads-app.yaml`](./examples/uploads-app.yaml) | Volumes: uploads on spinning disks and a cache on NVMe |
+| [`connected-apps.yaml`](./examples/connected-apps.yaml) | Connections: one application offering itself to another namespace, another connecting to it, and an offering written by hand for a Redis |
 | [`dns-provider.yaml`](./examples/dns-provider.yaml) | A DnsProvider publishing one namespace's hostnames in Cloudflare, and its credentials |
 
 `tests/examples.rs` reads every WebApplication and DnsProvider in there with the
@@ -216,6 +219,81 @@ other.
 Migrations don't mount the volumes: a migration Job runs while the
 application is still up on the old image, and could be scheduled on
 another node.
+
+### Connecting to services
+
+A **ServiceOffering** is a service saying what it is and how to reach
+it, so applications connect to it by name instead of by copying
+addresses and passwords around:
+
+```yaml
+apiVersion: community-cloud.technology/v1alpha1
+kind: ServiceOffering
+metadata: { name: search, namespace: catalogue }
+spec:
+  title: Product search
+  description: 'Full-text search over the catalogue. POST /query with {"q": "..."}.'
+  protocol: http          # http (default), https, grpc, postgres, mysql, redis, amqp, tcp
+  service:
+    name: search          # a Service in this namespace
+    port: http            # name or number; its only port, or "http", when left out
+  path: /v1               # added to the URL: a path, a database, a vhost
+  shareWith: [shop]       # other namespaces that may connect
+  secret: search-api      # a Secret here whose keys go to connections from here
+  values: { region: sea } # more for every connection
+```
+
+An application then connects to it:
+
+```yaml
+  connections:
+    - offering: search
+      namespace: catalogue   # when it isn't this application's
+      name: search           # what the variables start with; the offering's name by default
+```
+
+and gets `SEARCH_HOST` (`search.catalogue.svc.cluster.local`),
+`SEARCH_PORT`, `SEARCH_URL` (`http://search.catalogue.svc.cluster.local:8080/v1`),
+`SEARCH_TYPE` (`http`) and `SEARCH_REGION`. The naming follows Radius's
+connections (`CONNECTION_<NAME>_<PROPERTY>`), less the first word. An
+application can offer itself without writing one:
+
+```yaml
+  offers:
+    title: Shop API
+    description: Orders and baskets. Bearer tokens from Authentik.
+    path: /api
+    shareWith: [web]
+```
+
+makes an offering named for the application, for its Service's `http`
+port, owned by it, and removed with it or when `offers` goes.
+
+**Who may connect.** Namespaces are tenants, so an offering is usable
+from its own namespace and the ones in `shareWith`, and nowhere else;
+a connection from another namespace is refused in `Provisioned`. An
+offering's status lists every application connected to it, and whether
+each may.
+
+**Credentials** go only as far as the namespace. A pod can only read
+Secrets in its own, so `secret`'s keys (`username` and `password`
+become `SEARCH_USERNAME` and `SEARCH_PASSWORD`) reach connections from
+the offering's namespace, as references to its binding Secret, and
+connections from elsewhere get the address alone.
+
+**The binding Secret.** Each offering gets `<name>-binding`, named in
+`status.binding`, holding the
+[Service Binding Specification](https://servicebinding.io/spec/core/1.1.0/)'s
+well-known entries (`type`, `provider`, `host`, `port`, `uri`) and the
+offering's values and Secret's keys, which can't replace those. That's
+the specification's "provisioned service", so anything implementing it
+can bind to an offering too.
+
+A connection waits, under `Provisioned`, while its offering isn't
+there or hasn't found its Service. Changes to an offering reach its
+applications when it's next reconciled, and an offering looks at its
+Service again every minute, which is when it notices pods behind it
+becoming ready.
 
 ### The namespace
 
@@ -427,6 +505,9 @@ script won't go out before it.
 
 ## Not yet
 
+- Credentials across namespaces. A connection from another namespace
+  gets the address alone; copying Secrets between tenants is a decision
+  of its own.
 - Redis. The shared Redis is divided by database number, and handing
   out numbers safely needs a design of its own.
 - Forges other than GitLab. `src/forge/` is where they'd go.

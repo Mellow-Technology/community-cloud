@@ -18,6 +18,7 @@ pub mod dns;
 pub mod error;
 pub mod forge;
 pub mod naming;
+pub mod offerings;
 pub mod reconcile;
 pub mod registry;
 pub mod resources;

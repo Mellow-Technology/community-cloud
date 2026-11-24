@@ -60,6 +60,20 @@ rules:
   - apiGroups: ["community-cloud.technology"]
     resources: ["webapplications/status", "webapplications/finalizers"]
     verbs: ["get", "patch", "update"]
+  # ServiceOfferings: their status, their binding Secrets (under
+  # "secrets" below), and the ones applications offer of themselves.
+  # Delete only removes one an application no longer offers, and only
+  # one it owns
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["serviceofferings"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["community-cloud.technology"]
+    resources: ["serviceofferings/status"]
+    verbs: ["get", "patch", "update"]
+  # Whether anything behind an offering's Service is ready
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["community-cloud.technology"]
     resources: ["dnsproviders"]
     verbs: ["get", "list", "watch"]
@@ -143,7 +157,7 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
 rules:
   - apiGroups: ["community-cloud.technology"]
-    resources: ["webapplications"]
+    resources: ["webapplications", "serviceofferings"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
 ---
 # The same for "view", along with the Postgres Cirrus starts in a
@@ -162,7 +176,7 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
   - apiGroups: ["community-cloud.technology"]
-    resources: ["webapplications"]
+    resources: ["webapplications", "serviceofferings"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]

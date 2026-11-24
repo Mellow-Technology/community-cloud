@@ -112,15 +112,26 @@ describe("installing Cirrus", () => {
   });
 });
 
+describe("ServiceOffering", () => {
+  it("is namespaced, since an offering belongs to the namespace its Service is in", async () => {
+    const crds = await render(...CIRRUS.manifests!.before!.filter((path) => path.endsWith("Cirrus.crd.yaml")));
+    const crd = crds.find((each) => each.spec.names.kind === "ServiceOffering");
+
+    assert.equal(crd.spec.group, "community-cloud.technology");
+    assert.deepEqual(crd.spec.names.shortNames, ["offering"]);
+    assert.equal(crd.spec.scope, "Namespaced");
+  });
+});
+
 describe("the ExternalDNS instances Cirrus runs", () => {
   const rbac = () => render("embed://operators/cirrus/Cirrus.rbac.yaml");
 
-  it("lets Kubernetes's own roles deploy WebApplications, so a RoleBinding is all a team needs", async () => {
+  it("lets Kubernetes's own roles deploy WebApplications and offer services, so a RoleBinding is all a team needs", async () => {
     const role = (await rbac()).find((each) => each.metadata.name === "cirrus-webapplications-edit");
     assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-edit"], "true");
     assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-admin"], "true");
     assert.equal(role.metadata.labels["rbac.authorization.k8s.io/aggregate-to-view"], undefined);
-    assert.deepEqual(role.rules.flatMap((rule: any) => rule.resources), ["webapplications"]);
+    assert.deepEqual(role.rules.flatMap((rule: any) => rule.resources), ["webapplications", "serviceofferings"]);
   });
 
   it("only lets the view role read", async () => {

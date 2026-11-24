@@ -29,6 +29,8 @@ import {
   DEFAULT_TAG,
   DEFAULT_TOKEN_KEY,
   KIND,
+  type ConnectionSpec,
+  type OfferSpec,
   type StorageType,
   type VolumeSpec,
   type WebApplication,
@@ -78,6 +80,16 @@ export interface WebApplicationForm {
   bucketQuota: string;
   volumes: VolumeRow[];
   rabbitmq: boolean;
+
+  // Services it connects to, by their ServiceOffering
+  serviceConnections: ConnectionRow[];
+  // Whether it offers itself, and how
+  offers: boolean;
+  offerTitle: string;
+  offerDescription: string;
+  offerProtocol: string;
+  offerPath: string;
+  offerShareWith: string;
 
   migrations: boolean;
   migrationCommand: string;
@@ -130,6 +142,13 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     bucketQuota: "",
     volumes: [],
     rabbitmq: false,
+    serviceConnections: [],
+    offers: false,
+    offerTitle: "",
+    offerDescription: "",
+    offerProtocol: "http",
+    offerPath: "",
+    offerShareWith: "",
     migrations: false,
     migrationCommand: "",
     migrationArgs: "",
@@ -233,6 +252,17 @@ export function toForm(app: WebApplication): WebApplicationForm {
       type: volume.type ?? "fast",
     })),
     rabbitmq: spec.rabbitmq !== undefined,
+    serviceConnections: (spec.connections ?? []).map((connection) => ({
+      offering: connection.offering,
+      namespace: connection.namespace ?? "",
+      name: connection.name ?? "",
+    })),
+    offers: spec.offers !== undefined,
+    offerTitle: spec.offers?.title ?? "",
+    offerDescription: spec.offers?.description ?? "",
+    offerProtocol: spec.offers?.protocol ?? "http",
+    offerPath: spec.offers?.path ?? "",
+    offerShareWith: (spec.offers?.shareWith ?? []).join(", "),
     migrations: spec.migrations !== undefined,
     migrationCommand: (spec.migrations?.command ?? []).join("\n"),
     migrationArgs: (spec.migrations?.args ?? []).join("\n"),
@@ -402,6 +432,32 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
     });
   setOrDelete(spec, "volumes", volumes.length > 0 ? volumes : undefined);
 
+  const connections = form.serviceConnections
+    .filter((row) => row.offering.trim() !== "")
+    .map((row): ConnectionSpec => {
+      const connection: ConnectionSpec = { offering: row.offering.trim() };
+      // Left out when it's the application's own, as Cirrus reads it
+      const namespace = row.namespace.trim();
+      if (namespace !== "" && namespace !== form.namespace.trim()) connection.namespace = namespace;
+      const name = row.name.trim();
+      if (name !== "" && name !== connection.offering) connection.name = name;
+      return connection;
+    });
+  setOrDelete(spec, "connections", connections.length > 0 ? connections : undefined);
+
+  if (form.offers) {
+    const offers: OfferSpec = { ...spec.offers };
+    setOrDelete(offers, "title", nonEmpty(form.offerTitle));
+    setOrDelete(offers, "description", nonEmpty(form.offerDescription));
+    setOrDelete(offers, "protocol", form.offerProtocol === "http" ? undefined : nonEmpty(form.offerProtocol));
+    setOrDelete(offers, "path", nonEmpty(form.offerPath));
+    const shareWith = splitList(form.offerShareWith);
+    setOrDelete(offers, "shareWith", shareWith.length > 0 ? shareWith : undefined);
+    spec.offers = offers;
+  } else {
+    delete spec.offers;
+  }
+
   if (form.migrations) {
     const args = splitLines(form.migrationArgs);
     const migrations = { ...spec.migrations, command: splitLines(form.migrationCommand) };
@@ -523,6 +579,20 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     errors.hostnames = `${badHost} isn't a hostname. Use the full name, such as app.example.org.`;
   }
 
+  const connectionProblem = connectionsProblem(form.serviceConnections);
+  if (connectionProblem !== undefined) {
+    errors.serviceConnections = connectionProblem;
+  }
+  if (form.offers) {
+    const badNamespace = splitList(form.offerShareWith).find((each) => !NAMESPACE_NAME.test(each));
+    if (badNamespace !== undefined) {
+      errors.offerShareWith = `${badNamespace} isn't a namespace's name.`;
+    }
+    if (form.offerPath.trim() !== "" && !form.offerPath.trim().startsWith("/")) {
+      errors.offerPath = "A path, starting with /.";
+    }
+  }
+
   const volumeProblem = volumesProblem(form.volumes);
   if (volumeProblem !== undefined) {
     errors.volumes = volumeProblem;
@@ -615,6 +685,53 @@ export function volumesProblem(rows: VolumeRow[]): string | undefined {
     if (!QUANTITY.test(row.size.trim()) || !(parseQuantity(row.size.trim()) ?? 0)) {
       return `Give ${name} a size, such as 10Gi.`;
     }
+  }
+  return undefined;
+}
+
+/**
+ * A connection as the form edits it.
+ */
+export interface ConnectionRow {
+  offering: string;
+  // Blank is the application's own
+  namespace: string;
+  // What its variables start with; blank is the offering's name
+  name: string;
+}
+
+// A namespace's name: a DNS label
+const NAMESPACE_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+
+/**
+ * A connection's name as the start of its variables, as Cirrus makes
+ * it: upper case, anything but letters and digits as underscores.
+ *
+ * @param name
+ * @returns
+ */
+export function envPrefix(name: string): string {
+  const prefix = name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return /^[0-9]/.test(prefix) ? `_${prefix}` : prefix;
+}
+
+/**
+ * What's wrong with the connections, as Cirrus would say it: two that
+ * would set the same variables. Rows with no offering are ignored.
+ *
+ * @param rows
+ * @returns
+ */
+export function connectionsProblem(rows: ConnectionRow[]): string | undefined {
+  const seen = new Map<string, string>();
+  for (const row of rows.filter((each) => each.offering.trim() !== "")) {
+    const name = row.name.trim() || row.offering.trim();
+    const prefix = envPrefix(name);
+    const other = seen.get(prefix);
+    if (other !== undefined) {
+      return `${other} and ${name} would both set ${prefix}_*. Give one a different name.`;
+    }
+    seen.set(prefix, name);
   }
   return undefined;
 }
