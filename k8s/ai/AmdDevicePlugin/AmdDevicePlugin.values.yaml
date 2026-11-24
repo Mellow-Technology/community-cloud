@@ -1,0 +1,34 @@
+# AMD's device plugin, from ROCm/k8s-device-plugin. It counts each
+# node's cards and tells the kubelet, which is what makes "amd.com/gpu"
+# something a pod can ask for and the scheduler can keep track of.
+# Installed by the amd bundle.
+#
+# A pod given a card is handed /dev/kfd and that card's /dev/dri nodes
+# by the plugin, so it needs neither privileges nor the host's network.
+# ROCm itself comes in the pod's image; the node only needs the kernel's
+# amdgpu driver.
+
+# The chart picks its nodes with labels from Node Feature Discovery,
+# which isn't here. The amd bundle labels the nodes whose driver
+# answered, so that's used instead. The plugin stops at once on a node
+# without amdgpu, and its pod would restart there for ever.
+#
+# The chart's own label is set to null to take it out: Helm merges a
+# map with the chart's, so leaving it unmentioned would keep it, and
+# both would have to match. The images are only built for amd64.
+node_selector_enabled: true
+node_selector:
+  gpu.community-cloud.technology/amd-driver: ready
+  kubernetes.io/arch: amd64
+  feature.node.kubernetes.io/pci-0300_1002.present: null
+
+# Off, as the chart has them. Node Feature Discovery would be a second
+# way of finding hardware the gpu bundle already finds. The labeller
+# adds labels for a card's memory, compute units and family, which are
+# worth having to choose between different AMD cards; it needs to be
+# able to change every Node in the cluster to do it, and with one kind
+# of card there's nothing to choose between.
+nfd:
+  enabled: false
+labeller:
+  enabled: false

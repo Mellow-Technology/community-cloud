@@ -1,8 +1,11 @@
+# Where vllm-amd.yaml keeps the models it downloads, so a restart
+# doesn't fetch them again. On the node-local SSD class, which ties the
+# Deployment to the node it's first scheduled on: the one with a card.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mistral-7b
-  namespace: default
+  namespace: cc-office
 spec:
   accessModes:
   - ReadWriteOnce

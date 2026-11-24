@@ -147,13 +147,27 @@ Postgres is easier to back up, upgrade and reason about than four.
 | `vLLM/vllm-amd.yaml` | vLLM on AMD GPUs, via ROCm. |
 | `vLLM/vllm-amd-pvc.yaml` | Its model storage. |
 
-Applied by hand, into `default`. It doesn't select a node yet; the
-installer labels any node it finds a compute-capable GPU on
-`node-role.kubernetes.io/worker-gpu`, which is what it should select.
+Applied by hand, into `cc-office`, after the `amd` bundle has run. It
+asks for its card as `amd.com/gpu`, which is all that places it: only a
+node with a card AMD's device plugin has found offers one. The plugin
+passes the card's device nodes in, so the pod isn't privileged and
+isn't on the host's network or IPC. It needs a Secret `hf-token-secret`
+in `cc-office` with a Hugging Face token under `token`. It's written
+for a Ryzen AI Max (gfx1151), whose GPU uses the node's RAM: its memory
+request depends on how that's split, which the manifest explains.
+
+It isn't a package yet. That would want a way for the configuration to
+supply the Hugging Face token, since the installer only generates
+secrets, a choice of model and of an image built for the cluster's
+card, and somewhere to say which applications need a GPU.
 
 `NvidiaDevicePlugin/NvidiaDevicePlugin.values.yaml` is the Helm values
 for NVIDIA's device plugin, which makes `nvidia.com/gpu` something a
 pod can ask for. The `nvidia` bundle installs it.
+
+`AmdDevicePlugin/AmdDevicePlugin.values.yaml` is the same for AMD's,
+which makes `amd.com/gpu` something a pod can ask for. The `amd` bundle
+installs it.
 
 ## Applying in order
 

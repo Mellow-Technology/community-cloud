@@ -48,12 +48,14 @@ import { loadPlugins } from "../plugins/registry.ts";
  *  9. k3s            — the agent joins, on its mesh address if it has one
  * 10. nodeLabels     — the node described to the cluster
  * 11. gateway-addresses — the pool and the cluster Gateway brought up
- * 12. nvidia         — the runtime and the device plugin, which restarts
- *                      K3s on a node with NVIDIA hardware
  *                     to date, for a gateway node with an address of
  *                     its own. The one cluster-wide step, and only
  *                     the part of "gateway" that is about addresses.
- * 13. node-joined    — the cluster's own word that it worked
+ * 12. nvidia         — the runtime and the device plugin, which restarts
+ *                      K3s on a node with NVIDIA hardware
+ * 13. amd            — the device plugin, on a node whose amdgpu driver
+ *                      works
+ * 14. node-joined    — the cluster's own word that it worked
  *
  * nebula-network isn't here: the mesh's roles belong to the cluster,
  * and were made when it was installed. Enrolling looks them up.
@@ -71,6 +73,7 @@ export const ADD_NODE_PIPELINE = [
   "nodeLabels",
   "gateway-addresses",
   "nvidia",
+  "amd",
   "node-joined",
 ];
 

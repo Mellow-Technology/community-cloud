@@ -14,6 +14,7 @@ import { ClusterSignInCommands, K3sCommands } from "./K3s.ts";
 import { ClusterOnlineCommands, NodeJoinedCommands } from "./AddNode.ts";
 import { BasePackageCommands } from "./BasePackages.ts";
 import { DevicePluginCommands, NvidiaCommands } from "./Nvidia.ts";
+import { AmdCommands, AmdDevicePluginCommands } from "./Amd.ts";
 import { NodeLabelCommands } from "./NodeLabels.ts";
 import { LvmCommands } from "./LVM.ts";
 import { NetworkingCommands } from "./Networking.ts";
@@ -93,8 +94,9 @@ export interface BundleDefinition {
  * just run and their findings are in the context. Run on its own, it
  * would know of no GPU and no disk and leave those labels off, so it
  * looks for itself — with the read-only commands only, since labelling
- * a node shouldn't be able to format its disks. The nvidia bundle does
- * the same, to know whether a node has anything for it to do.
+ * a node shouldn't be able to format its disks. The nvidia and amd
+ * bundles do the same, to know whether a node has anything for them to
+ * do.
  *
  * @param commands
  * @param key the context entry they fill in
@@ -138,6 +140,11 @@ function unlessKnown(commands: CommandSpec[], key: string): CommandSpec[] {
  * the list without being able to take anything out of it.
  */
 const builtInBundles: BundleDefinition[] = [
+  {
+    name: "amd",
+    description: "Label nodes whose amdgpu driver works, and install the device plugin that lets pods ask for an AMD card",
+    commands: [...unlessKnown(GpuInfoCommands, "videoDevices"), ...AmdCommands, ...AmdDevicePluginCommands],
+  },
   {
     name: "authentik",
     description: "Install Authentik into cc-office, for single sign on",
