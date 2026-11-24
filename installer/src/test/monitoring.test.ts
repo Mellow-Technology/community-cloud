@@ -235,6 +235,15 @@ describe("what Prometheus does", async () => {
     assert.equal(values["prometheus-node-exporter"].service.listenOnAllInterfaces, false);
   });
 
+  it("labels Cilium's series the way its own dashboards pick them out", () => {
+    const monitors = render(config, "embed://monitoring/Monitoring.monitors.yaml");
+    const named = (name: string) => monitors.find((each) => each.metadata.name === name);
+    // As k8s_app="cilium" and io_cilium_app="operator", once Prometheus
+    // has made them label names
+    assert.deepEqual(named("cilium-agent").spec.podTargetLabels, ["k8s-app"]);
+    assert.deepEqual(named("cilium-operator").spec.podTargetLabels, ["io.cilium/app"]);
+  });
+
   it("leaves Envoy's metrics off, which nothing scrapes and nothing can narrow", () => {
     const [cilium] = render(config, "embed://networking/cilium/Cilium.values.yaml");
     assert.equal(cilium.envoy.prometheus.enabled, false);
