@@ -80,7 +80,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 
 export const config = {
   // Everything but sign-in itself, the health check, GitLab CI's
-  // builds (fetched by GitLab, with a key; see app/ci), and Next's own
-  // files
-  matcher: ["/((?!auth/|healthz|ci/gitlab/|_next/static|_next/image|favicon.ico|icon.svg).*)"],
+  // builds (ci/gitlab and ci/gitlab-bake, fetched by GitLab with a key;
+  // see lib/gitlab/serveBuild.ts), and Next's own files
+  matcher: ["/((?!auth/|healthz|ci/gitlab/|ci/gitlab-bake/|_next/static|_next/image|favicon.ico|icon.svg).*)"],
 };

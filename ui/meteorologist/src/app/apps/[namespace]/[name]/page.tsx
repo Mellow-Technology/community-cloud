@@ -25,7 +25,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { ProjectBuild } from "@/components/ProjectBuild";
 import styles from "@/components/page.module.scss";
 import { getPublicUrl } from "@/lib/config";
-import { BUILDS_CONFIG_MAP, DEFAULT_DOCKERFILE, buildSettingsFrom, includeUrl } from "@/lib/gitlab/builds";
+import { BUILDS_CONFIG_MAP, buildSettingsFrom, includeUrl } from "@/lib/gitlab/builds";
 import { getKube } from "@/lib/kube";
 import { describeError, isNotFound, settle } from "@/lib/kube/client";
 import { POSTGRES_CLUSTER, postgresDatabase } from "@/lib/postgres";
@@ -235,9 +235,14 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
           <ProjectBuild
             namespace={appNamespace}
             project={gitlab.project}
-            own={buildSettings?.projects[gitlab.project.toLowerCase()]}
-            defaultDockerfile={buildSettings?.dockerfile ?? DEFAULT_DOCKERFILE}
-            url={buildSettings && includeUrl(getPublicUrl(), appNamespace, buildSettings.key, gitlab.project)}
+            own={buildSettings?.projects[gitlab.project.toLowerCase()] ?? {}}
+            namespaceBuild={buildSettings?.build ?? {}}
+            urls={
+              buildSettings && {
+                dockerfile: includeUrl(getPublicUrl(), "dockerfile", appNamespace, buildSettings.key, gitlab.project),
+                bake: includeUrl(getPublicUrl(), "bake", appNamespace, buildSettings.key, gitlab.project),
+              }
+            }
             imageTag={gitlab.imageTag}
           />
         ) : (

@@ -32,9 +32,10 @@ import {
   BUILDS_CONFIG_MAP,
   buildSettingsFrom,
   buildsConfigMap,
-  dockerfileProblem,
-  normaliseDockerfile,
-  withProjectDockerfile,
+  buildProblems,
+  normaliseBuild,
+  withProjectBuild,
+  type Build,
   type BuildSettings,
 } from "./gitlab/builds";
 import { newKey } from "./gitlab/buildKeys";
@@ -335,7 +336,7 @@ async function changeBuildSettings(
   const kube = await getKube();
   for (let attempt = 1; ; attempt += 1) {
     const existing = await kube.getConfigMap(namespace, BUILDS_CONFIG_MAP);
-    const settings = buildSettingsFrom(existing) ?? { key: newKey(), projects: {} };
+    const settings = buildSettingsFrom(existing) ?? { key: newKey(), build: {}, projects: {} };
     try {
       await kube.saveConfigMap(buildsConfigMap(namespace, change(settings), CREATED_BY, existing));
       return;
@@ -348,23 +349,32 @@ async function changeBuildSettings(
 }
 
 /**
- * Sets where a namespace's projects keep their Dockerfile unless they
- * say otherwise. Blank is the repository's top-level Dockerfile.
+ * A build as the browser sent it, checked: what's wrong with it, or the
+ * build as it's kept.
  *
- * @param namespace
- * @param dockerfile
+ * @param build
  * @returns
  */
-export async function saveGitLabBuildDefault(namespace: string, dockerfile: string): Promise<ActionResult> {
-  const problem = dockerfileProblem(dockerfile);
-  if (problem !== undefined) {
-    return { ok: false, error: problem };
+function checkedBuild(build: Build): { ok: true; build: Build } | { ok: false; error: string } {
+  const problem = Object.values(buildProblems(build))[0];
+  return problem === undefined ? { ok: true, build: normaliseBuild(build) } : { ok: false, error: problem };
+}
+
+/**
+ * Sets where a namespace's projects keep their Dockerfile, bake file
+ * and bake target unless they say otherwise. Blanks are the defaults.
+ *
+ * @param namespace
+ * @param build
+ * @returns
+ */
+export async function saveGitLabBuildDefault(namespace: string, build: Build): Promise<ActionResult> {
+  const checked = checkedBuild(build);
+  if (!checked.ok) {
+    return checked;
   }
   const result = await run(async () => {
-    await changeBuildSettings(namespace, (settings) => ({
-      ...settings,
-      dockerfile: normaliseDockerfile(dockerfile) || undefined,
-    }));
+    await changeBuildSettings(namespace, (settings) => ({ ...settings, build: checked.build }));
     return undefined;
   });
   revalidatePath("/", "layout");
@@ -388,28 +398,25 @@ export async function changeGitLabBuildKey(namespace: string): Promise<ActionRes
 }
 
 /**
- * Sets where one project keeps its Dockerfile. Blank goes back to the
- * namespace's default.
+ * Sets where one project keeps its Dockerfile, bake file and bake
+ * target. Blanks, and anything the same as the namespace's, are the
+ * namespace's.
  *
  * @param namespace
  * @param project its path, as group/name
- * @param dockerfile
+ * @param build
  * @returns
  */
-export async function saveProjectDockerfile(
-  namespace: string,
-  project: string,
-  dockerfile: string,
-): Promise<ActionResult> {
-  const problem = dockerfileProblem(dockerfile);
-  if (problem !== undefined) {
-    return { ok: false, error: problem };
+export async function saveProjectBuild(namespace: string, project: string, build: Build): Promise<ActionResult> {
+  const checked = checkedBuild(build);
+  if (!checked.ok) {
+    return checked;
   }
   if (project.trim() === "") {
     return { ok: false, error: "Choose the application's GitLab project first." };
   }
   const result = await run(async () => {
-    await changeBuildSettings(namespace, (settings) => withProjectDockerfile(settings, project.trim(), dockerfile));
+    await changeBuildSettings(namespace, (settings) => withProjectBuild(settings, project.trim(), checked.build));
     return undefined;
   });
   revalidatePath("/", "layout");

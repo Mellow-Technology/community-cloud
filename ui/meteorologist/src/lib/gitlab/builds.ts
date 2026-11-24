@@ -4,19 +4,22 @@
  *
  * A project's .gitlab-ci.yml includes one line, a remote include of a
  * URL here, and GitLab fetches the build from it each time a pipeline
- * starts. The build is the same for everything: Docker in Docker,
- * tagging the image with the commit's short SHA, which is one of the
- * tags Cirrus looks for, and pushing it to the project's registry. What
- * differs is where the Dockerfile is, so that's all there is to set: a
- * default for the namespace, and a path for any project whose Dockerfile
- * is somewhere else.
+ * starts. The build is much the same for everything: Docker in
+ * Docker, tagging the image with the commit's short SHA, which is one of
+ * the tags Cirrus looks for, and pushing it to the project's registry.
+ *
+ * There are two, side by side, at different paths: one that runs docker
+ * build with a Dockerfile, and one that runs buildx bake with a target
+ * from a bake file. A project uses whichever it includes. What's set is
+ * where those are: for the namespace, and for any project whose are
+ * somewhere else.
  *
  * GitLab fetches the file without signing in, so the URL carries a key
  * that only the namespace's settings know. The settings are a
  * ConfigMap in the namespace with one fixed name, which Meteorologist's
  * own account may read and nothing else of: the file is served without
- * anyone signed in to read it as. It holds paths and the key, nothing
- * a token could get at.
+ * anyone signed in to read it as. It holds paths, targets and the key,
+ * nothing a token could get at.
  *
  * The key is in the path rather than a query parameter because GitLab
  * only includes a remote file whose name ends in .yml or .yaml, and it
@@ -32,18 +35,102 @@ export const BUILDS_CONFIG_MAP = "meteorologist-gitlab-builds";
 // Docker's own default
 export const DEFAULT_DOCKERFILE = "Dockerfile";
 
+// What bake builds when no target is named
+export const DEFAULT_BAKE_TARGET = "default";
+
+/**
+ * The two builds, each served at a path of its own: docker build, and
+ * buildx bake.
+ */
+export type Builder = "dockerfile" | "bake";
+
+// Where each is served, under Meteorologist's address. The Dockerfile's
+// is the one from before bake, so includes made then keep working.
+const BUILDER_PATHS: Record<Builder, string> = { dockerfile: "ci/gitlab", bake: "ci/gitlab-bake" };
+
+/**
+ * Where a project's builds find what they build from. Blank is the
+ * default: Dockerfile, bake's own search for its file, and the
+ * "default" target.
+ */
+export interface Build {
+  dockerfile?: string;
+  bakeFile?: string;
+  bakeTarget?: string;
+}
+
+const BUILD_FIELDS = ["dockerfile", "bakeFile", "bakeTarget"] as const;
+
 /**
  * A namespace's build settings.
  *
- * - key: what the include URL has to carry
- * - dockerfile: the namespace's default, when it has one
- * - projects: Dockerfile paths by project path, lower-cased, for the
- *   projects that differ from the default
+ * - key: what the include URLs have to carry
+ * - build: where its projects' builds find things
+ * - projects: by project path, lower-cased, whatever a project has
+ *   somewhere else; anything it leaves out is the namespace's
+ *
+ * In the ConfigMap the namespace's are the keys dockerfile, bakeFile
+ * and bakeTarget, and projects is a JSON object. A project's entry
+ * there may be a string, which is a Dockerfile path: how they were all
+ * written before bake.
  */
 export interface BuildSettings {
   key: string;
-  dockerfile?: string;
-  projects: Record<string, string>;
+  build: Build;
+  projects: Record<string, Build>;
+}
+
+/**
+ * A path as kept: trimmed, without a leading "./".
+ *
+ * @param path
+ * @returns
+ */
+export function normalisePath(path: string): string {
+  return path.trim().replace(/^(\.\/)+/, "");
+}
+
+/**
+ * A build with its fields trimmed and blanks left out.
+ *
+ * @param build
+ * @returns
+ */
+export function normaliseBuild(build: Build | undefined): Build {
+  const normalised: Build = {};
+  for (const field of BUILD_FIELDS) {
+    const value = build?.[field];
+    const trimmed = value === undefined ? "" : field === "bakeTarget" ? value.trim() : normalisePath(value);
+    if (trimmed !== "") {
+      normalised[field] = trimmed;
+    }
+  }
+  return normalised;
+}
+
+/**
+ * A project's entry as stored, or nothing when it's unreadable or
+ * empty.
+ *
+ * @param value
+ * @returns
+ */
+function storedBuild(value: unknown): Build | undefined {
+  let build: Build;
+  if (typeof value === "string") {
+    build = normaliseBuild({ dockerfile: value });
+  } else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const entry = value as Record<string, unknown>;
+    const text = (field: string) => (typeof entry[field] === "string" ? entry[field] : undefined);
+    build = normaliseBuild({
+      dockerfile: text("dockerfile"),
+      bakeFile: text("bakeFile"),
+      bakeTarget: text("bakeTarget"),
+    });
+  } else {
+    return undefined;
+  }
+  return Object.keys(build).length > 0 ? build : undefined;
 }
 
 /**
@@ -54,25 +141,27 @@ export interface BuildSettings {
  * @returns
  */
 export function buildSettingsFrom(configMap: ConfigMap | undefined): BuildSettings | undefined {
-  const key = configMap?.data?.key?.trim();
+  const data = configMap?.data ?? {};
+  const key = data.key?.trim();
   if (key === undefined || key === "") {
     return undefined;
   }
-  let projects: Record<string, string> = {};
+  const projects: Record<string, Build> = {};
   try {
-    const parsed: unknown = JSON.parse(configMap?.data?.projects ?? "{}");
+    const parsed: unknown = JSON.parse(data.projects ?? "{}");
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      projects = Object.fromEntries(
-        Object.entries(parsed)
-          .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== "")
-          .map(([project, path]) => [project.toLowerCase(), path]),
-      );
+      for (const [project, value] of Object.entries(parsed)) {
+        const build = storedBuild(value);
+        if (build !== undefined) {
+          projects[project.toLowerCase()] = build;
+        }
+      }
     }
   } catch {
-    // Written badly by hand: as if no project had a path of its own
+    // Written badly by hand: as if no project had anything of its own
   }
-  const dockerfile = configMap?.data?.dockerfile?.trim();
-  return { key, dockerfile: dockerfile || undefined, projects };
+  const build = normaliseBuild({ dockerfile: data.dockerfile, bakeFile: data.bakeFile, bakeTarget: data.bakeTarget });
+  return { key, build, projects };
 }
 
 /**
@@ -92,7 +181,11 @@ export function buildsConfigMap(
   labels: Record<string, string>,
   existing?: ConfigMap,
 ): ConfigMap {
-  const projects = Object.fromEntries(Object.entries(settings.projects).toSorted(([a], [b]) => a.localeCompare(b)));
+  const projects = Object.fromEntries(
+    Object.entries(settings.projects)
+      .toSorted(([a], [b]) => a.localeCompare(b))
+      .map(([project, build]) => [project, normaliseBuild(build)]),
+  );
   return {
     metadata: {
       ...existing?.metadata,
@@ -102,87 +195,142 @@ export function buildsConfigMap(
     },
     data: {
       key: settings.key,
-      ...(settings.dockerfile ? { dockerfile: settings.dockerfile } : {}),
+      ...normaliseBuild(settings.build),
       projects: JSON.stringify(projects, null, 2) + "\n",
     },
   };
 }
 
 /**
- * The Dockerfile a project builds from.
+ * Where a project's builds find things: its own, then the namespace's,
+ * field by field.
  *
  * @param settings
  * @param project its path, as group/name
  * @returns
  */
-export function dockerfileFor(settings: BuildSettings | undefined, project: string): string {
-  return settings?.projects[project.toLowerCase()] ?? settings?.dockerfile ?? DEFAULT_DOCKERFILE;
+export function buildFor(settings: BuildSettings | undefined, project: string): Build {
+  return { ...settings?.build, ...settings?.projects[project.toLowerCase()] };
 }
 
 /**
- * The settings with a project's own path set, or taken away when it's
- * blank or the same as the default.
+ * What a blank field means.
+ *
+ * @param field
+ * @returns
+ */
+function defaultFor(field: keyof Build): string | undefined {
+  return field === "dockerfile" ? DEFAULT_DOCKERFILE : field === "bakeTarget" ? DEFAULT_BAKE_TARGET : undefined;
+}
+
+/**
+ * The settings with a project's own set, keeping only what differs from
+ * the namespace's, and none at all when nothing does.
  *
  * @param settings
  * @param project
- * @param dockerfile
+ * @param build
  * @returns
  */
-export function withProjectDockerfile(settings: BuildSettings, project: string, dockerfile: string): BuildSettings {
+export function withProjectBuild(settings: BuildSettings, project: string, build: Build): BuildSettings {
+  const own = normaliseBuild(build);
+  const namespace = normaliseBuild(settings.build);
+  for (const field of BUILD_FIELDS) {
+    if (own[field] !== undefined && own[field] === (namespace[field] ?? defaultFor(field))) {
+      delete own[field];
+    }
+  }
   const projects = { ...settings.projects };
-  const path = normaliseDockerfile(dockerfile);
-  if (path === "" || path === (settings.dockerfile ?? DEFAULT_DOCKERFILE)) {
+  if (Object.keys(own).length === 0) {
     delete projects[project.toLowerCase()];
   } else {
-    projects[project.toLowerCase()] = path;
+    projects[project.toLowerCase()] = own;
   }
   return { ...settings, projects };
 }
 
 /**
- * A Dockerfile path as kept: trimmed, without a leading "./".
+ * What a project sets for itself, in a few words.
  *
- * @param path
+ * @param build
  * @returns
  */
-export function normaliseDockerfile(path: string): string {
-  return path.trim().replace(/^(\.\/)+/, "");
+export function describeBuild(build: Build): string {
+  const { dockerfile, bakeFile, bakeTarget } = normaliseBuild(build);
+  return [
+    dockerfile && `Dockerfile ${dockerfile}`,
+    bakeFile && `bake file ${bakeFile}`,
+    bakeTarget && `bake target ${bakeTarget}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 // A path in the repository: letters, digits and . _ - in segments, no
 // "..", nothing that would need quoting in the build's shell
-const DOCKERFILE_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+const REPOSITORY_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+
+// A bake target's name, as bake allows them
+const BAKE_TARGET = /^[A-Za-z0-9_-]+$/;
 
 /**
- * What's wrong with a Dockerfile path, as a sentence, or nothing. A
- * blank one is fine: it means the default.
+ * What's wrong with a path in the repository, as a sentence, or
+ * nothing. A blank one is fine: it means the default.
  *
  * @param path
+ * @param example
  * @returns
  */
-export function dockerfileProblem(path: string): string | undefined {
-  const normalised = normaliseDockerfile(path);
+function pathProblem(path: string | undefined, example: string): string | undefined {
+  const normalised = normalisePath(path ?? "");
   if (normalised === "") {
     return undefined;
   }
-  if (!DOCKERFILE_PATH.test(normalised) || normalised.split("/").some((segment) => segment === "..")) {
-    return "A path from the top of the repository, such as ops/docker/Dockerfile: letters, digits, dots, hyphens, underscores and slashes.";
+  if (!REPOSITORY_PATH.test(normalised) || normalised.split("/").some((segment) => segment === "..")) {
+    return `A path from the top of the repository, such as ${example}: letters, digits, dots, hyphens, underscores and slashes.`;
   }
   return undefined;
+}
+
+/**
+ * What's wrong with each of a build's fields, by field. Empty when it's
+ * fine.
+ *
+ * @param build
+ * @returns
+ */
+export function buildProblems(build: Build): Partial<Record<keyof Build, string>> {
+  const problems: Partial<Record<keyof Build, string>> = {};
+  const dockerfile = pathProblem(build.dockerfile, "ops/docker/Dockerfile");
+  if (dockerfile) problems.dockerfile = dockerfile;
+  const bakeFile = pathProblem(build.bakeFile, "docker-bake.hcl");
+  if (bakeFile) problems.bakeFile = bakeFile;
+  const target = build.bakeTarget?.trim() ?? "";
+  if (target !== "" && !BAKE_TARGET.test(target)) {
+    problems.bakeTarget = "A target's name: letters, digits, hyphens and underscores.";
+  }
+  return problems;
 }
 
 /**
  * Where GitLab fetches a project's build from.
  *
  * @param publicUrl Meteorologist's own address
+ * @param builder
  * @param namespace
  * @param key
  * @param project its path, as group/name
  * @returns
  */
-export function includeUrl(publicUrl: string, namespace: string, key: string, project: string): string {
+export function includeUrl(
+  publicUrl: string,
+  builder: Builder,
+  namespace: string,
+  key: string,
+  project: string,
+): string {
   const path = project.split("/").map(encodeURIComponent).join("/");
-  return `${publicUrl}/ci/gitlab/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}/${path}.yml`;
+  return `${publicUrl}/${BUILDER_PATHS[builder]}/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}/${path}.yml`;
 }
 
 /**
@@ -211,22 +359,15 @@ export function includeSnippet(url: string): string {
   return `include:\n  - remote: "${url}"\n`;
 }
 
-/**
- * The build GitLab runs.
- *
- * @param dockerfile already checked with dockerfileProblem
- * @returns
- */
-export function ciFile(dockerfile: string): string {
-  return `# Served by Meteorologist. Builds the image from ${dockerfile} and pushes
-# it to this project's container registry on every push to the default
-# branch, where Cirrus finds it by the commit.
-#
+// What every build pushes, as its header says
+const TAGS = `#
 # Tags pushed:
 #   $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA  (immutable, per commit)
 #   $CI_REGISTRY_IMAGE:latest                (moves with the default branch)
+`;
 
-stages:
+// The top of every build's job, and what logs in to the registry
+const JOB = `stages:
   - build
 
 docker-build:
@@ -234,14 +375,55 @@ docker-build:
   image: docker:27
   services:
     - docker:27-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_BUILDKIT: "1"
-    DOCKERFILE: "${dockerfile}"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"`;
+
+/**
+ * The build GitLab runs.
+ *
+ * @param builder
+ * @param build already checked with buildProblems
+ * @returns
+ */
+export function ciFile(builder: Builder, build: Build): string {
+  const { dockerfile, bakeFile, bakeTarget } = normaliseBuild(build);
+  if (builder === "bake") {
+    const target = bakeTarget ?? DEFAULT_BAKE_TARGET;
+    return `# Served by Meteorologist. Builds bake target ${target}${bakeFile ? ` from ${bakeFile}` : ""} and pushes it
+# to this project's container registry on every push to the default
+# branch, where Cirrus finds it by the commit. The target should build
+# one image: these tags replace any its file gives it.
+${TAGS}
+${JOB}
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    BAKE_FILE: "${bakeFile ?? ""}"
+    BAKE_TARGET: "${target}"
+  script:
+    # Reuse layers from the previous latest image (inline cache) when it exists.
+    - >
+      docker buildx bake
+      \${BAKE_FILE:+--file "$BAKE_FILE"}
+      --set "*.tags=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      --set "*.tags=$CI_REGISTRY_IMAGE:latest"
+      --set "*.cache-from=type=registry,ref=$CI_REGISTRY_IMAGE:latest"
+      --set "*.cache-to=type=inline"
+      --push
+      "$BAKE_TARGET"
+`;
+  }
+  const file = dockerfile ?? DEFAULT_DOCKERFILE;
+  return `# Served by Meteorologist. Builds the image from ${file} and pushes
+# it to this project's container registry on every push to the default
+# branch, where Cirrus finds it by the commit.
+${TAGS}
+${JOB}
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_BUILDKIT: "1"
+    DOCKERFILE: "${file}"
   script:
     # Reuse layers from the previous latest image (inline cache) when it exists.
     - docker pull "$CI_REGISTRY_IMAGE:latest" || true
