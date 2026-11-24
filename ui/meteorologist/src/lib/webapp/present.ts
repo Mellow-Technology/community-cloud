@@ -16,6 +16,7 @@ export function requestedServices(app: WebApplication): string[] {
   return [
     spec.postgres !== undefined && "Postgres",
     spec.bucket !== undefined && "Bucket",
+    (spec.volumes?.length ?? 0) > 0 && "Volumes",
     spec.rabbitmq !== undefined && "RabbitMQ",
     spec.source?.gitlab !== undefined && "GitLab",
     spec.migrations !== undefined && "Migrations",

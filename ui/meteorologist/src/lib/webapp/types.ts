@@ -51,6 +51,32 @@ export interface HealthCheckSpec {
 export type PostgresSpec = Record<string, unknown>;
 export type RabbitMqSpec = Record<string, unknown>;
 
+/**
+ * Community Cloud's storage types, each a StorageClass on one kind of
+ * disk (k8s/storage/StorageClass), and a RAM disk, which is memory
+ * emptied whenever the pod restarts.
+ */
+export type StorageType = "fast" | "sata" | "hdd" | "ram";
+
+// A RAM disk has no StorageClass: it's memory, not a claim
+export const STORAGE_TYPES: Array<{ value: StorageType; label: string; storageClass?: string }> = [
+  { value: "fast", label: "Fast (NVMe)", storageClass: "cc-local-ssd-fast" },
+  { value: "sata", label: "SATA SSD", storageClass: "cc-local-ssd-sata" },
+  { value: "hdd", label: "Hard disk", storageClass: "cc-local-hdd" },
+  { value: "ram", label: "RAM disk" },
+];
+
+/**
+ * A volume of the application's own, mounted into every copy.
+ */
+export interface VolumeSpec {
+  name: string;
+  mountPath: string;
+  size: string;
+  // Fast when left out
+  type?: StorageType;
+}
+
 export interface BucketSpec {
   quota?: string;
   [other: string]: unknown;
@@ -92,6 +118,7 @@ export interface WebApplicationSpec {
   hostnames?: string[];
   postgres?: PostgresSpec;
   bucket?: BucketSpec;
+  volumes?: VolumeSpec[];
   rabbitmq?: RabbitMqSpec;
   migrations?: MigrationsSpec;
   source?: SourceSpec;

@@ -39,6 +39,7 @@ pub mod port;
 pub mod postgres;
 pub mod rabbitmq;
 pub mod source;
+pub mod volumes;
 pub mod workload;
 
 use std::collections::BTreeMap;
@@ -221,6 +222,14 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     if app.spec.rabbitmq.is_some() {
         settle(
             rabbitmq::ensure(ctx, app).await,
+            &mut provided,
+            &mut problems,
+            &mut pending,
+        )?;
+    }
+    if !app.spec.volumes.is_empty() {
+        settle(
+            volumes::ensure(ctx, app).await,
             &mut provided,
             &mut problems,
             &mut pending,

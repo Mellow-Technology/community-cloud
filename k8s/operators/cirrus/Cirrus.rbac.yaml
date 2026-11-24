@@ -72,6 +72,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets", "services", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  # An application's volumes. No delete: deleting the application
+  # leaves its claims, and what's on them, on purpose
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
   # Read only: how an application's pods are doing is its Healthy
   # condition, and the Deployment makes and removes them
   - apiGroups: [""]

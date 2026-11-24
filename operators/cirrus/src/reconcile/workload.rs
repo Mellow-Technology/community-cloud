@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus};
+use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStatus, DeploymentStrategy};
 use k8s_openapi::api::core::v1::{
     Container, ContainerPort, EnvFromSource, EnvVar, HTTPGetAction, LocalObjectReference, PodSpec, PodTemplateSpec,
     Probe, ResourceRequirements, SecretEnvSource, Service, ServicePort, ServiceSpec,
@@ -55,7 +55,7 @@ pub fn container(app: &WebApplication, image: &str, env_from: &[String], env: &[
                 })
                 .collect()
         }),
-        resources: Some(resources),
+        resources: Some(super::volumes::with_ram_disks(app, resources)),
         ..Default::default()
     }
 }
@@ -75,6 +75,7 @@ pub fn pull_secrets(app: &WebApplication) -> Option<Vec<LocalObjectReference>> {
 pub fn deployment(app: &WebApplication, image: &str, port: i32, env_from: &[String], env: &[EnvVar]) -> Deployment {
     let (namespace, name) = super::identity(app);
     let mut main = container(app, image, env_from, env);
+    main.volume_mounts = super::volumes::mounts(app);
     main.ports = Some(vec![ContainerPort {
         name: Some("http".to_string()),
         container_port: port,
@@ -113,9 +114,18 @@ pub fn deployment(app: &WebApplication, image: &str, port: i32, env_from: &[Stri
                 spec: Some(PodSpec {
                     containers: vec![main],
                     image_pull_secrets: pull_secrets(app),
+                    volumes: super::volumes::pod_volumes(app),
                     ..Default::default()
                 }),
             },
+            // A volume on disk is on one node and shared by every copy,
+            // so a rolling update's extra copy could wait for room on
+            // that node forever: the old copies go first instead. A RAM
+            // disk is each pod's own, so it doesn't need this
+            strategy: super::volumes::has_disks(app).then(|| DeploymentStrategy {
+                type_: Some("Recreate".to_string()),
+                rolling_update: None,
+            }),
             ..Default::default()
         }),
         ..Default::default()

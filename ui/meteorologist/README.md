@@ -98,7 +98,10 @@ know about:
   annotation Meteorologist puts on those it makes, or from the
   Secret's own `.dockerconfigjson` for those it didn't. Deleting asks
   first, listing what goes and what stays, and takes the
-  application's name typed to confirm. Cirrus's finalizer removes the
+  application's name typed to confirm. Volumes (`spec.volumes`) are
+  rows of name, mount path, size and storage type (`fast`, `sata` or
+  `hdd`, Community Cloud's StorageClasses, or `ram`, a RAM disk whose size Cirrus adds to the container's memory), checked as Cirrus checks
+  them; the delete dialog says their claims are kept. Cirrus's finalizer removes the
   RabbitMQ vhost and GitLab webhook, and Kubernetes the rest it made;
   the database and the bucket's contents are kept. An application
   waiting on that shows as Deleting.
