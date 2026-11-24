@@ -67,6 +67,21 @@ test("keeps the volumes, and says how to get them back", () => {
   expect(summary.kept[0]).toContain("picks them up");
 });
 
+test("doesn't count a RAM disk as kept, since it goes with the pods", () => {
+  expect(
+    deletionSummary(app({ volumes: [{ name: "scratch", mountPath: "/s", size: "1Gi", type: "ram" }] })).kept,
+  ).toEqual([]);
+  const mixed = deletionSummary(
+    app({
+      volumes: [
+        { name: "scratch", mountPath: "/s", size: "1Gi", type: "ram" },
+        { name: "data", mountPath: "/d", size: "1Gi" },
+      ],
+    }),
+  );
+  expect(mixed.kept).toEqual([expect.stringContaining("Its volume, shop-data,")]);
+});
+
 describe("confirming a delete", () => {
   test("takes exactly the name, spaces around it aside", () => {
     expect(confirmsDeletion("shop", "shop")).toBe(true);

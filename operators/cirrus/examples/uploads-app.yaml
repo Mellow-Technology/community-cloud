@@ -1,5 +1,6 @@
 # An application that keeps files on disk: uploads on the spinning
-# disks, which have room, and a cache on the NVMe, which is fast.
+# disks, which have room, and a cache on the NVMe, which is fast; and a
+# RAM disk for scratch files it doesn't need to keep.
 #
 # Each volume is one claim, shop-uploads and shop-cache, shared by
 # every copy, so the copies all run on the node the volumes are on, and
@@ -24,3 +25,9 @@ spec:
       mountPath: /app/tmp/cache
       size: 10Gi
       # type: fast is the default
+    - name: scratch
+      mountPath: /tmp/scratch
+      size: 512Mi
+      # Memory, emptied on every restart, and added to the
+      # container's memory (256Mi unless resources say otherwise)
+      type: ram

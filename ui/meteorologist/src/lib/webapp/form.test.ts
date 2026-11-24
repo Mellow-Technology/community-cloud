@@ -330,6 +330,14 @@ describe("volumes", () => {
     expect(toForm(app).volumes).toEqual(rows);
   });
 
+  test("include a RAM disk, written as type ram", () => {
+    const ram = { name: "scratch", mountPath: "/tmp/scratch", size: "512Mi", type: "ram" as const };
+    const app = fromForm(form({ volumes: [ram] }));
+    expect(app.spec.volumes).toEqual([ram]);
+    expect(toForm(app).volumes).toEqual([ram]);
+    expect(validateForm(form({ volumes: [ram] })).volumes).toBeUndefined();
+  });
+
   test("are checked as Cirrus checks them", () => {
     expect(validateForm(form({ volumes: rows })).volumes).toBeUndefined();
     const bad = (row: Partial<(typeof rows)[number]>) =>

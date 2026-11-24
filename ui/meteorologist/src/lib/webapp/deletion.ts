@@ -56,10 +56,12 @@ export function deletionSummary(app: WebApplication): DeletionSummary {
     removed.push("Its bucket's access keys.");
     kept.push("Its bucket, and everything in it.");
   }
-  if (spec.volumes?.length) {
-    const claims = spec.volumes.map((volume) => `${name}-${volume.name}`).join(", ");
+  // A RAM disk is memory, gone with the pods; only disks are kept
+  const disks = (spec.volumes ?? []).filter((volume) => volume.type !== "ram");
+  if (disks.length > 0) {
+    const claims = disks.map((volume) => `${name}-${volume.name}`).join(", ");
     kept.push(
-      `Its ${spec.volumes.length === 1 ? "volume" : "volumes"}, ${claims}, and what's on them. Making ${name} again with the same volumes picks them up.`,
+      `Its ${disks.length === 1 ? "volume" : "volumes"}, ${claims}, and what's on them. Making ${name} again with the same volumes picks them up.`,
     );
   }
   if (spec.rabbitmq !== undefined) {

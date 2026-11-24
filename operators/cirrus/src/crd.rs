@@ -172,14 +172,16 @@ pub struct VolumeSpec {
     /// How big, as a Kubernetes quantity, e.g. 10Gi. It can grow;
     /// shrinking isn't possible.
     pub size: String,
-    /// Which disks it's on. It can't change once the volume is made.
+    /// Which disks it's on, or "ram" for a RAM disk. A disk's type can't
+    /// change once the volume is made.
     #[serde(default, rename = "type")]
     pub storage_type: StorageType,
 }
 
 /// Community Cloud's storage types: TopoLVM device classes, each a
 /// volume group of one kind of disk, and each with a StorageClass
-/// (k8s/storage/StorageClass). All of them are local to a node.
+/// (k8s/storage/StorageClass), all of them local to a node; and a RAM
+/// disk, which is memory instead.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageType {
@@ -190,16 +192,28 @@ pub enum StorageType {
     Sata,
     /// Spinning disks: the slowest and the largest.
     Hdd,
+    /// A RAM disk: memory, not a claim, so it's as fast as it gets and
+    /// emptied whenever the pod restarts. Its size is added to the
+    /// container's memory, since what's in it counts against that.
+    Ram,
 }
 
 impl StorageType {
-    /// The StorageClass for it.
-    pub fn storage_class(self) -> &'static str {
+    /// The StorageClass for it, or nothing for a RAM disk, which isn't
+    /// a claim.
+    pub fn storage_class(self) -> Option<&'static str> {
         match self {
-            StorageType::Fast => "cc-local-ssd-fast",
-            StorageType::Sata => "cc-local-ssd-sata",
-            StorageType::Hdd => "cc-local-hdd",
+            StorageType::Fast => Some("cc-local-ssd-fast"),
+            StorageType::Sata => Some("cc-local-ssd-sata"),
+            StorageType::Hdd => Some("cc-local-hdd"),
+            StorageType::Ram => None,
         }
+    }
+
+    /// Whether it's a claim on a node's disks, which ties the pods to
+    /// that node.
+    pub fn is_disk(self) -> bool {
+        self.storage_class().is_some()
     }
 
     /// What it's called in the resource.
@@ -208,6 +222,7 @@ impl StorageType {
             StorageType::Fast => "fast",
             StorageType::Sata => "sata",
             StorageType::Hdd => "hdd",
+            StorageType::Ram => "ram",
         }
     }
 }

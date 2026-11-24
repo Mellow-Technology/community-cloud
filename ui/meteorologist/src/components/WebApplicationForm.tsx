@@ -902,7 +902,8 @@ function VolumeEditor({
         claim, <code>{appName || "<app>"}-&lt;name&gt;</code>, on one node, shared by every copy
         {several ? ", so all its copies run on that node" : ""}, and a rollout stops the old copy before starting the
         new one. A volume can grow but not shrink, and its type can&apos;t change. Deleting the application keeps them
-        and what&apos;s on them.
+        and what&apos;s on them. A RAM disk is different: memory of each copy&apos;s own, emptied whenever it restarts,
+        for caches and scratch files; its size is added to the application&apos;s memory.
       </p>
       {rows.map((row, index) => (
         <div className={styles.listRow} key={index}>

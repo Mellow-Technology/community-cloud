@@ -11,7 +11,7 @@ services the cluster already runs:
 | `postgres: {}` | a role and a database in the namespace's own Postgres, `cirrus-postgres` | CloudNativePG |
 | `bucket: {}` | a bucket, an S3 user limited to it, and its keys | the SeaweedFS operator |
 | `rabbitmq: {}` | a vhost, and a user limited to it | RabbitMQ's topology operator |
-| `volumes` | a PersistentVolumeClaim for each, on one of Community Cloud's storage types, mounted into every copy | TopoLVM |
+| `volumes` | a PersistentVolumeClaim for each, on one of Community Cloud's storage types, mounted into every copy; or a RAM disk | TopoLVM, Kubernetes |
 | `migrations` | a Job, run with each new image before the rollout | Kubernetes |
 | `source.gitlab` | a project webhook; each successful pipeline on `ref` rolls out | GitLab's API |
 
@@ -165,7 +165,11 @@ it where it is until it's restarted, as for any pod.
     - name: uploads
       mountPath: /app/public/uploads
       size: 200Gi
-      type: hdd          # fast (the default), sata or hdd
+      type: hdd          # fast (the default), sata, hdd, or ram
+    - name: scratch
+      mountPath: /tmp/scratch
+      size: 512Mi
+      type: ram          # a RAM disk
 ```
 
 Each volume is a PersistentVolumeClaim, `<application>-<name>`, on one
@@ -178,14 +182,24 @@ each a volume group of one kind of disk, with a StorageClass of its own
 | `fast` | `cc-local-ssd-fast` | NVMe |
 | `sata` | `cc-local-ssd-sata` | SSDs behind a SATA controller |
 | `hdd` | `cc-local-hdd` | spinning disks |
+| `ram` | none: a RAM disk | memory |
 
-They're local to a node. A volume is made on the node its first pod is
+A RAM disk (`ram`) isn't a claim: it's a memory-backed `emptyDir` no
+bigger than its `size`, each pod's own, and emptied whenever the pod
+restarts. For caches and scratch space, never for anything to keep.
+What's in it counts against the container's memory, so Cirrus adds
+each RAM disk's size to the container's memory request, and to its
+limit when there is one (the default 256Mi is both); a full RAM disk
+can't then get the application killed. On its own it doesn't tie the
+pods to a node or change how they're rolled out.
+
+The disk types are local to a node. A volume is made on the node its first pod is
 scheduled to, and a type no node has a volume group for waits forever,
 so check which nodes have which (`storage.community-cloud.technology/classes`
 on the nodes) before asking for `sata` or `hdd`.
 
-So each volume is shared by every copy of the application, which all
-run on that node, and an application with volumes is rolled out by
+So each volume on disk is shared by every copy of the application,
+which all run on that node, and an application with one is rolled out by
 stopping the old copies before starting the new (`Recreate`) rather
 than side by side: a rolling update's extra copy could wait forever for
 a node it can't have. There's a moment with nothing running.

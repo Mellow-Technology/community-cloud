@@ -71,7 +71,10 @@ function when(iso: string | undefined): string | undefined {
  */
 function storageLabel(type: StorageType | undefined): string {
   const found = STORAGE_TYPES.find((each) => each.value === (type ?? "fast"));
-  return found ? `${found.value} (${found.storageClass})` : String(type);
+  if (found === undefined) {
+    return String(type);
+  }
+  return found.storageClass ? `${found.value} (${found.storageClass})` : "a RAM disk, emptied on restart";
 }
 
 /**
@@ -212,10 +215,15 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
                   <>
                     {app.spec.volumes.map((volume) => (
                       <span key={volume.name} className={styles.detail}>
-                        <code>{volume.mountPath}</code>: {volume.size}, {storageLabel(volume.type)}, in{" "}
-                        <code>
-                          {app.metadata.name}-{volume.name}
-                        </code>
+                        <code>{volume.mountPath}</code>: {volume.size}, {storageLabel(volume.type)}
+                        {volume.type !== "ram" && (
+                          <>
+                            , in{" "}
+                            <code>
+                              {app.metadata.name}-{volume.name}
+                            </code>
+                          </>
+                        )}
                       </span>
                     ))}
                   </>

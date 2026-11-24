@@ -55,7 +55,7 @@ pub fn container(app: &WebApplication, image: &str, env_from: &[String], env: &[
                 })
                 .collect()
         }),
-        resources: Some(resources),
+        resources: Some(super::volumes::with_ram_disks(app, resources)),
         ..Default::default()
     }
 }
@@ -118,10 +118,11 @@ pub fn deployment(app: &WebApplication, image: &str, port: i32, env_from: &[Stri
                     ..Default::default()
                 }),
             },
-            // A volume is on one node and shared by every copy, so a
-            // rolling update's extra copy could wait for room on that
-            // node forever: the old copies go first instead
-            strategy: (!app.spec.volumes.is_empty()).then(|| DeploymentStrategy {
+            // A volume on disk is on one node and shared by every copy,
+            // so a rolling update's extra copy could wait for room on
+            // that node forever: the old copies go first instead. A RAM
+            // disk is each pod's own, so it doesn't need this
+            strategy: super::volumes::has_disks(app).then(|| DeploymentStrategy {
                 type_: Some("Recreate".to_string()),
                 rolling_update: None,
             }),

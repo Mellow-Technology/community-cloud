@@ -18,12 +18,19 @@
 //! A volume can grow but not shrink, and its type can't change, since a
 //! claim's StorageClass is fixed. Either asked for is reported rather
 //! than tried, so the application keeps running on the volume it has.
+//!
+//! A RAM disk ("ram") isn't a claim. It's a memory-backed emptyDir,
+//! emptied whenever the pod restarts, and what's in it counts against
+//! the container's memory, so its size is added to the container's
+//! memory request and limit (see with_ram_disks). It doesn't tie the
+//! pods to a node, so on its own it doesn't change how they're rolled
+//! out.
 
 use std::collections::BTreeMap;
 
 use k8s_openapi::api::core::v1::{
-    PersistentVolumeClaim, PersistentVolumeClaimSpec, PersistentVolumeClaimVolumeSource, Volume, VolumeMount,
-    VolumeResourceRequirements,
+    EmptyDirVolumeSource, PersistentVolumeClaim, PersistentVolumeClaimSpec, PersistentVolumeClaimVolumeSource,
+    ResourceRequirements, Volume, VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -123,7 +130,59 @@ pub fn problems(app: &WebApplication) -> Vec<String> {
     problems
 }
 
-/// The claim for one volume.
+/// Whether any of the application's volumes is a claim on a node's
+/// disks, which ties its pods to that node.
+pub fn has_disks(app: &WebApplication) -> bool {
+    app.spec.volumes.iter().any(|volume| volume.storage_type.is_disk())
+}
+
+/// How many bytes the application's RAM disks may hold, together.
+pub fn ram_disk_bytes(app: &WebApplication) -> f64 {
+    app.spec
+        .volumes
+        .iter()
+        .filter(|volume| !volume.storage_type.is_disk())
+        .filter_map(|volume| bytes(&volume.size))
+        .sum()
+}
+
+/// A byte count as a quantity: in Mi when it's whole Mi, as people
+/// write them, and in bytes otherwise.
+fn quantity_of(bytes: f64) -> Quantity {
+    let whole = bytes.round() as u64;
+    let mebibyte = 1024 * 1024;
+    Quantity(if whole.is_multiple_of(mebibyte) {
+        format!("{}Mi", whole / mebibyte)
+    } else {
+        whole.to_string()
+    })
+}
+
+/// The container's resources with its RAM disks' size added to its
+/// memory: to the request, which is made if there wasn't one, and to
+/// the limit, if there is one. What's in a RAM disk is the container's
+/// memory as far as the kernel's concerned, so without this a full RAM
+/// disk could get the application killed for using too much.
+pub fn with_ram_disks(app: &WebApplication, resources: ResourceRequirements) -> ResourceRequirements {
+    let extra = ram_disk_bytes(app);
+    if extra <= 0.0 {
+        return resources;
+    }
+    let add = |quantity: Option<&Quantity>| quantity_of(quantity.and_then(|q| bytes(&q.0)).unwrap_or(0.0) + extra);
+    let mut resources = resources;
+    let requests = resources.requests.get_or_insert_with(BTreeMap::new);
+    let request = add(requests.get("memory"));
+    requests.insert("memory".to_string(), request);
+    if let Some(limits) = resources.limits.as_mut()
+        && limits.contains_key("memory")
+    {
+        let limit = add(limits.get("memory"));
+        limits.insert("memory".to_string(), limit);
+    }
+    resources
+}
+
+/// The claim for one volume on a node's disks.
 pub fn claim(app: &WebApplication, volume: &VolumeSpec) -> PersistentVolumeClaim {
     let (namespace, name) = super::identity(app);
     let mut claim_labels = labels(&name);
@@ -138,7 +197,7 @@ pub fn claim(app: &WebApplication, volume: &VolumeSpec) -> PersistentVolumeClaim
         },
         spec: Some(PersistentVolumeClaimSpec {
             access_modes: Some(vec!["ReadWriteOnce".to_string()]),
-            storage_class_name: Some(volume.storage_type.storage_class().to_string()),
+            storage_class_name: volume.storage_type.storage_class().map(str::to_string),
             resources: Some(VolumeResourceRequirements {
                 requests: Some(BTreeMap::from([(
                     "storage".to_string(),
@@ -155,9 +214,12 @@ pub fn claim(app: &WebApplication, volume: &VolumeSpec) -> PersistentVolumeClaim
 /// Why a volume as asked for can't be made from the claim that's
 /// there, if it can't: a different storage type, or smaller.
 pub fn conflict(volume: &VolumeSpec, existing: &PersistentVolumeClaim) -> Option<String> {
+    // A RAM disk doesn't use the claim; one left from when the volume
+    // was on disk just stays, with what's on it
+    let wanted = volume.storage_type.storage_class()?;
     let spec = existing.spec.as_ref()?;
     let class = spec.storage_class_name.as_deref().unwrap_or_default();
-    if class != volume.storage_type.storage_class() {
+    if class != wanted {
         return Some(format!(
             "the volume {} is already on {class}, and a volume's type can't change; \
              set its type back, or give the volume a new name for a new one",
@@ -191,7 +253,7 @@ pub async fn ensure(ctx: &Context, app: &WebApplication) -> Result<Outcome> {
     }
     let (namespace, name) = super::identity(app);
     let claims = Api::<PersistentVolumeClaim>::namespaced(ctx.client.clone(), &namespace);
-    for volume in &app.spec.volumes {
+    for volume in app.spec.volumes.iter().filter(|volume| volume.storage_type.is_disk()) {
         let claim_name = claim_name(&name, volume);
         if let Some(existing) = claims.get_opt(&claim_name).await?
             && let Some(problem) = conflict(volume, &existing)
@@ -207,20 +269,31 @@ pub async fn ensure(ctx: &Context, app: &WebApplication) -> Result<Outcome> {
     Ok(Outcome::Ready(Provided::default()))
 }
 
-/// The pod's volumes, one per claim.
+/// The pod's volumes: a claim for each disk, and memory for each RAM
+/// disk, no bigger than its size.
 pub fn pod_volumes(app: &WebApplication) -> Option<Vec<Volume>> {
     let (_, name) = super::identity(app);
     (!app.spec.volumes.is_empty()).then(|| {
         app.spec
             .volumes
             .iter()
-            .map(|volume| Volume {
-                name: format!("volume-{}", volume.name),
-                persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
-                    claim_name: claim_name(&name, volume),
-                    read_only: None,
-                }),
-                ..Default::default()
+            .map(|volume| {
+                let mut pod_volume = Volume {
+                    name: format!("volume-{}", volume.name),
+                    ..Default::default()
+                };
+                if volume.storage_type.is_disk() {
+                    pod_volume.persistent_volume_claim = Some(PersistentVolumeClaimVolumeSource {
+                        claim_name: claim_name(&name, volume),
+                        read_only: None,
+                    });
+                } else {
+                    pod_volume.empty_dir = Some(EmptyDirVolumeSource {
+                        medium: Some("Memory".to_string()),
+                        size_limit: Some(Quantity(volume.size.trim().to_string())),
+                    });
+                }
+                pod_volume
             })
             .collect()
     })
@@ -288,11 +361,11 @@ mod tests {
         let parsed: VolumeSpec =
             serde_json::from_value(serde_json::json!({"name": "a", "mountPath": "/a", "size": "1Gi"})).unwrap();
         assert_eq!(parsed.storage_type, StorageType::Fast);
-        assert_eq!(parsed.storage_type.storage_class(), "cc-local-ssd-fast");
+        assert_eq!(parsed.storage_type.storage_class(), Some("cc-local-ssd-fast"));
         let sata: VolumeSpec =
             serde_json::from_value(serde_json::json!({"name": "a", "mountPath": "/a", "size": "1Gi", "type": "sata"}))
                 .unwrap();
-        assert_eq!(sata.storage_type.storage_class(), "cc-local-ssd-sata");
+        assert_eq!(sata.storage_type.storage_class(), Some("cc-local-ssd-sata"));
     }
 
     #[test]
@@ -360,5 +433,66 @@ mod tests {
             ("volume-data", "/data")
         );
         assert!(pod_volumes(&app_with(vec![])).is_none());
+    }
+
+    #[test]
+    fn a_ram_disk_is_memory_not_a_claim() {
+        let app = app_with(vec![
+            volume("cache", "/cache", "512Mi", StorageType::Ram),
+            volume("data", "/data", "1Gi", StorageType::Fast),
+        ]);
+        let volumes = pod_volumes(&app).unwrap();
+        let ram = volumes[0].empty_dir.as_ref().unwrap();
+        assert_eq!(ram.medium.as_deref(), Some("Memory"));
+        assert_eq!(ram.size_limit.as_ref().unwrap().0, "512Mi");
+        assert!(volumes[0].persistent_volume_claim.is_none());
+        assert!(volumes[1].persistent_volume_claim.is_some());
+        assert!(has_disks(&app));
+        assert!(!has_disks(&app_with(vec![volume(
+            "cache",
+            "/cache",
+            "512Mi",
+            StorageType::Ram
+        )])));
+        // A disk left from before stays as it was; a RAM disk doesn't use it
+        let existing = claim(&app, &app.spec.volumes[1]);
+        assert_eq!(
+            conflict(&volume("data", "/data", "1Gi", StorageType::Ram), &existing),
+            None
+        );
+    }
+
+    #[test]
+    fn a_ram_disk_adds_its_size_to_the_containers_memory() {
+        let app = app_with(vec![
+            volume("cache", "/cache", "512Mi", StorageType::Ram),
+            volume("tmp", "/tmp", "256Mi", StorageType::Ram),
+        ]);
+        let memory = |amount: &str| BTreeMap::from([("memory".to_string(), Quantity(amount.to_string()))]);
+        let given = ResourceRequirements {
+            requests: Some(memory("256Mi")),
+            limits: Some(memory("1Gi")),
+            ..Default::default()
+        };
+        let resources = with_ram_disks(&app, given);
+        assert_eq!(resources.requests.unwrap()["memory"].0, "1024Mi");
+        assert_eq!(resources.limits.unwrap()["memory"].0, "1792Mi");
+
+        // No memory given: a request for the RAM disks, and still no limit
+        let cpu_only = ResourceRequirements {
+            requests: Some(BTreeMap::from([("cpu".to_string(), Quantity("100m".to_string()))])),
+            ..Default::default()
+        };
+        let resources = with_ram_disks(&app, cpu_only);
+        assert_eq!(resources.requests.as_ref().unwrap()["memory"].0, "768Mi");
+        assert_eq!(resources.requests.unwrap()["cpu"].0, "100m");
+        assert!(resources.limits.is_none());
+
+        // Nothing to add without a RAM disk
+        let plain = app_with(vec![volume("data", "/data", "1Gi", StorageType::Fast)]);
+        assert_eq!(
+            with_ram_disks(&plain, ResourceRequirements::default()),
+            ResourceRequirements::default()
+        );
     }
 }

@@ -351,11 +351,14 @@ spec:
                       type: string
                     type:
                       default: fast
-                      description: Which disks it's on. It can't change once the volume is made.
+                      description: |-
+                        Which disks it's on, or "ram" for a RAM disk. A disk's type can't
+                        change once the volume is made.
                       enum:
                       - fast
                       - sata
                       - hdd
+                      - ram
                       type: string
                   required:
                   - mountPath
