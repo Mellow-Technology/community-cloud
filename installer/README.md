@@ -1144,6 +1144,152 @@ turns on the card and share its memory with no limits between them, so
 one that uses it all can make the others fail. A pod can't ask for more
 than one.
 
+### AMD GPUs
+
+The `amd` bundle does the same for AMD hardware, and it's part of
+`install` and `add-node` too, after `nvidia`. Nodes the `gpu` bundle
+found no AMD hardware on are left alone, and a cluster with no working
+card gets nothing at all. To bring an existing cluster or node up to
+date:
+
+```sh
+community-cloud run-bundle amd <node> cc.config.json
+```
+
+There's much less to it than NVIDIA's. Nothing is installed on the node
+and K3s isn't restarted: a container reaches an AMD card through
+`/dev/kfd` and the card's `/dev/dri` nodes, which containerd can already
+pass in, and ROCm comes in the workload's image. On a node with AMD
+hardware it:
+
+1. Checks the kernel's `amdgpu` driver has the card, that there's a
+   `/dev/kfd`, and that KFD lists a card it can compute on.
+2. Labels the node `gpu.community-cloud.technology/amd-driver=ready` if
+   so, and takes the label off if not.
+3. On an APU, says how its memory is split and warns about a split
+   that wastes it; see [below](#ryzen-ai-max-strix-halo-and-other-apus).
+
+Then it installs AMD's device plugin (the `amd-gpu` chart, in
+`community-cloud`) on the labelled nodes, and checks each of them offers
+its cards as `amd.com/gpu`.
+
+The driver isn't installed for you. The kernel's own `amdgpu` is
+enough, with `linux-firmware`, and Ubuntu's and Debian's kernels have
+it. AMD's `amdgpu-dkms` is newer and what they test Instinct cards
+with, but it's built only for the kernels they support and changing it
+can mean a reboot. A node whose driver doesn't work gets a warning
+saying why, and is left out of the device plugin. Fix the driver and run
+the bundle again to bring it in. The `gpu` bundle says whether a node
+has `/dev/kfd`; `rocm-smi` and `amd-smi` on the node aren't needed.
+
+A pod only needs the limit. The plugin passes the card's device nodes
+in, so it doesn't need to be privileged or on the host's network:
+
+```yaml
+spec:
+  containers:
+    - name: app
+      image: rocm/pytorch
+      resources:
+        limits:
+          amd.com/gpu: 1
+```
+
+The device nodes belong to the host's `render` group. A container
+running as root can use them; one that doesn't needs that group's ID on
+the node in `supplementalGroups`.
+
+AMD cards aren't shared: each `amd.com/gpu` is a whole card, given to
+one pod. AMD's plugin has nothing like NVIDIA's time-slicing. Instinct
+MI300 cards can be split into partitions in hardware, with
+`amd-smi set --compute-partition`, and the plugin then offers each
+partition as an `amd.com/gpu`, with memory and compute kept apart. That
+is set on the node, needs the cards idle, and nothing here does it;
+it's only for MI300-class cards, and every card on a node should be
+split the same way.
+
+The node labeller, which labels nodes with each card's memory, compute
+units and family, is left off. It needs to be able to change every Node
+in the cluster, and is only worth that with different AMD cards to
+choose between. Turn it on with `labeller.enabled` in
+`AmdDevicePlugin.values.yaml`.
+
+#### Ryzen AI Max (Strix Halo) and other APUs
+
+A Ryzen AI Max (gfx1151) is an APU: one GPU, with no memory of its own,
+using the machine's RAM. To this bundle it's a card like any other. KFD
+lists it, it has its own render node, and the device plugin offers it
+as one whole `amd.com/gpu`, with no partitions. What's different is
+memory, which the `amd` bundle reports on as
+`verify-amd-unified-memory`, on install and in `doctor`. It also checks
+the kernel: gfx1151 needs 6.18.4 or later, or Ubuntu 24.04's HWE kernel
+6.17.0-19 or OEM kernel 6.14.0-1018 or later, which have the fixes
+backported. Ubuntu 26.04's own kernel has them.
+
+The GPU gets RAM two ways:
+
+- **VRAM**, a share the BIOS sets aside at boot. Linux never sees it,
+  so it's lost to everything else even while the GPU is idle.
+- **GTT**, RAM the GPU borrows as it needs it and gives back. How much
+  it may borrow is the kernel parameter `ttm.pages_limit`, in 4 KiB
+  pages, which defaults to half of RAM.
+
+AMD recommend a small BIOS share, about 0.5 GB, and a raised GTT limit,
+so the memory is shared rather than split for good. A large BIOS share
+with GTT left at its default is warned about, with the fix: on a
+128 GB machine with 96 GB set aside, Linux and Kubernetes see 32 GB,
+and the GPU can only ever use its 96. Nothing here changes it, since it
+takes the BIOS and a reboot. On the node:
+
+1. Drain it first, with `community-cloud run-bundle drain <node>
+   cc.config.json`, since it's going to reboot.
+2. Add `ttm.pages_limit=<pages>` to `GRUB_CMDLINE_LINUX_DEFAULT` in
+   `/etc/default/grub` and run `sudo update-grub`. Pages are GiB ×
+   262144. AMD's own tool, `amd-ttm --set <GB>`, sets the same limit
+   in `/etc/modprobe.d/ttm.conf` instead.
+3. Reboot into the BIOS, and set the GPU's dedicated memory (often
+   "UMA frame buffer size") to its minimum, about 0.5 GB.
+4. Boot, check `cat /sys/module/ttm/parameters/pages_limit` says what
+   you set, let the node back into use with `kubectl uncordon <node>`,
+   and run the `amd` bundle again to see the new split.
+
+For a 128 GB machine:
+
+| GPU may use | `ttm.pages_limit` | Leaves |
+|---|---|---|
+| 96 GiB, about today's split | `25165824` | about 32 GiB the GPU never takes |
+| 108 GiB, which people report working | `28311552` | about 20 GiB: little for the OS and the pods on the node |
+
+(The figure often quoted for "108 GB", 27648000 pages, is 105.5 GiB.)
+
+Then the memory is shared, and that matters to Kubernetes. With a small
+BIOS share the node shows nearly all 128 GB as allocatable, but what
+the GPU borrows comes out of the same RAM, and isn't counted against
+any pod. Without a reservation the scheduler would hand that RAM to
+other pods and the node would run short. There are two places to
+reserve it:
+
+- **The memory request of the pod using the GPU.** It holds the only
+  `amd.com/gpu` on the node, since cards aren't shared, so it's the only
+  thing borrowing GTT. Ask for its own memory plus what it will have
+  the GPU take: the capacity pool in `k8s/ai/Models/Models.config.yaml`,
+  which `Models.yaml` says how to size it from. The reservation lasts as long as
+  the workload does, and moves with it.
+- **kubelet's `system-reserved`**, which takes memory off the node's
+  allocatable for good, whether the GPU is used or not. This installer
+  has no setting for it per node: `k3s.extraServerArgs` and
+  `extraAgentArgs` apply to every server or every agent. It could be
+  put on one node by hand, as `kubelet-arg:
+  ["system-reserved=memory=96Gi"]` in a file in
+  `/etc/rancher/k3s/config.yaml.d/`, and K3s restarted.
+
+The pod's request is the better fit here: it needs no per-node
+configuration nobody can see from `cc.config.json`, it's freed when the
+GPU isn't in use, and the card can't be shared, so there's no second
+GPU pod for it to miss.
+
+None of this has run on AMD hardware yet.
+
 ## Adding a node
 
 ```bash
@@ -1164,7 +1310,7 @@ one machine a member:
 ```
 cluster-online → preflight → base → network → nebula → gpu
               → registries → lvm → k3s → nodeLabels
-              → gateway-addresses → nvidia → node-joined
+              → gateway-addresses → nvidia → amd → node-joined
 ```
 
 `gateway-addresses` is the one exception, because a gateway node
@@ -1485,8 +1631,8 @@ They're referred to with an `embed://` URL, and the paths have no
 `k8s/` prefix:
 
 ```bash
-community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json --dry-run
-community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json
+community-cloud run-template embed://ai/Models/Models.yaml cc.config.json --dry-run
+community-cloud run-template embed://ai/Models/Models.yaml cc.config.json
 community-cloud run-template ./ops/my-template.yaml cc.config.json -o delete
 community-cloud list-embedded              # everything it carries
 community-cloud list-embedded authentik    # filtered

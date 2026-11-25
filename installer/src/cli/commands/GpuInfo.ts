@@ -380,7 +380,7 @@ export const GpuInfoCommands: CommandSpec[] = [
         console.log(
           toolingInstalled
             ? `nvidia-smi reported ${updates.size} GPU${updates.size === 1 ? "" : "s"}`
-            : "nvidia-smi isn't installed, so the NVIDIA driver stack still needs setting up",
+            : "nvidia-smi isn't installed, so the NVIDIA driver stack still needs setting up. Install a driver, then run the nvidia bundle on this node.",
         );
 
         return { updates, toolingInstalled };
@@ -394,9 +394,12 @@ export const GpuInfoCommands: CommandSpec[] = [
 
   /**
    * AMD memory comes from the amdgpu driver through sysfs, so it's
-   * readable without ROCm. Whether ROCm is there is asked separately,
-   * because that's the part a workload needs and the part that has to
-   * be installed.
+   * readable without ROCm.
+   *
+   * What a workload needs from the node is /dev/kfd, which is how ROCm
+   * in a container reaches the card. ROCm itself comes in the
+   * workload's image, so rocm-smi and amd-smi on the node are only
+   * reported, as a sign someone has set the node up by hand.
    */
   {
     name: "amd-gpu-details",
@@ -411,7 +414,9 @@ export const GpuInfoCommands: CommandSpec[] = [
       '  address=$(basename "$(readlink -f "$card/device")")',
       '  units=""',
       '  if [ -r "$card/device/num_compute_units" ]; then units=$(cat "$card/device/num_compute_units"); fi',
-      '  printf "vram|%s|%s|%s\\n" "$address" "$(cat "$card/device/mem_info_vram_total")" "$units"',
+      '  gtt=""',
+      '  if [ -r "$card/device/mem_info_gtt_total" ]; then gtt=$(cat "$card/device/mem_info_gtt_total"); fi',
+      '  printf "vram|%s|%s|%s|%s\\n" "$address" "$(cat "$card/device/mem_info_vram_total")" "$units" "$gtt"',
       "done",
       'for tool in rocm-smi amd-smi',
       "do if command -v $tool > /dev/null 2>&1",
@@ -419,28 +424,44 @@ export const GpuInfoCommands: CommandSpec[] = [
       '   else printf "tooling|%s|missing\\n" "$tool"',
       "   fi",
       "done",
+      'if [ -c /dev/kfd ]; then echo "kfd|present"; else echo "kfd|missing"; fi',
     ],
     output: OutputType.Raw,
     postProcessHooks: [
       (output: CommandOutput) => {
         const updates = new Map<string, Partial<VideoDevice>>();
         const tooling: Record<string, boolean> = {};
+        let computeReady = false;
 
         for (const line of readLines(output)) {
           const fields = line.split("|");
 
           if (fields[0] === "vram") {
             const units = field(fields, 3);
+            // amdgpu reports both of these in bytes already. On an APU
+            // the first is what the BIOS set aside, and the second
+            // what it may borrow of the RAM Linux has.
+            const vram = toBytes(field(fields, 2), 1);
+            const gtt = toBytes(field(fields, 4), 1);
             updates.set(field(fields, 1), {
-              // amdgpu reports this one in bytes already
-              memoryBytes: toBytes(field(fields, 2), 1),
+              memoryBytes: vram,
+              sharedMemoryBytes: gtt,
               cores: units !== "" ? Number.parseInt(units, 10) : undefined,
             });
+
+            if (vram !== undefined && gtt !== undefined) {
+              console.log(`  ${field(fields, 1)}: ${toGib(vram)} VRAM, and up to ${toGib(gtt)} of RAM through GTT`);
+            }
             continue;
           }
 
           if (fields[0] === "tooling") {
             tooling[field(fields, 1)] = field(fields, 2) === "installed";
+            continue;
+          }
+
+          if (fields[0] === "kfd") {
+            computeReady = field(fields, 1) === "present";
           }
         }
 
@@ -448,18 +469,23 @@ export const GpuInfoCommands: CommandSpec[] = [
           .filter(([, present]) => present)
           .map(([tool]) => tool);
 
+        if (installed.length > 0) {
+          console.log(`AMD tooling present: ${installed.join(", ")}`);
+        }
+
         console.log(
-          installed.length > 0
-            ? `AMD tooling present: ${installed.join(", ")}`
-            : "No ROCm tooling found, so AMD compute still needs setting up",
+          computeReady
+            ? "/dev/kfd is there, so ROCm in a container can reach these cards. The amd bundle offers them to pods as amd.com/gpu."
+            : "There's no /dev/kfd, so nothing can compute on these cards yet. Run the amd bundle on this node to find out what's missing.",
         );
 
-        return { updates, toolingInstalled: installed.length > 0, tooling };
+        return { updates, toolingInstalled: installed.length > 0, tooling, computeReady };
       },
     ],
     saveToContext: (output: any, context: any) => ({
       videoDevices: mergeDevices(context, output.processed.updates),
       amdToolingInstalled: output.processed.toolingInstalled,
+      amdComputeReady: output.processed.computeReady,
     }),
   },
 
@@ -548,6 +574,16 @@ function toBytes(value: string | undefined, multiplier: number): number | undefi
 
   const size = Number.parseInt(value, 10);
   return Number.isNaN(size) ? undefined : size * multiplier;
+}
+
+/**
+ * A size in GiB, for someone to read.
+ *
+ * @param bytes
+ * @returns
+ */
+function toGib(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
 /**

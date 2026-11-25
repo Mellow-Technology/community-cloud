@@ -181,6 +181,10 @@ export interface VideoDevice {
 
   // Filled in by whichever vendor command knows how to ask
   memoryBytes?: number;
+
+  // How much more of the node's RAM it may borrow, which for an AMD
+  // APU is most of its memory. amdgpu calls it GTT.
+  sharedMemoryBytes?: number;
   driverVersion?: string;
   computeCapability?: string;
   cores?: number;

@@ -101,6 +101,7 @@ cluster in service.
 | `lvm` | Volume groups for TopoLVM to carve volumes from |
 | `gpu` | What video hardware a node has, and whether its tooling is installed |
 | `nvidia` | The NVIDIA runtime on nodes with NVIDIA hardware, and the device plugin that lets pods ask for a card |
+| `amd` | AMD's device plugin, on nodes whose amdgpu driver works, so pods can ask for a card |
 | `nodeLabels` | Roles, labels, region and zone, and what was detected |
 | `placement` | Each namespace in `placement` kept to its region |
 | `cluster-online` | Whether the cluster is up, before joining a node to it |
@@ -163,7 +164,9 @@ drifted from the file it was built from.
 
 ```
 k8s/
-├── ai/vLLM/                     # vLLM deployment and its model PVC (AMD MI300)
+├── ai/AmdDevicePlugin/          # Helm values for AMD's device plugin, installed by the amd bundle
+├── ai/NvidiaDevicePlugin/       # Helm values for NVIDIA's device plugin, installed by the nvidia bundle
+├── ai/Models/                   # llama-swap, its model list and volume (AMD Ryzen AI Max), applied by hand
 ├── apps/                        # Application deployments
 │   ├── authentik/               # Authentik, installed by the authentik package
 │   ├── documenso/               # Documenso document signing
@@ -480,10 +483,14 @@ Enabled under `packages` in the configuration: `cert-manager`,
 
 ### AI Inference
 
-- **vLLM** on AMD MI300 GPUs (`k8s/ai/vLLM/vllm-amd.yaml`)
-- Mistral-7B model, ROCm image, host network/IPC, 8Gi shared memory
-- Hugging Face Hub token via secret (`hf-token-secret`)
-- ClusterIP service on port 80 → container port 8888
+- **Local models** on an AMD Ryzen AI Max, gfx1151 (`k8s/ai/Models/`), in `cc-ai`
+- llama-swap in front of llama.cpp servers (Vulkan), one OpenAI-compatible
+  endpoint for every model, loading and unloading them to fit the GPU
+- The model list is a ConfigMap (`Models.config.yaml`); weights are kept
+  on its volume (`Models.volume.yaml`)
+- Its card as `amd.com/gpu`, from the device plugin the `amd` bundle
+  installs; not privileged, and not on the host's network or IPC
+- Offered to `cc-office` as the `models` ServiceOffering, at `/v1`
 - No package installs it; apply it by hand
 
 ---
@@ -492,8 +499,8 @@ Enabled under `packages` in the configuration: `cert-manager`,
 
 `community-cloud install` runs all of it, as one pipeline: `preflight`,
 `base`, `network`, `gpu`, `registries`, `lvm`, `k3s`, `nodeLabels`,
-`placement`, `cilium`, `gateway`, `helm`, `nvidia`, `helm-charts`,
-`dns`, `cluster`.
+`placement`, `cilium`, `gateway`, `helm`, `nvidia`, `amd`,
+`helm-charts`, `dns`, `cluster`.
 In stages:
 
 1. **Prepare nodes** — preflight checks, packages, kernel networking,
@@ -502,8 +509,9 @@ In stages:
    then which region each placed namespace runs in
 3. **Networking** — the Gateway API resources → Cilium → the cluster
    Gateway (the `gateway` bundle)
-4. **NVIDIA** — the runtime and the device plugin, on clusters with NVIDIA
-   hardware (the `nvidia` bundle)
+4. **GPUs** — NVIDIA's runtime and device plugin, on clusters with NVIDIA
+   hardware (the `nvidia` bundle), and AMD's device plugin, on clusters
+   with AMD hardware (the `amd` bundle)
 5. **Charts** — the `helm-charts` bundle, dependencies first:
    cert-manager and its ClusterIssuer → TopoLVM → SeaweedFS →
    CloudNativePG and cc-postgres → Redis and RabbitMQ → Authentik → the
@@ -532,6 +540,6 @@ In stages:
 | **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
 | **Databases and queues** | CloudNative-PG, MariaDB (its operator), Redis (Opstree), RabbitMQ |
-| **AI** | vLLM (ROCm/AMD GPU) |
+| **AI** | llama-swap and llama.cpp (AMD GPU), the NVIDIA and AMD device plugins |
 | **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, ProjectSend, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |

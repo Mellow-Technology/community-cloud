@@ -9,8 +9,8 @@
  *
  * Paths lose the leading "k8s/", which only exists to keep the
  * repository tidy and is no use to someone typing one. So
- * k8s/ai/vLLM/vllm-amd.yaml is stored, and referred to, as
- * ai/vLLM/vllm-amd.yaml.
+ * k8s/ai/Models/Models.yaml is stored, and referred to, as
+ * ai/Models/Models.yaml.
  *
  * The Headlamp plugins in headlamp/plugins/ go in too, built: each
  * one's main.js and package.json, stored under headlamp-plugins/<name>/.

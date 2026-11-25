@@ -23,9 +23,11 @@
  * 12. cilium         — the network the pods actually use
  * 13. gateway        — a way in from outside
  * 14. helm           — Helm itself, on the control plane
- * 15. helm-charts    — storage classes, databases, applications
- * 16. dns            — publish the applications' names, now they're routed
- * 17. cluster        — record what this cluster was built from
+ * 15. nvidia         — NVIDIA's runtime and device plugin, where there's a card
+ * 16. amd            — AMD's device plugin, where there's a card
+ * 17. helm-charts    — storage classes, databases, applications
+ * 18. dns            — publish the applications' names, now they're routed
+ * 19. cluster        — record what this cluster was built from
  *
  * The two Nebula bundles do nothing unless the configuration names a
  * Defined Networking network. When it does, every node is enrolled
@@ -59,6 +61,7 @@ export const INSTALL_PIPELINE = [
   "gateway",
   "helm",
   "nvidia",
+  "amd",
   "helm-charts",
   "dns",
   "cluster",

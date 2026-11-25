@@ -29,7 +29,7 @@ Community Cloud deploys a K3s cluster across heterogeneous hardware, organizing 
 | `gateway` | Publicly routable nodes serving as cluster ingress/egress, via the Gateway API on Cilium's Envoy |
 | `lighthouse` | Nebula lighthouses, which nodes on other networks find each other through |
 | `worker` | General-purpose workload nodes |
-| `worker-gpu` | GPU-equipped nodes for AI/ML inference (AMD MI300, NVIDIA, Intel) |
+| `worker-gpu` | GPU-equipped nodes for AI/ML inference (AMD, NVIDIA, Intel) |
 | `storage-local` | Nodes with local block devices for TopoLVM CSI provisioning |
 | `storage-distributed`, `storage` | Nodes participating in distributed storage pools |
 
@@ -94,7 +94,7 @@ community-cloud/
 │   ├── cc.config.schema.json
 │   └── package.json
 ├── k8s/                # Kubernetes manifests & Helm values
-│   ├── ai/             # The NVIDIA device plugin's values; vLLM GPU inference (AMD MI300), applied by hand
+│   ├── ai/             # The NVIDIA and AMD device plugins' values; local models behind llama-swap (AMD Ryzen AI Max), applied by hand
 │   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Methods, Headlamp, Meteorologist, etc.)
 │   ├── certs/          # cert-manager values and the cluster's Let's Encrypt issuer
 │   ├── crd/            # The Site CRD draft, not yet applied by anything
@@ -144,6 +144,7 @@ The installer (`installer/`) is a Bun-based CLI that automates multi-node K3s cl
 - **Registry Auth**: K3s private registry configuration
 - **GPU Detection**: Automatic AMD/NVIDIA/Intel GPU identification
 - **NVIDIA**: the container toolkit on nodes with an NVIDIA card, and the device plugin on those whose driver works, so pods can ask for `nvidia.com/gpu`
+- **AMD**: the device plugin on nodes whose `amdgpu` driver works, so pods can ask for `amd.com/gpu`, with nothing to install on the node
 - **Packages**: Helm charts and applications, installed in dependency order with their database roles, buckets and credentials generated
 - **Sign-in**: applications sign in through Authentik, over OpenID Connect or behind an oauth2-proxy gate; Headlamp signs people into the cluster itself
 - **Mail and DNS**: per-namespace SMTP credentials, and hostnames published through ExternalDNS
@@ -205,7 +206,8 @@ haven't run on real hardware in their current form yet.
 ### AI Inference
 
 - **NVIDIA**: the `nvidia` bundle installs NVIDIA's container runtime, which K3s offers as the `nvidia` RuntimeClass, and the device plugin (`k8s/ai/NvidiaDevicePlugin`) on nodes whose driver works. It doesn't install the driver itself.
-- **vLLM** on AMD MI300 GPUs (`k8s/ai/vLLM/vllm-amd.yaml`): Mistral-7B deployment with ROCm, host network/IPC, 8Gi shared memory, Hugging Face model access via secret. No package installs it; apply it by hand.
+- **AMD**: the `amd` bundle installs AMD's device plugin (`k8s/ai/AmdDevicePlugin`) on nodes whose `amdgpu` driver works. The kernel's own driver is enough; ROCm comes in the workload's image. Cards aren't shared.
+- **Local models** on an AMD Ryzen AI Max (gfx1151) (`k8s/ai/Models/`): llama-swap in `cc-ai`, one OpenAI-compatible endpoint in front of llama.cpp (Vulkan) servers it starts and stops as models are asked for, all on the one card. The model list is a ConfigMap. Offered to `cc-office` as the `models` ServiceOffering. No package installs it; apply it by hand.
 
 ## Quick Start
 
@@ -225,4 +227,4 @@ haven't run on real hardware in their current form yet.
 - **Networking**: Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale
 - **Databases and queues**: CloudNative-PG (PostgreSQL/PostGIS), MariaDB (its operator), Redis (Opstree), RabbitMQ (its Cluster Operator)
 - **Monitoring**: Prometheus, Alertmanager and Grafana (kube-prometheus-stack)
-- **AI**: vLLM (ROCm/AMD GPU), the NVIDIA Container Toolkit and device plugin
+- **AI**: llama-swap and llama.cpp (AMD GPU), the NVIDIA Container Toolkit and device plugin, AMD's device plugin
