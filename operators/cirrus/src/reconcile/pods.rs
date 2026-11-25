@@ -14,8 +14,8 @@
 //!   a container has restarted recently
 //! - Starting: fewer pods ready than asked for, with nothing wrong yet
 //!
-//! Only the Deployment's pods count. The migration Job's carry the
-//! same labels, but a failed migration is `RolledOut`'s to report.
+//! Only the Deployment's pods count. The migration Job's are labelled
+//! apart from them, and a failed migration is `RolledOut`'s to report.
 //!
 //! Built as a plain function of the pods and the time, so it can be
 //! tested without a cluster.

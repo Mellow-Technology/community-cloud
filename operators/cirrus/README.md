@@ -349,7 +349,19 @@ through, so it needs `imageTag`, and is rolled out by that tag.
 
 If the migration fails, `RolledOut` is False with the Job's name, and
 the old version stays. Each image's migrations run once. To rerun them,
-delete the Job.
+delete the Job. A finished Job is kept, logs and all, until the next
+image's migrations start.
+
+Migrations run one at a time. An image that arrives while another's
+migration is running waits for it to finish, as `RolledOut` says, and
+the running one isn't stopped. The old version keeps serving with the
+new schema until the rollout finishes, so a migration has to leave the
+schema usable by the code before it.
+
+The Job's pods are labelled `app.kubernetes.io/part-of` and
+`app.kubernetes.io/component: migrations` rather than as the
+application's own pods, so the application's Service doesn't send them
+traffic.
 
 Webhooks can get lost, so Cirrus also checks for the newest successful
 pipeline every ten minutes. Until a release arrives, the application
