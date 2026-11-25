@@ -42,6 +42,7 @@ import {
   type S3CredentialsSummary,
   type S3Identity,
 } from "../storage/types";
+import { OFFERING_PLURAL, type ServiceOffering } from "../offerings/types";
 import { GROUP, PLURAL, VERSION, type WebApplication } from "../webapp/types";
 import { KubeError, isNotFound, type KubeClient } from "./client";
 import type {
@@ -580,6 +581,17 @@ function clientFor(config: KubeConfig): KubeClient {
             ? await custom.listClusterCustomObject(CERTIFICATES)
             : await custom.listNamespacedCustomObject({ ...CERTIFICATES, namespace });
         return (list as { items: Certificate[] }).items;
+      })) ?? [],
+
+    listServiceOfferings: async (namespace) =>
+      // A 404 means the CRD isn't installed yet, so there are none
+      (await optional(async () => {
+        const kind = { group: GROUP, version: VERSION, plural: OFFERING_PLURAL };
+        const list =
+          namespace === undefined
+            ? await custom.listClusterCustomObject(kind)
+            : await custom.listNamespacedCustomObject({ ...kind, namespace });
+        return (list as { items: ServiceOffering[] }).items;
       })) ?? [],
 
     listBuckets: async (namespace) =>

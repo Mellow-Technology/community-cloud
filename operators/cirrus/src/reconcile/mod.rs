@@ -32,6 +32,7 @@
 
 pub mod bucket;
 pub mod cleanup;
+pub mod connections;
 pub mod migrations;
 pub mod network;
 pub mod pods;
@@ -63,6 +64,7 @@ use serde_json::json;
 use crate::conditions::{self, HEALTHY, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
 use crate::crd::WebApplication;
 use crate::error::{Error, Result};
+use crate::offerings::ServiceOffering;
 use crate::resources;
 use crate::settings::Settings;
 
@@ -137,6 +139,21 @@ pub async fn run(client: Client, settings: Settings) {
             |pod| {
                 let name = pod.labels().get("app.kubernetes.io/name")?;
                 Some(ObjectRef::<WebApplication>::new(name).within(&pod.namespace()?))
+            },
+        )
+        // An offering's consumers are the applications its address and
+        // credentials go to, so they're looked at again when it changes
+        .watches(
+            Api::<ServiceOffering>::all(client.clone()),
+            watcher::Config::default(),
+            |offering| {
+                offering
+                    .status
+                    .map(|status| status.consumers)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|consumer| ObjectRef::<WebApplication>::new(&consumer.name).within(&consumer.namespace))
+                    .collect::<Vec<_>>()
             },
         )
         .shutdown_on_signal()
@@ -235,6 +252,17 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             &mut pending,
         )?;
     }
+    if !app.spec.connections.is_empty() {
+        settle(
+            connections::ensure(ctx, app).await,
+            &mut provided,
+            &mut problems,
+            &mut pending,
+        )?;
+    }
+    // Its own offering, which waits on nothing: the offering's status
+    // says when its Service is there
+    connections::ensure_offered(ctx, app).await?;
 
     // 2. The forge
     let found = source::sync(ctx, app).await;

@@ -355,3 +355,47 @@ describe("volumes", () => {
     );
   });
 });
+
+describe("connections and offers", () => {
+  test("connections leave out their namespace when it's the app's, and a name that's the offering's", () => {
+    const app = fromForm(
+      form({
+        serviceConnections: [
+          { offering: "cache", namespace: "cc-office", name: "" },
+          { offering: "search", namespace: "team", name: "search" },
+          { offering: "", namespace: "", name: "" },
+        ],
+      }),
+    );
+    expect(app.spec.connections).toEqual([{ offering: "cache", namespace: "cc-office" }, { offering: "search" }]);
+    expect(toForm(app).serviceConnections).toEqual([
+      { offering: "cache", namespace: "cc-office", name: "" },
+      { offering: "search", namespace: "", name: "" },
+    ]);
+  });
+
+  test("an offer is written with only what was given, and goes when it's turned off", () => {
+    const offered = fromForm(
+      form({ offers: true, offerDescription: " Orders. ", offerPath: "/api", offerShareWith: "web, admin" }),
+    );
+    expect(offered.spec.offers).toEqual({ description: "Orders.", path: "/api", shareWith: ["web", "admin"] });
+    expect(toForm(offered)).toMatchObject({ offers: true, offerProtocol: "http", offerShareWith: "web, admin" });
+    expect(fromForm(form({ offers: true, offerProtocol: "grpc" })).spec.offers).toEqual({ protocol: "grpc" });
+    expect(fromForm(form({ ...toForm(offered), offers: false }), offered).spec.offers).toBeUndefined();
+  });
+
+  test("are checked", () => {
+    expect(validateForm(form({ offers: true, offerShareWith: "Web" })).offerShareWith).toBeDefined();
+    expect(validateForm(form({ offers: true, offerPath: "api" })).offerPath).toBeDefined();
+    expect(
+      validateForm(
+        form({
+          serviceConnections: [
+            { offering: "search", namespace: "", name: "" },
+            { offering: "search", namespace: "other", name: "" },
+          ],
+        }),
+      ).serviceConnections,
+    ).toContain("both set SEARCH_*");
+  });
+});

@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use cirrus::dns;
+use cirrus::offerings;
 use cirrus::reconcile::{self, Context};
 use cirrus::settings::Settings;
 use cirrus::webhook;
@@ -46,7 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         result = server => result?,
         () = reconcile::run(client.clone(), settings.clone()) => {}
-        () = dns::controller::run(client, settings) => {}
+        () = dns::controller::run(client.clone(), settings) => {}
+        () = offerings::controller::run(client) => {}
     }
     Ok(())
 }

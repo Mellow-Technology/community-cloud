@@ -24,6 +24,7 @@ import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../d
 import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
 import { RECORD_KEY, RECORD_LABEL, RECORD_NAMESPACE, type PackageRecord } from "../office";
 import { parseQuantity } from "../quantity";
+import type { ServiceOffering } from "../offerings/types";
 import type { Bucket, S3CredentialsSummary, S3Identity } from "../storage/types";
 import { API_VERSION, GROUP, KIND, PLURAL, type WebApplication } from "../webapp/types";
 import { KubeError, type KubeClient } from "./client";
@@ -54,6 +55,7 @@ interface FixtureStore {
   buckets: Map<string, Bucket>;
   s3Identities: S3Identity[];
   s3Credentials: S3CredentialsSummary[];
+  offerings: ServiceOffering[];
   workloads: Map<string, Workload>;
   regions: string[];
   version: number;
@@ -350,6 +352,46 @@ function fixtureCredentials(
 }
 
 /**
+ * A ServiceOffering as Cirrus would report it: its Service found, ready.
+ *
+ * @param namespace
+ * @param name
+ * @param parts
+ * @param parts.spec
+ * @param parts.port the Service's port
+ * @param parts.consumers
+ * @param parts.ownerReferences
+ * @returns
+ */
+function fixtureOffering(
+  namespace: string,
+  name: string,
+  parts: {
+    spec: ServiceOffering["spec"];
+    port: number;
+    consumers?: NonNullable<ServiceOffering["status"]>["consumers"];
+    ownerReferences?: ServiceOffering["metadata"]["ownerReferences"];
+  },
+): ServiceOffering {
+  const host = `${parts.spec.service.name}.${namespace}.svc.cluster.local`;
+  const scheme = parts.spec.protocol === "postgres" ? "postgresql" : (parts.spec.protocol ?? "http");
+  return {
+    apiVersion: "community-cloud.technology/v1alpha1",
+    kind: "ServiceOffering",
+    metadata: { name, namespace, generation: 1, creationTimestamp: CREATED, ownerReferences: parts.ownerReferences },
+    spec: parts.spec,
+    status: {
+      host,
+      port: parts.port,
+      uri: `${scheme}://${host}:${parts.port}${parts.spec.path ?? ""}`,
+      binding: { name: `${name}-binding` },
+      consumers: parts.consumers ?? [],
+      conditions: [{ type: "Ready", status: "True", reason: "Ready", lastTransitionTime: CREATED }],
+    },
+  };
+}
+
+/**
  * The cluster as it starts.
  *
  * @returns
@@ -390,6 +432,10 @@ function seed(): FixtureStore {
         healthCheck: { path: "/healthz" },
         hostnames: ["shop.example.org"],
         postgres: {},
+        connections: [
+          { offering: "plane", namespace: "cc-office", name: "projects" },
+          { offering: "cache", namespace: "cc-office" },
+        ],
         env: [
           { name: "NODE_ENV", value: "production" },
           { name: "STRIPE_KEY", valueFrom: { secretKeyRef: { name: "shop-stripe", key: "key" } } },
@@ -440,6 +486,12 @@ function seed(): FixtureStore {
         bucket: { quota: "20Gi" },
         rabbitmq: {},
         migrations: { command: ["./bin/docker-entrypoint-migrator.sh"] },
+        offers: {
+          title: "Plane API",
+          description: "Projects, issues and cycles. Token auth: an API key from Plane's settings in X-API-Key.",
+          path: "/api/v1",
+          shareWith: ["team-shop"],
+        },
       },
       status: {
         observedGeneration: 1,
@@ -833,6 +885,44 @@ function seed(): FixtureStore {
       fixtureIdentity("seaweedfs", "anvadmin", { spec: { name: "anvAdmin" } }),
       fixtureIdentity("seaweedfs", "old-backups", { spec: { disabled: true } }),
     ],
+    offerings: [
+      fixtureOffering("cc-office", "plane", {
+        ownerReferences: [{ kind: "WebApplication", name: "plane" }],
+        spec: {
+          title: "Plane API",
+          description: "Projects, issues and cycles. Token auth: an API key from Plane's settings in X-API-Key.",
+          protocol: "http",
+          service: { name: "plane", port: "http" },
+          path: "/api/v1",
+          shareWith: ["team-shop"],
+        },
+        port: 8000,
+        consumers: [{ namespace: "team-shop", name: "shop", allowed: true }],
+      }),
+      fixtureOffering("cc-office", "cache", {
+        spec: {
+          title: "Shared Redis",
+          description:
+            "Redis for caches and sessions. Nothing in it is kept, and keys should be prefixed with your app's name.",
+          protocol: "redis",
+          service: { name: "redis" },
+          shareWith: ["team-shop"],
+          secret: "redis-password",
+        },
+        port: 6379,
+        consumers: [{ namespace: "team-shop", name: "shop", allowed: true }],
+      }),
+      fixtureOffering("cc-office", "mariadb", {
+        spec: {
+          title: "Shared MariaDB",
+          description: "MySQL-compatible, for applications that need it. Ask for a database and user first.",
+          protocol: "mysql",
+          service: { name: "cc-mariadb" },
+          secret: "mariadb-app",
+        },
+        port: 3306,
+      }),
+    ],
     s3Credentials: [
       fixtureCredentials("cc-office", "authentik", "authentik", "authentik-s3", "FXAUTHENTIK000000001"),
       fixtureCredentials("cc-office", "methods", "methods", "methods-s3", "FXMETHODS00000000001"),
@@ -913,7 +1003,7 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.buckets === undefined) {
+  if (holder.__meteorologistFixtures?.offerings === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
@@ -1025,6 +1115,7 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
       return client.listSecrets(namespace);
     },
     listBuckets: scoped("buckets", client.listBuckets),
+    listServiceOfferings: scoped("serviceofferings", client.listServiceOfferings),
     getBucket: async (namespace, name) => {
       within("buckets", namespace);
       return client.getBucket(namespace, name);
@@ -1117,6 +1208,9 @@ export function fixtureClient(): KubeClient {
       ns.metadata.labels = merged(ns.metadata.labels, patch);
       return copy(ns);
     },
+
+    listServiceOfferings: async (namespace) =>
+      copy(store().offerings.filter((each) => namespace === undefined || each.metadata.namespace === namespace)),
 
     listBuckets: async (namespace) =>
       copy(

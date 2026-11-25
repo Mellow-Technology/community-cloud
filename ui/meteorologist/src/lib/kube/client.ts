@@ -26,6 +26,7 @@ import type {
 } from "./types";
 import type { ClusterUsage } from "../cluster";
 import type { DnsProvider } from "../dns/types";
+import type { ServiceOffering } from "../offerings/types";
 import type { Bucket, NewS3Credentials, S3CredentialsSummary, S3Identity } from "../storage/types";
 import type { WebApplication } from "../webapp/types";
 
@@ -318,6 +319,15 @@ export interface KubeClient {
    * @returns
    */
   listCertificates(namespace?: string): Promise<Certificate[]>;
+
+  /**
+   * Cirrus's ServiceOfferings, in one namespace or in all of them.
+   * Empty when Cirrus's CRD for them isn't installed.
+   *
+   * @param namespace
+   * @returns
+   */
+  listServiceOfferings(namespace?: string): Promise<ServiceOffering[]>;
 
   /**
    * SeaweedFS's Buckets, in one namespace or in all of them. Empty when

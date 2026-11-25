@@ -13,6 +13,7 @@ import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
 import { namespacesAllowing, reachableNamespaces } from "@/lib/namespace/access";
 import { namespaceChoices } from "@/lib/namespace/choices";
+import { offeringChoices } from "@/lib/offerings/choices";
 import { emptyForm, soleConnection } from "@/lib/webapp/form";
 import { GROUP, PLURAL } from "@/lib/webapp/types";
 
@@ -34,10 +35,13 @@ export default async function NewAppPage({ searchParams }: { searchParams: Promi
     { verb: "create", resource: PLURAL, group: GROUP },
     reached.map((ns) => ns.metadata.name),
   );
-  const choices = await namespaceChoices(
-    kube,
-    reached.filter((ns) => deployable.has(ns.metadata.name)),
-  );
+  const [choices, offerings] = await Promise.all([
+    namespaceChoices(
+      kube,
+      reached.filter((ns) => deployable.has(ns.metadata.name)),
+    ),
+    offeringChoices(kube, reached),
+  ]);
 
   return (
     <>
@@ -64,6 +68,7 @@ export default async function NewAppPage({ searchParams }: { searchParams: Promi
             ...soleConnection(choices.find((choice) => choice.name === namespace)),
           }}
           namespaces={choices}
+          offerings={offerings}
         />
       )}
     </>
