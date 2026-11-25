@@ -52,6 +52,28 @@ export type PostgresSpec = Record<string, unknown>;
 export type RabbitMqSpec = Record<string, unknown>;
 
 /**
+ * A connection to a ServiceOffering: its variables start with the
+ * name, or the offering's.
+ */
+export interface ConnectionSpec {
+  offering: string;
+  namespace?: string;
+  name?: string;
+}
+
+/**
+ * How an application offers itself: the ServiceOffering Cirrus makes
+ * for its Service.
+ */
+export interface OfferSpec {
+  title?: string;
+  description?: string;
+  protocol?: string;
+  path?: string;
+  shareWith?: string[];
+}
+
+/**
  * Community Cloud's storage types, each a StorageClass on one kind of
  * disk (k8s/storage/StorageClass), and a RAM disk, which is memory
  * emptied whenever the pod restarts.
@@ -119,6 +141,8 @@ export interface WebApplicationSpec {
   postgres?: PostgresSpec;
   bucket?: BucketSpec;
   volumes?: VolumeSpec[];
+  connections?: ConnectionSpec[];
+  offers?: OfferSpec;
   rabbitmq?: RabbitMqSpec;
   migrations?: MigrationsSpec;
   source?: SourceSpec;

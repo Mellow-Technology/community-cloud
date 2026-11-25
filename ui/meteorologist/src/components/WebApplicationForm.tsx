@@ -52,6 +52,8 @@ import {
 import { pullSecretsFor, registryOf, type PullSecret } from "@/lib/webapp/registry";
 import { DEFAULT_GITLAB_REF, STORAGE_TYPES, type StorageType } from "@/lib/webapp/types";
 import { GitLabImagePicker } from "./GitLabImagePicker";
+import { ServiceConnections } from "./ServiceConnections";
+import type { OfferingChoice } from "@/lib/offerings/present";
 import { projectsFor } from "@/lib/gitlab/projects";
 import { postgresDatabase } from "@/lib/postgres";
 import { capabilityWarnings, postgresNote, type CapabilityWarning } from "@/lib/webapp/warnings";
@@ -80,6 +82,8 @@ export interface NamespaceChoice {
 export interface WebApplicationFormProps {
   initial: FormModel;
   namespaces: NamespaceChoice[];
+  // The ServiceOfferings the person can see, to connect to
+  offerings: OfferingChoice[];
   // Present when editing: the version the form was opened at
   resourceVersion?: string;
 }
@@ -91,6 +95,7 @@ export interface WebApplicationFormProps {
 export function WebApplicationForm({
   initial,
   namespaces: initialNamespaces,
+  offerings,
   resourceVersion,
 }: WebApplicationFormProps) {
   const router = useRouter();
@@ -540,6 +545,10 @@ export function WebApplicationForm({
           />
         </div>
       ),
+    },
+    {
+      title: "What it connects to",
+      body: <ServiceConnections form={form} offerings={offerings} errors={shownErrors} set={set} />,
     },
     {
       title: "How it's updated",

@@ -1,0 +1,47 @@
+# Two applications in different namespaces: a search service that
+# offers itself to the shop's namespace, and the shop, which connects to
+# it and gets SEARCH_HOST, SEARCH_PORT, SEARCH_URL and SEARCH_TYPE.
+apiVersion: community-cloud.technology/v1alpha1
+kind: WebApplication
+metadata:
+  name: search
+  namespace: catalogue
+spec:
+  image:
+    repository: registry.gitlab.com/acme/search
+    tag: main
+  offers:
+    title: Product search
+    description: 'Full-text search over the catalogue. POST /query with {"q": "..."}.'
+    path: /v1
+    shareWith: [shop]
+---
+apiVersion: community-cloud.technology/v1alpha1
+kind: WebApplication
+metadata:
+  name: web
+  namespace: shop
+spec:
+  image:
+    repository: registry.gitlab.com/acme/shop
+    tag: main
+  hostnames: [shop.acme.example]
+  connections:
+    - offering: search
+      namespace: catalogue
+---
+# An offering written by hand, for a Service that isn't a
+# WebApplication: the shop namespace's own Redis, with its password
+# going to the shop's applications as CACHE_PASSWORD.
+apiVersion: community-cloud.technology/v1alpha1
+kind: ServiceOffering
+metadata:
+  name: cache
+  namespace: shop
+spec:
+  title: Session cache
+  description: Redis, for sessions and rate limits. Nothing in it is kept.
+  protocol: redis
+  service:
+    name: redis
+  secret: redis-password

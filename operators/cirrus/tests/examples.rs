@@ -1,9 +1,10 @@
-//! Every WebApplication and DnsProvider in examples/ has to be one the
+//! Every WebApplication, DnsProvider and ServiceOffering in examples/ has to be one the
 //! operator can read, so the examples can't drift from the CRDs the way
 //! hand-written documentation does.
 
 use cirrus::crd::WebApplication;
 use cirrus::dns::DnsProvider;
+use cirrus::offerings::ServiceOffering;
 use serde::Deserialize;
 
 #[test]
@@ -19,6 +20,12 @@ fn examples_deserialize() {
                 let dns: DnsProvider =
                     serde_yaml::from_value(value).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
                 assert!(dns.problems().is_empty(), "{}", path.display());
+                continue;
+            }
+            if value["kind"].as_str() == Some("ServiceOffering") {
+                let offering: ServiceOffering =
+                    serde_yaml::from_value(value).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                assert!(!offering.spec.title.is_empty(), "{}", path.display());
                 continue;
             }
             if value["kind"].as_str() != Some("WebApplication") {

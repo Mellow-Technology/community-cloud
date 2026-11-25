@@ -16,6 +16,7 @@ import { TagList } from "gui-mellow/Tag";
 import { stringify } from "yaml";
 
 import { AppActions } from "@/components/AppActions";
+import { AppConnections } from "@/components/AppConnections";
 import { DetailList } from "@/components/DetailList";
 import { CertificateBadge } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
@@ -285,6 +286,8 @@ export default async function AppPage({ params }: { params: Promise<Params> }) {
             <ErrorNotice error={builds.error} title="Couldn't read this namespace's GitLab build settings" />
           </section>
         ))}
+
+      <AppConnections app={app} kube={kube} />
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Conditions</h2>
