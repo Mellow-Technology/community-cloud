@@ -94,7 +94,7 @@ community-cloud/
 │   ├── cc.config.schema.json
 │   └── package.json
 ├── k8s/                # Kubernetes manifests & Helm values
-│   ├── ai/             # The NVIDIA and AMD device plugins' values; vLLM GPU inference (AMD Ryzen AI Max), applied by hand
+│   ├── ai/             # The NVIDIA and AMD device plugins' values; local models behind llama-swap (AMD Ryzen AI Max), applied by hand
 │   ├── apps/           # Application deployments (Twenty CRM, Lago, Documenso, Mattermost, Plane, Methods, Headlamp, Meteorologist, etc.)
 │   ├── certs/          # cert-manager values and the cluster's Let's Encrypt issuer
 │   ├── crd/            # The Site CRD draft, not yet applied by anything
@@ -207,7 +207,7 @@ haven't run on real hardware in their current form yet.
 
 - **NVIDIA**: the `nvidia` bundle installs NVIDIA's container runtime, which K3s offers as the `nvidia` RuntimeClass, and the device plugin (`k8s/ai/NvidiaDevicePlugin`) on nodes whose driver works. It doesn't install the driver itself.
 - **AMD**: the `amd` bundle installs AMD's device plugin (`k8s/ai/AmdDevicePlugin`) on nodes whose `amdgpu` driver works. The kernel's own driver is enough; ROCm comes in the workload's image. Cards aren't shared.
-- **vLLM** on an AMD Ryzen AI Max (gfx1151) (`k8s/ai/vLLM/vllm-amd.yaml`): Mistral-7B deployment with ROCm in `cc-office`, its card as `amd.com/gpu`, 8Gi shared memory, Hugging Face model access via secret. No package installs it; apply it by hand.
+- **Local models** on an AMD Ryzen AI Max (gfx1151) (`k8s/ai/Models/`): llama-swap in `cc-ai`, one OpenAI-compatible endpoint in front of llama.cpp (Vulkan) servers it starts and stops as models are asked for, all on the one card. The model list is a ConfigMap. Offered to `cc-office` as the `models` ServiceOffering. No package installs it; apply it by hand.
 
 ## Quick Start
 
@@ -227,4 +227,4 @@ haven't run on real hardware in their current form yet.
 - **Networking**: Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale
 - **Databases and queues**: CloudNative-PG (PostgreSQL/PostGIS), MariaDB (its operator), Redis (Opstree), RabbitMQ (its Cluster Operator)
 - **Monitoring**: Prometheus, Alertmanager and Grafana (kube-prometheus-stack)
-- **AI**: vLLM (ROCm/AMD GPU), the NVIDIA Container Toolkit and device plugin, AMD's device plugin
+- **AI**: llama-swap and llama.cpp (AMD GPU), the NVIDIA Container Toolkit and device plugin, AMD's device plugin

@@ -1,0 +1,155 @@
+# Language models on an AMD GPU, served from one pod by llama-swap.
+# Applied by hand with run-template, after Models.namespace.yaml,
+# Models.volume.yaml and Models.config.yaml. It needs the amd bundle to
+# have run, so the cluster has "amd.com/gpu" to give it.
+#
+# A card goes to one pod whole, so every model shares this one.
+# llama-swap is a single OpenAI-compatible endpoint in front of them:
+# it starts each model's server the first time it's asked for, keeps as
+# many loaded as fit in the GPU's memory, and stops one that's idle or
+# in the way. Which models there are, and how much of the GPU each
+# takes, is Models.config.yaml; nothing here names a model.
+#
+# Written for a Ryzen AI Max ("Strix Halo", gfx1151), an APU: one GPU
+# with no memory of its own, using the node's RAM. The servers are
+# llama.cpp's, built for Vulkan, which is the faster of its backends on
+# this chip and needs nothing from ROCm: only the card's /dev/dri
+# render node, which the device plugin passes in with /dev/kfd.
+#
+# vLLM isn't in this image. A model served by vLLM would need it in
+# this same container, since another container in the pod can't be
+# given the card too: see "AMD GPUs" in the installer's README.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: models
+  namespace: cc-ai
+  labels:
+    app: models
+spec:
+  replicas: 1
+  # One GPU and a volume on one node: the old pod has to let go of both
+  # before a new one can start
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: models
+  template:
+    metadata:
+      labels:
+        app: models
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: models
+        - name: models
+          persistentVolumeClaim:
+            claimName: models
+      containers:
+        - name: llama-swap
+          # llama-swap v275 with llama.cpp build b12679, for Vulkan. Tag
+          # and digest, so the image can't change under the tag. It runs
+          # as root: the card's device nodes keep the host's render
+          # group, whose number differs from host to host.
+          image: ghcr.io/mostlygeek/llama-swap:v275-vulkan-b12679@sha256:6046efb17aea34769349e40052cffdd76dd9f711d256f1c25c81a432e424a5ba
+          # The ConfigMap's directory rather than a subPath of it, so an
+          # edit reaches the file, and -watch-config reloads it without
+          # a restart. Models already running aren't stopped by a reload
+          # unless their entry changed.
+          args: ["-config", "/config/config.yaml", "-watch-config", "-listen", ":8080"]
+          env:
+            # Mesa's RADV driver, which processes prompts much faster on
+            # this chip than AMD's own AMDVLK, should an image carry both
+            - name: AMD_VULKAN_ICD
+              value: RADV
+            # Where llama-server keeps what -hf downloads, on the volume
+            - name: LLAMA_CACHE
+              value: /models/llama.cpp
+            - name: HF_HOME
+              value: /models/huggingface
+            # For gated models only; nothing in Models.config.yaml needs it
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: token
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8080
+          # llama-swap answers while models are still loading: a model
+          # being fetched for the first time can take many minutes, and
+          # the endpoint shouldn't go away meanwhile.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          # Sized for the processes alone, which is right while the
+          # GPU's memory is set aside by the BIOS and isn't RAM
+          # Kubernetes can see. The weights go into the GPU's memory
+          # (--no-mmap in Models.config.yaml), not the page cache.
+          #
+          # Once the GPU borrows RAM through GTT, what it borrows comes
+          # out of the RAM Kubernetes schedules pods into, and nothing
+          # counts it against this pod. Then raise the request by the
+          # capacity pool in Models.config.yaml, so the scheduler keeps
+          # it free, and raise the limit to match.
+          resources:
+            limits:
+              cpu: "14"
+              memory: 24G
+              amd.com/gpu: "1"
+            requests:
+              cpu: "6"
+              memory: 8G
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: models
+              mountPath: /models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: models
+  namespace: cc-ai
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+  selector:
+    app: models
+  type: ClusterIP
+---
+# How applications find it: pick "Local models" when connecting, and
+# get MODELS_URL (http://models.cc-ai.svc.cluster.local:80/v1) for any
+# OpenAI client. GET /v1/models lists what's there.
+#
+# Shared with cc-office for its applications to connect to. This is
+# what hands out the address; nothing yet stops other pods reaching it
+# (CC-49).
+apiVersion: community-cloud.technology/v1alpha1
+kind: ServiceOffering
+metadata:
+  name: models
+  namespace: cc-ai
+spec:
+  title: Local models
+  description: >-
+    Language models on the cluster's GPU, behind one OpenAI-compatible
+    API: chat, coding, vision, embeddings and reranking. GET /models
+    lists them; the first request for one that isn't loaded waits while
+    it loads.
+  protocol: http
+  service:
+    name: models
+  path: /v1
+  shareWith:
+    - cc-office

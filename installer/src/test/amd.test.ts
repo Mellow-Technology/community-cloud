@@ -13,7 +13,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parse, parseAllDocuments } from "yaml";
 
-import { getBundle, getBundleCommands, getBundleNames, getCheckableBundleNames } from "../cli/commands/bundles.ts";
+import {
+  getBundle,
+  getBundleCommands,
+  getBundleNames,
+  getCheckableBundleNames,
+} from "../cli/commands/bundles.ts";
 import {
   AmdCommands,
   AmdDevicePluginCommands,
@@ -21,7 +26,11 @@ import {
   DRIVER_LABEL,
   DRIVER_STATES,
 } from "../cli/commands/Amd.ts";
-import { CommandPurpose, CommandScope, CommandTarget } from "../cli/commands/Command.ts";
+import {
+  CommandPurpose,
+  CommandScope,
+  CommandTarget,
+} from "../cli/commands/Command.ts";
 import { GpuInfoCommands } from "../cli/commands/GpuInfo.ts";
 import { CLUSTER_NAMESPACE, getPackage } from "../cli/commands/packages.ts";
 import { ADD_NODE_PIPELINE } from "../runners/addNode.ts";
@@ -40,7 +49,8 @@ const named = (name: string) => every.find((command) => command.name === name)!;
  */
 function text(name: string, context: any = AMD): string {
   const { command } = named(name) as any;
-  const built = typeof command === "function" ? command({}, context, {}) : command;
+  const built =
+    typeof command === "function" ? command({}, context, {}) : command;
   return Array.isArray(built) ? built.join("\n") : built;
 }
 
@@ -58,11 +68,16 @@ describe("where the amd bundle goes", () => {
   }
 
   it("has Helm by the time it's in an install", () => {
-    assert.ok(INSTALL_PIPELINE.indexOf("helm") < INSTALL_PIPELINE.indexOf("amd"));
+    assert.ok(
+      INSTALL_PIPELINE.indexOf("helm") < INSTALL_PIPELINE.indexOf("amd"),
+    );
   });
 
   it("is checked before add-node says the node has joined", () => {
-    assert.ok(ADD_NODE_PIPELINE.indexOf("amd") < ADD_NODE_PIPELINE.indexOf("node-joined"));
+    assert.ok(
+      ADD_NODE_PIPELINE.indexOf("amd") <
+        ADD_NODE_PIPELINE.indexOf("node-joined"),
+    );
   });
 
   it("is a bundle, and one a check-up asks about", () => {
@@ -77,7 +92,13 @@ describe("which nodes it touches", () => {
       for (const command of AmdCommands) {
         assert.equal(command.skipWhen!({}, context), true, command.name);
       }
-      assert.equal(named("verify-amd-gpus-allocatable").skipWhen!({}, { ...context, amdDriverWorking: true }), true);
+      assert.equal(
+        named("verify-amd-gpus-allocatable").skipWhen!(
+          {},
+          { ...context, amdDriverWorking: true },
+        ),
+        true,
+      );
     }
   });
 
@@ -93,13 +114,24 @@ describe("which nodes it touches", () => {
   });
 
   it("looks for hardware itself when it's run alone", () => {
-    const names = getBundleCommands(getBundle("amd")!, {} as any, {}).map((command: any) => command.name);
-    assert.ok(names.indexOf("detect-video-hardware") < names.indexOf("check-amd-driver"));
+    const names = getBundleCommands(getBundle("amd")!, {} as any, {}).map(
+      (command: any) => command.name,
+    );
+    assert.ok(
+      names.indexOf("detect-video-hardware") <
+        names.indexOf("check-amd-driver"),
+    );
   });
 
   it("only looks, rather than changing anything, before it knows", () => {
-    const commands = getBundleCommands(getBundle("amd")!, {} as any, {}) as any[];
-    const first = commands.findIndex((command) => command.name === "label-amd-driver");
+    const commands = getBundleCommands(
+      getBundle("amd")!,
+      {} as any,
+      {},
+    ) as any[];
+    const first = commands.findIndex(
+      (command) => command.name === "label-amd-driver",
+    );
     for (const command of commands.slice(0, first)) {
       assert.equal(command.purpose, CommandPurpose.Inspect, command.name);
     }
@@ -107,11 +139,16 @@ describe("which nodes it touches", () => {
 });
 
 describe("what it does to a node", () => {
-  const all = AmdCommands.map((command) => text(command.name, { ...AMD, node: { nodeName: "gpu-1" } })).join("\n");
+  const all = AmdCommands.map((command) =>
+    text(command.name, { ...AMD, node: { nodeName: "gpu-1" } }),
+  ).join("\n");
 
   it("installs nothing, and restarts nothing", () => {
     // The warnings name amdgpu-dkms, as something someone could install
-    assert.doesNotMatch(all, /\bapt(-get)? |\bdkms |\bmodprobe\b|\bsystemctl\b|\bamdgpu-install /);
+    assert.doesNotMatch(
+      all,
+      /\bapt(-get)? |\bdkms |\bmodprobe\b|\bsystemctl\b|\bamdgpu-install /,
+    );
   });
 });
 
@@ -127,9 +164,21 @@ describe("the driver check", () => {
   });
 
   it("only counts a working driver", () => {
-    assert.equal(save({ processed: hook({ stdout: "working\n" }) }).amdDriverWorking, true);
-    for (const state of ["no-driver", "no-kfd", "no-compute", "something else"]) {
-      assert.equal(save({ processed: hook({ stdout: `${state}\n` }) }).amdDriverWorking, false, state);
+    assert.equal(
+      save({ processed: hook({ stdout: "working\n" }) }).amdDriverWorking,
+      true,
+    );
+    for (const state of [
+      "no-driver",
+      "no-kfd",
+      "no-compute",
+      "something else",
+    ]) {
+      assert.equal(
+        save({ processed: hook({ stdout: `${state}\n` }) }).amdDriverWorking,
+        false,
+        state,
+      );
     }
   });
 
@@ -166,7 +215,11 @@ describe("the driver label", () => {
   });
 
   it("takes the label off a node whose driver stopped answering", () => {
-    const command = text("label-amd-driver", { ...AMD, ...node, amdDriverWorking: false });
+    const command = text("label-amd-driver", {
+      ...AMD,
+      ...node,
+      amdDriverWorking: false,
+    });
     assert.match(command, new RegExp(`${DRIVER_LABEL}-`));
     assert.doesNotMatch(command, /=ready/);
   });
@@ -180,7 +233,9 @@ describe("the driver label", () => {
 describe("the device plugin", async () => {
   const config = await loadFixtureConfig();
   const values = parse(
-    renderInstallerFile(config, DEVICE_PLUGIN.valuesFile!, { templateNamespace: DEVICE_PLUGIN.namespace }),
+    renderInstallerFile(config, DEVICE_PLUGIN.valuesFile!, {
+      templateNamespace: DEVICE_PLUGIN.namespace,
+    }),
   );
   const install = named("helm-install-amd-gpu-device-plugin") as any;
 
@@ -223,14 +278,28 @@ describe("the device plugin", async () => {
   });
 
   it("is installed once any node has one", () => {
-    assert.equal(install.skipWhen({}, { amdDriverNodes: ["node/gpu-1"] }, {}), false);
+    assert.equal(
+      install.skipWhen({}, { amdDriverNodes: ["node/gpu-1"] }, {}),
+      false,
+    );
   });
 
   it("looks for those nodes after labelling them, and checks them after installing", () => {
-    const names = getBundleCommands(getBundle("amd")!, config).map((command) => command.name);
-    assert.ok(names.indexOf("label-amd-driver") < names.indexOf("find-amd-driver-nodes"));
-    assert.ok(names.indexOf("find-amd-driver-nodes") < names.indexOf("helm-install-amd-gpu-device-plugin"));
-    assert.ok(names.indexOf("helm-install-amd-gpu-device-plugin") < names.indexOf("verify-amd-gpus-allocatable"));
+    const names = getBundleCommands(getBundle("amd")!, config).map(
+      (command) => command.name,
+    );
+    assert.ok(
+      names.indexOf("label-amd-driver") <
+        names.indexOf("find-amd-driver-nodes"),
+    );
+    assert.ok(
+      names.indexOf("find-amd-driver-nodes") <
+        names.indexOf("helm-install-amd-gpu-device-plugin"),
+    );
+    assert.ok(
+      names.indexOf("helm-install-amd-gpu-device-plugin") <
+        names.indexOf("verify-amd-gpus-allocatable"),
+    );
   });
 });
 
@@ -244,32 +313,52 @@ describe("checking a node offers its cards", () => {
 
   it("is asked of nodes whose driver works, and no others", () => {
     assert.equal(verify.skipWhen!({}, node), false);
-    assert.equal(verify.skipWhen!({}, { ...node, amdDriverWorking: false }), true);
+    assert.equal(
+      verify.skipWhen!({}, { ...node, amdDriverWorking: false }),
+      true,
+    );
   });
 
   it("reads amd.com/gpu from the node, and fails without it", () => {
     const shell = text("verify-amd-gpus-allocatable", node);
-    assert.match(shell, /jsonpath='\{\.status\.allocatable\.amd\\\.com\/gpu\}'/);
+    assert.match(
+      shell,
+      /jsonpath='\{\.status\.allocatable\.amd\\\.com\/gpu\}'/,
+    );
     assert.match(shell, /-gt 0 \] 2>\/dev\/null \|\| \{ echo .*exit 1; \}/);
   });
 
   it("waits during an install, and not during a check-up", () => {
-    assert.match(text("verify-amd-gpus-allocatable", node), /for attempt in \$\(seq 60\)/);
-    assert.doesNotMatch(text("verify-amd-gpus-allocatable", { ...node, noWaiting: true }), /for attempt in/);
+    assert.match(
+      text("verify-amd-gpus-allocatable", node),
+      /for attempt in \$\(seq 60\)/,
+    );
+    assert.doesNotMatch(
+      text("verify-amd-gpus-allocatable", { ...node, noWaiting: true }),
+      /for attempt in/,
+    );
   });
 });
 
 describe("what the gpu bundle says about an AMD node", () => {
-  const details = GpuInfoCommands.find((command) => command.name === "amd-gpu-details") as any;
+  const details = GpuInfoCommands.find(
+    (command) => command.name === "amd-gpu-details",
+  ) as any;
   const [hook] = details.postProcessHooks;
 
   it("asks for /dev/kfd, which is what a workload needs", () => {
-    assert.match((details.command as string[]).join("\n"), /\[ -c \/dev\/kfd \]/);
+    assert.match(
+      (details.command as string[]).join("\n"),
+      /\[ -c \/dev\/kfd \]/,
+    );
   });
 
   it("doesn't count missing ROCm tools against a node that has /dev/kfd", async () => {
     await withoutConsole(async () => {
-      const found = hook({ stdout: "tooling|rocm-smi|missing\ntooling|amd-smi|missing\nkfd|present\n" });
+      const found = hook({
+        stdout:
+          "tooling|rocm-smi|missing\ntooling|amd-smi|missing\nkfd|present\n",
+      });
       assert.equal(found.computeReady, true);
       assert.equal(found.toolingInstalled, false);
     });
@@ -286,52 +375,113 @@ describe("what the gpu bundle says about an AMD node", () => {
       console.log = log;
     }
 
-    assert.ok(said.some((line) => line.includes("amd bundle")), said.join("\n"));
+    assert.ok(
+      said.some((line) => line.includes("amd bundle")),
+      said.join("\n"),
+    );
   });
 });
 
-describe("the vLLM manifest", async () => {
+describe("the models manifests", async () => {
   const config = await loadFixtureConfig();
   const documents = [
-    ...parseAllDocuments(renderInstallerFile(config, "embed://ai/vLLM/vllm-amd.yaml")),
-    ...parseAllDocuments(renderInstallerFile(config, "embed://ai/vLLM/vllm-amd-pvc.yaml")),
-  ].map((document) => document.toJS());
-  const deployment = documents.find((document) => document.kind === "Deployment");
-  const pod = deployment.spec.template.spec;
+    "Models.namespace.yaml",
+    "Models.volume.yaml",
+    "Models.config.yaml",
+    "Models.yaml",
+  ]
+    .flatMap((file) =>
+      parseAllDocuments(
+        renderInstallerFile(config, `embed://ai/Models/${file}`),
+      ),
+    )
+    .map((document) => document.toJS());
+  const find = (kind: string) =>
+    documents.find((document) => document.kind === kind);
+  const pod = find("Deployment").spec.template.spec;
+  const swap = parse(find("ConfigMap").data["config.yaml"]);
 
-  it("goes in cc-office with the other applications", () => {
-    for (const document of documents) {
-      assert.equal(document.metadata.namespace, "cc-office", document.kind);
+  it("go in cc-ai, away from the applications in cc-office", () => {
+    assert.equal(find("Namespace").metadata.name, "cc-ai");
+    for (const document of documents.filter(
+      (document) => document.kind !== "Namespace",
+    )) {
+      assert.equal(document.metadata.namespace, "cc-ai", document.kind);
     }
   });
 
-  it("gets its card from the device plugin", () => {
+  it("are offered to cc-office's applications", () => {
+    const offering = find("ServiceOffering");
+    assert.equal(offering.spec.service.name, find("Service").metadata.name);
+    assert.deepEqual(offering.spec.shareWith, ["cc-office"]);
+    assert.equal(offering.spec.path, "/v1");
+  });
+
+  it("get the card from the device plugin", () => {
     assert.equal(pod.containers[0].resources.limits["amd.com/gpu"], "1");
   });
 
-  it("uses neither the host's network nor its IPC, and isn't privileged", () => {
+  it("use neither the host's network nor its IPC, and aren't privileged", () => {
     assert.equal(pod.hostNetwork, undefined);
     assert.equal(pod.hostIPC, undefined);
-    assert.equal(pod.containers[0].securityContext.privileged, undefined);
-    assert.ok(!(pod.volumes ?? []).some((volume: any) => volume.hostPath !== undefined));
+    assert.equal(pod.containers[0].securityContext?.privileged, undefined);
+    assert.ok(
+      !(pod.volumes ?? []).some((volume: any) => volume.hostPath !== undefined),
+    );
   });
 
-  it("runs an image pinned exactly, and not the MI300 one", () => {
-    const image: string = pod.containers[0].image;
-    assert.match(image, /^rocm\/vllm:rocm[\d.]+_[^@]+@sha256:[0-9a-f]{64}$/);
-    assert.doesNotMatch(image, /mi300/i);
+  it("run an image pinned exactly", () => {
+    assert.match(
+      pod.containers[0].image,
+      /^ghcr\.io\/mostlygeek\/llama-swap:v\d+-vulkan-b\d+@sha256:[0-9a-f]{64}$/,
+    );
   });
 
-  it("asks for nothing gfx1151 can't do", () => {
-    const serve = pod.containers[0].args.join(" ");
-    assert.doesNotMatch(serve, /fp8/i);
-    assert.match(serve, /--dtype bfloat16/);
-    assert.match(serve, /--gpu-memory-utilization 0\.\d+/);
+  it("read the model list from the ConfigMap, as a directory so edits reach it", () => {
+    const mount = pod.containers[0].volumeMounts.find(
+      (mount: any) => mount.mountPath === "/config",
+    );
+    assert.equal(mount.subPath, undefined);
+    assert.ok(pod.containers[0].args.includes("/config/config.yaml"));
+    assert.ok(pod.containers[0].args.includes("-watch-config"));
   });
 
-  it("keeps its models on the volume made for them", () => {
-    const claim = pod.volumes.find((volume: any) => volume.persistentVolumeClaim !== undefined);
-    const pvc = documents.find((document) => document.kind === "PersistentVolumeClaim");
-    assert.equal(claim.persistentVolumeClaim.claimName, pvc.metadata.name);
+  it("keep the weights on the volume made for them", () => {
+    const claim = pod.volumes.find(
+      (volume: any) => volume.persistentVolumeClaim !== undefined,
+    );
+    assert.equal(
+      claim.persistentVolumeClaim.claimName,
+      find("PersistentVolumeClaim").metadata.name,
+    );
+    const env = Object.fromEntries(
+      pod.containers[0].env.map((each: any) => [each.name, each.value]),
+    );
+    assert.match(env["LLAMA_CACHE"], /^\/models\//);
+  });
+
+  it("fit every model in the GPU's pool, and the pool in what the BIOS sets aside", () => {
+    const pool = swap.routing.router.settings.capacity.pools.gpu;
+    assert.ok(pool <= 96 * 1024, `${pool} MiB is more than 96 GiB`);
+    for (const [id, model] of Object.entries<any>(swap.models)) {
+      assert.ok(
+        model.capacities?.gpu > 0,
+        `${id} says nothing about its memory`,
+      );
+      assert.ok(model.capacities.gpu <= pool, `${id} can never fit`);
+    }
+  });
+
+  it("start every model on its own port, with nothing gfx1151 can't do", () => {
+    // As llama-swap does: a model's own macros, then the global ones
+    const expand = (text: string, macros: Record<string, string>): string =>
+      text.replace(/\$\{([\w-]+)\}/g, (whole, name) =>
+        name in macros ? expand(String(macros[name]), macros) : whole,
+      );
+    for (const [id, model] of Object.entries<any>(swap.models)) {
+      const cmd = expand(model.cmd, { ...swap.macros, ...model.macros });
+      assert.match(cmd, /--port \$\{PORT\}/, id);
+      assert.doesNotMatch(cmd, /fp8/i, id);
+    }
   });
 });

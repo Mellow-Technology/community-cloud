@@ -1,0 +1,13 @@
+# cc-ai holds the services models are served from. They're back-end
+# services rather than applications, so they're kept out of cc-office;
+# applications reach them through the "models" ServiceOffering in
+# Models.yaml, which is shared with cc-office.
+#
+# No Gateway label: nothing here is meant to be reached from outside
+# the cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cc-ai
+  labels:
+    app.kubernetes.io/managed-by: "community-cloud"

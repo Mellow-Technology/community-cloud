@@ -11,7 +11,7 @@ shows the shape those values take; the real ones come from
 Almost nothing here needs to be applied by hand: the installer applies
 each file as part of the bundle or package it belongs to. The
 exceptions, which nothing applies yet, are `crd/`,
-`database/Postgres/PostGISCluster.yaml`, `ai/vLLM/` and
+`database/Postgres/PostGISCluster.yaml`, `ai/Models/` and
 `networking/tailscale/Tailscale.proxy.yaml`.
 
 To see one as it would be applied, or what the installer carries:
@@ -40,7 +40,7 @@ one at a time.
 
 ```
 k8s/
-├── ai/vLLM/           # Large language model serving
+├── ai/Models/         # Large language model serving
 ├── apps/              # The applications a cluster runs
 │   ├── authentik/     # Identity provider
 │   ├── documenso/     # Document signing
@@ -144,17 +144,26 @@ Postgres is easier to back up, upgrade and reason about than four.
 
 | File | What it is |
 |---|---|
-| `vLLM/vllm-amd.yaml` | vLLM on AMD GPUs, via ROCm. |
-| `vLLM/vllm-amd-pvc.yaml` | Its model storage. |
+| `Models/Models.namespace.yaml` | `cc-ai`, for back-end AI services. |
+| `Models/Models.volume.yaml` | Where downloaded weights are kept. |
+| `Models/Models.config.yaml` | llama-swap's configuration: which models there are, how each is started, and how much of the GPU each takes. |
+| `Models/Models.yaml` | llama-swap and llama.cpp on an AMD GPU, its Service, and the `models` ServiceOffering shared with `cc-office`. |
 
-Applied by hand, into `cc-office`, after the `amd` bundle has run. It
-asks for its card as `amd.com/gpu`, which is all that places it: only a
-node with a card AMD's device plugin has found offers one. The plugin
-passes the card's device nodes in, so the pod isn't privileged and
-isn't on the host's network or IPC. It needs a Secret `hf-token-secret`
-in `cc-office` with a Hugging Face token under `token`. It's written
-for a Ryzen AI Max (gfx1151), whose GPU uses the node's RAM: its memory
-request depends on how that's split, which the manifest explains.
+Applied by hand, in that order, after the `amd` bundle has run. A card
+goes to one pod whole, so every model shares the one pod: llama-swap
+starts a model's server the first time it's asked for, keeps loaded as
+many as fit its capacity pool, and stops the ones in the way. Adding or
+changing a model is an edit to the ConfigMap, which llama-swap reloads
+without a restart.
+
+The pod asks for its card as `amd.com/gpu`, which is all that places
+it: only a node with a card AMD's device plugin has found offers one.
+The plugin passes the card's device nodes in, so the pod isn't
+privileged and isn't on the host's network or IPC. A Secret
+`hf-token-secret` in `cc-ai` with a Hugging Face token under `token`
+is only needed for gated models. It's written for a Ryzen AI Max
+(gfx1151), whose GPU uses the node's RAM: its memory request depends
+on how that's split, which the manifest explains.
 
 It isn't a package yet. That would want a way for the configuration to
 supply the Hugging Face token, since the installer only generates

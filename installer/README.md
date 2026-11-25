@@ -1272,8 +1272,8 @@ reserve it:
 - **The memory request of the pod using the GPU.** It holds the only
   `amd.com/gpu` on the node, since cards aren't shared, so it's the only
   thing borrowing GTT. Ask for its own memory plus what it will have
-  the GPU take. vLLM takes `--gpu-memory-utilization` × the GTT limit:
-  `vllm-amd.yaml` says how to size it. The reservation lasts as long as
+  the GPU take: the capacity pool in `k8s/ai/Models/Models.config.yaml`,
+  which `Models.yaml` says how to size it from. The reservation lasts as long as
   the workload does, and moves with it.
 - **kubelet's `system-reserved`**, which takes memory off the node's
   allocatable for good, whether the GPU is used or not. This installer
@@ -1631,8 +1631,8 @@ They're referred to with an `embed://` URL, and the paths have no
 `k8s/` prefix:
 
 ```bash
-community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json --dry-run
-community-cloud run-template embed://ai/vLLM/vllm-amd.yaml cc.config.json
+community-cloud run-template embed://ai/Models/Models.yaml cc.config.json --dry-run
+community-cloud run-template embed://ai/Models/Models.yaml cc.config.json
 community-cloud run-template ./ops/my-template.yaml cc.config.json -o delete
 community-cloud list-embedded              # everything it carries
 community-cloud list-embedded authentik    # filtered

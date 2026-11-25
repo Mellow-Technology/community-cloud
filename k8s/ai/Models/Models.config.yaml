@@ -1,0 +1,138 @@
+# llama-swap's configuration for Models.yaml: which models there are,
+# how each one's server is started, and how much of the GPU it takes.
+# This is the only place a model is named. Edit it and apply it again,
+# and llama-swap reloads it without a restart; the kubelet takes up to
+# a minute or so to update the mounted file.
+#
+# Each model is a llama-server, started on a port llama-swap picks
+# (${PORT}) the first time the model is asked for, and fetched from
+# Hugging Face with -hf on first use into the volume. A model's ID is
+# what clients pass as "model".
+#
+# Which ones run together is the capacity router's choice: every model
+# says what it takes from the "gpu" pool, in MiB, and any set that fits
+# the pool may be loaded at once. Asking for one that doesn't fit stops
+# whichever loaded ones cost least to bring back (evict_cost). As set
+# out here, the small models and qwen3.6 stay loaded, about 32 GB,
+# with room beside them for gemma-4; gpt-oss-120b needs most of the
+# card, so asking for it stops qwen3.6 until it's asked for again.
+#
+# The flags and figures are from community measurements on gfx1151 in
+# 2026: none of it has run on cleverswing yet.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: models
+  namespace: cc-ai
+data:
+  config.yaml: |
+    # A model fetched for the first time can take many minutes to
+    # download before its server answers
+    healthCheckTimeout: 3600
+    logToStdout: proxy
+
+    macros:
+      # Every layer on the GPU (-ngl) and flash attention. The weights
+      # are read into the GPU's memory rather than mapped (load mode
+      # none, what --no-mmap was): with the BIOS holding 96 GB, mapping
+      # a 63 GB model leaves the page cache 31 GB to work in.
+      #
+      # --cache-ram 0 turns off the RAM-backed prompt cache, which can
+      # hand one conversation's text to another under concurrent use
+      # (llama.cpp #27148, open). Only llama-swap talks to it, so on
+      # localhost.
+      "server": >-
+        llama-server --host 127.0.0.1 --port ${PORT}
+        -ngl 999 -fa on --load-mode none --cache-ram 0 --jinja
+
+    models:
+      "qwen3.6":
+        name: Qwen3.6 35B-A3B
+        description: >-
+          The default, for chat, coding and tool use, and it reads
+          images. A mixture of experts with 3B active, so quick: about
+          60 tokens a second.
+        # Four conversations at once with 32K each. -hf fetches the
+        # image projector beside it.
+        cmd: |
+          ${server}
+          -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M
+          --ctx-size 131072 --parallel 4
+        # About 22 GB of weights; its hybrid attention keeps the cache
+        # small
+        capacities:
+          gpu: 28000
+        evict_cost: 50
+
+      "gpt-oss-120b":
+        name: gpt-oss 120B
+        description: >-
+          The most capable here, for harder reasoning and coding, with
+          tool calls. Loading it stops qwen3.6 for a while, and the
+          first request waits a minute or more while it loads.
+        cmd: |
+          ${server}
+          -hf ggml-org/gpt-oss-120b-GGUF:MXFP4
+          --ctx-size 65536
+        # 63.4 GB of weights, and the cache for its context
+        capacities:
+          gpu: 70000
+        evict_cost: 30
+
+      "gemma-4":
+        name: Gemma 4 26B-A4B
+        description: >-
+          Vision and OCR: reading scans, screenshots and photos of
+          documents. Send images in the chat messages.
+        cmd: |
+          ${server}
+          -hf unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL
+          --ctx-size 32768
+        # About 14.4 GB, and its image projector
+        capacities:
+          gpu: 18000
+        evict_cost: 10
+
+      "qwen3-embedding":
+        name: Qwen3 Embedding 0.6B
+        description: Embeddings, for search and retrieval. POST /v1/embeddings.
+        cmd: |
+          ${server}
+          -hf Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0
+          --embedding --pooling last --ctx-size 8192
+        capacities:
+          gpu: 2000
+        # Small and in constant use: the last to make room
+        evict_cost: 100
+
+      "bge-reranker":
+        name: BGE Reranker v2 M3
+        description: Reranking search results by relevance. POST /v1/rerank.
+        cmd: |
+          ${server}
+          -hf gpustack/bge-reranker-v2-m3-GGUF:Q8_0
+          --reranking --ctx-size 8192
+        capacities:
+          gpu: 2000
+        evict_cost: 100
+
+    routing:
+      router:
+        use: capacity
+        settings:
+          capacity:
+            pools:
+              # What the BIOS sets aside, 96 GiB, less about 10 GB for
+              # the driver, compute buffers and fragmentation. Once the
+              # GPU uses GTT instead (see "AMD GPUs" in the installer's
+              # README), this is what the pod's memory request has to
+              # grow by.
+              gpu: 88000
+
+    hooks:
+      on_startup:
+        # Loaded when llama-swap starts, so nobody's first request waits
+        preload:
+          - qwen3-embedding
+          - bge-reranker
+          - qwen3.6

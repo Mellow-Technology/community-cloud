@@ -166,7 +166,7 @@ drifted from the file it was built from.
 k8s/
 ├── ai/AmdDevicePlugin/          # Helm values for AMD's device plugin, installed by the amd bundle
 ├── ai/NvidiaDevicePlugin/       # Helm values for NVIDIA's device plugin, installed by the nvidia bundle
-├── ai/vLLM/                     # vLLM deployment and its model PVC (AMD Ryzen AI Max), applied by hand
+├── ai/Models/                   # llama-swap, its model list and volume (AMD Ryzen AI Max), applied by hand
 ├── apps/                        # Application deployments
 │   ├── authentik/               # Authentik, installed by the authentik package
 │   ├── documenso/               # Documenso document signing
@@ -483,13 +483,14 @@ Enabled under `packages` in the configuration: `cert-manager`,
 
 ### AI Inference
 
-- **vLLM** on an AMD Ryzen AI Max, gfx1151 (`k8s/ai/vLLM/vllm-amd.yaml`), in `cc-office`
-- Mistral-7B model, ROCm image, 8Gi shared memory, models kept on its
-  volume (`vllm-amd-pvc.yaml`)
+- **Local models** on an AMD Ryzen AI Max, gfx1151 (`k8s/ai/Models/`), in `cc-ai`
+- llama-swap in front of llama.cpp servers (Vulkan), one OpenAI-compatible
+  endpoint for every model, loading and unloading them to fit the GPU
+- The model list is a ConfigMap (`Models.config.yaml`); weights are kept
+  on its volume (`Models.volume.yaml`)
 - Its card as `amd.com/gpu`, from the device plugin the `amd` bundle
   installs; not privileged, and not on the host's network or IPC
-- Hugging Face Hub token via secret (`hf-token-secret`)
-- ClusterIP service on port 80 → container port 8888
+- Offered to `cc-office` as the `models` ServiceOffering, at `/v1`
 - No package installs it; apply it by hand
 
 ---
@@ -539,6 +540,6 @@ In stages:
 | **Storage** | TopoLVM, SeaweedFS |
 | **Networking** | Cilium (CNI, Gateway API, load balancer IPAM), cert-manager, Nebula, Tailscale |
 | **Databases and queues** | CloudNative-PG, MariaDB (its operator), Redis (Opstree), RabbitMQ |
-| **AI** | vLLM (ROCm/AMD GPU), the NVIDIA and AMD device plugins |
+| **AI** | llama-swap and llama.cpp (AMD GPU), the NVIDIA and AMD device plugins |
 | **Apps** | Authentik, Twenty CRM, Lago, Documenso, Mattermost, Plane, ProjectSend, Headlamp, Picoclaw |
 | **Dev** | Vagrant (3x Ubuntu 24.04 VMs with 3x 25GB disks) |
