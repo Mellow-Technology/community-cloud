@@ -382,6 +382,17 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
                         );
                         migration_job = Some(job);
                     }
+                    migrations::JobState::Waiting(running) => {
+                        conditions::set(
+                            &mut conditions,
+                            ROLLED_OUT,
+                            false,
+                            "Migrating",
+                            format!("waiting for {running} to finish before migrating for {desired}"),
+                            generation,
+                        );
+                        migration_job = Some(job);
+                    }
                     migrations::JobState::Failed(message) => {
                         conditions::set(
                             &mut conditions,
