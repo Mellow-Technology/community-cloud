@@ -14,8 +14,9 @@
 # the pool may be loaded at once. Asking for one that doesn't fit stops
 # whichever loaded ones cost least to bring back (evict_cost). As set
 # out here, the small models and qwen3.6 stay loaded, about 32 GB,
-# with room beside them for gemma-4; gpt-oss-120b needs most of the
-# card, so asking for it stops qwen3.6 until it's asked for again.
+# with room beside them for inkling-2-mini and gemma-4 together;
+# gpt-oss-120b needs most of the card, so asking for it stops qwen3.6
+# and the others until they're asked for again.
 #
 # The flags and figures are from community measurements on gfx1151 in
 # 2026: none of it has run on cleverswing yet.
@@ -78,6 +79,29 @@ data:
         capacities:
           gpu: 70000
         evict_cost: 30
+
+      "inkling-2-mini":
+        name: Inkling 2 Mini
+        description: >-
+          Coding and agent work with tools, and it reads images. On
+          trial beside qwen3.6, to see which should be the default.
+        # A looped mixture of experts: 26.4B in all, 3.4B active, with
+        # its middle layers run three times, so about 5.4B read per
+        # token and likely slower than qwen3.6 here. Not measured on
+        # gfx1151 yet. Flash attention is left to llama.cpp (-fa auto,
+        # after the macro's -fa on) until Vulkan has the kernel it
+        # needs (llama.cpp #32898, open). -hf fetches the image
+        # projector beside it.
+        cmd: |
+          ${server}
+          -fa auto
+          -hf unsloth/Inkling-2-Mini-GGUF:UD-Q4_K_M
+          --ctx-size 131072 --parallel 4
+        # About 16 GB of weights; its cache with local and global
+        # attention isn't measured yet, so this is generous
+        capacities:
+          gpu: 24000
+        evict_cost: 20
 
       "gemma-4":
         name: Gemma 4 26B-A4B
