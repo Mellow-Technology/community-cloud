@@ -124,13 +124,16 @@ rules:
   - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
-  # What's available in each namespace, kept in its cirrus-capabilities
-  # ConfigMap (operators/cirrus/src/capabilities). Reads, and writing
-  # that one ConfigMap: Kubernetes can't limit creating to a name, so
-  # the rule is for ConfigMaps, and Cirrus only ever writes its own.
+  # ConfigMaps: watched, as Secrets are, so an application restarts
+  # when a value it reads from one changes
+  # (operators/cirrus/src/reconcile/config_hash.rs); and the
+  # cirrus-capabilities one written in each namespace
+  # (operators/cirrus/src/capabilities). Kubernetes can't limit creating
+  # to a name, so the rule is for ConfigMaps, and Cirrus only ever
+  # writes its own.
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "create", "patch", "update"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["get", "list"]

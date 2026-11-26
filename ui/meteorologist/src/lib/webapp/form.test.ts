@@ -399,3 +399,72 @@ describe("connections and offers", () => {
     ).toContain("both set SEARCH_*");
   });
 });
+
+describe("secret and shared variables", () => {
+  const base: import("./types").WebApplication = {
+    apiVersion: "community-cloud.technology/v1alpha1",
+    kind: "WebApplication",
+    metadata: { name: "shop", namespace: "team-shop" },
+    spec: {
+      image: { repository: "ghcr.io/acme/shop" },
+      env: [
+        { name: "LOG_LEVEL", value: "info" },
+        { name: "POD_IP", valueFrom: { fieldRef: { fieldPath: "status.podIP" } } },
+      ],
+      secrets: [{ name: "STRIPE_KEY", description: "From Stripe's dashboard" }, { name: "WEBHOOK_SECRET" }],
+      shared: [{ name: "SMTP_HOST" }, { name: "SENDGRID", as: "MAIL_KEY" }],
+    },
+    status: { environment: { secrets: [{ name: "STRIPE_KEY", set: true }] } },
+  };
+
+  test("are edited as rows, with which secrets have a value", () => {
+    const form = toForm(base);
+    expect(form.env).toEqual([
+      { name: "LOG_LEVEL", value: "info" },
+      { name: "STRIPE_KEY", value: "", secret: true, stored: true, description: "From Stripe's dashboard" },
+      { name: "WEBHOOK_SECRET", value: "", secret: true, stored: false },
+    ]);
+    expect(form.sharedEnv).toEqual([
+      { key: "SMTP_HOST", name: "SMTP_HOST" },
+      { key: "SENDGRID", name: "MAIL_KEY" },
+    ]);
+    expect(form.preservedEnv.map((each) => each.name)).toEqual(["POD_IP"]);
+    // The Secret's own keys, when they can be read, over Cirrus's report
+    expect(toForm(base, ["WEBHOOK_SECRET"]).env.map((row) => row.stored)).toEqual([undefined, false, true]);
+  });
+
+  test("are written back as names, never values", () => {
+    const form = toForm(base);
+    const typed = { ...form, env: [...form.env, { name: "API_TOKEN", value: "t0ken", secret: true }] };
+    const spec = fromForm(typed, base).spec;
+    expect(spec.secrets).toEqual([
+      { name: "STRIPE_KEY", description: "From Stripe's dashboard" },
+      { name: "WEBHOOK_SECRET" },
+      { name: "API_TOKEN" },
+    ]);
+    expect(spec.shared).toEqual([{ name: "SMTP_HOST" }, { name: "SENDGRID", as: "MAIL_KEY" }]);
+    expect(spec.env).toEqual(base.spec.env);
+    expect(JSON.stringify(spec)).not.toContain("t0ken");
+  });
+
+  test("a new secret needs a value; a kept one doesn't", () => {
+    const form = { ...emptyForm("team-shop"), name: "shop", repository: "ghcr.io/acme/shop" };
+    expect(validateForm({ ...form, env: [{ name: "KEY", value: "", secret: true }] }).env).toContain(
+      "Give KEY a value",
+    );
+    expect(
+      validateForm({ ...form, env: [{ name: "KEY", value: "", secret: true, stored: true }] }).env,
+    ).toBeUndefined();
+  });
+
+  test("a name used twice across own and shared variables is caught", () => {
+    const form = {
+      ...emptyForm("team-shop"),
+      name: "shop",
+      repository: "ghcr.io/acme/shop",
+      env: [{ name: "SMTP_HOST", value: "x" }],
+      sharedEnv: [{ key: "SMTP_HOST", name: "SMTP_HOST" }],
+    };
+    expect(validateForm(form).env).toBe("SMTP_HOST is set twice.");
+  });
+});

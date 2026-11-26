@@ -48,6 +48,9 @@ export interface Capabilities {
     protocol: string;
     ready: boolean;
   }>;
+  // The namespace's shared values: a plain one's value, a secret one's
+  // name alone. Missing from a Cirrus before 0.7.
+  shared?: Array<{ name: string; kind: "plain" | "secret"; value?: string }>;
 }
 
 export const SERVICES = ["postgres", "rabbitmq", "bucket"] as const;
@@ -114,6 +117,16 @@ export function unavailable(
       problems.push(
         `The volume ${volume.name} can't be ${type}: this cluster has no ${storage.storageClass ?? type} StorageClass. Use ${others.join(", ") || "another type"}.`,
       );
+    }
+  }
+
+  if (capabilities.shared !== undefined) {
+    for (const shared of changes.shared ?? []) {
+      if (!capabilities.shared.some((each) => each.name === shared.name)) {
+        problems.push(
+          `The namespace shares no value called ${shared.name}. get_capabilities lists what it shares; a person adds more on the namespace's Environment tab.`,
+        );
+      }
     }
   }
 

@@ -2,7 +2,8 @@
 //! Keeps every namespace's `cirrus-capabilities` ConfigMap current.
 //!
 //! It looks again when a namespace changes, since its labels are what
-//! let it in to the Gateway and SeaweedFS, and every few minutes,
+//! let it in to the Gateway and SeaweedFS, when its shared values do,
+//! and every few minutes,
 //! which is what notices an operator being installed, a quota filling
 //! up or an offering being shared, without watching all of them.
 //!
@@ -15,12 +16,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
-use k8s_openapi::api::core::v1::{ConfigMap, Namespace, ResourceQuota};
+use k8s_openapi::api::core::v1::{ConfigMap, Namespace, ResourceQuota, Secret};
 use k8s_openapi::api::networking::v1::NetworkPolicy;
 use k8s_openapi::api::storage::v1::StorageClass;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::runtime::controller::{Action, Controller};
+use kube::runtime::reflector::ObjectRef;
 use kube::runtime::watcher;
 use kube::{Client, ResourceExt};
 use serde_json::json;
@@ -30,6 +32,7 @@ use crate::conditions::READY;
 use crate::error::{Error, Result};
 use crate::offerings::{ServiceOffering, may_connect};
 use crate::reconcile::bucket::BUCKETS_LABEL;
+use crate::reconcile::environment::SHARED;
 use crate::reconcile::network::{GATEWAY_LABEL, GATEWAY_LABEL_VALUE};
 use crate::reconcile::volumes::bytes;
 use crate::resources::{self, BUCKET, FIELD_MANAGER, Kind, POSTGRES_CLUSTER, VHOST};
@@ -68,7 +71,16 @@ pub struct Context {
 pub async fn run(client: Client, settings: Settings) {
     let namespaces = Api::<Namespace>::all(client.clone());
     let context = Arc::new(Context { client, settings });
+    // Only the shared values' ConfigMap and Secret, by name
+    let shared = || watcher::Config::default().fields(&format!("metadata.name={SHARED}"));
+    let namespace_of = |namespace: Option<String>| namespace.map(|name| ObjectRef::<Namespace>::new(&name));
     Controller::new(namespaces, watcher::Config::default())
+        .watches(Api::<ConfigMap>::all(context.client.clone()), shared(), move |config| {
+            namespace_of(config.metadata.namespace)
+        })
+        .watches(Api::<Secret>::all(context.client.clone()), shared(), move |secret| {
+            namespace_of(secret.metadata.namespace)
+        })
         .shutdown_on_signal()
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -225,6 +237,18 @@ async fn gather(ctx: &Context, namespace: &Namespace) -> Result<Facts> {
         egress_policies,
         cluster_egress_policies,
         offerings,
+        shared_plain: Api::<ConfigMap>::namespaced(client.clone(), &name)
+            .get_opt(SHARED)
+            .await?
+            .and_then(|config| config.data)
+            .unwrap_or_default(),
+        // Names only: the values aren't read
+        shared_secret: Api::<Secret>::namespaced(client.clone(), &name)
+            .get_opt(SHARED)
+            .await?
+            .and_then(|secret| secret.data)
+            .map(|data| data.into_keys().collect())
+            .unwrap_or_default(),
     })
 }
 

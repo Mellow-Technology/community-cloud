@@ -74,8 +74,9 @@ spec:
                 type: array
               env:
                 description: |-
-                  Environment variables, added after the ones Cirrus provides,
-                  so one set here wins.
+                  Environment variables, added after everything else, so one set
+                  here wins. Plain values here can be read by anyone who can read
+                  the application: keep secrets in `secrets`.
                 items:
                   description: EnvVar represents an environment variable present in a Container.
                   properties:
@@ -332,6 +333,48 @@ spec:
                     description: 'Requests describes the minimum amount of compute resources required. If Requests is omitted for a container, it defaults to Limits if that is explicitly specified, otherwise to an implementation-defined value. Requests cannot exceed Limits. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                     type: object
                 type: object
+              secrets:
+                description: |-
+                  The application's own secrets, such as API keys, each set as a
+                  variable of its name. Only names are kept here: the values are
+                  in the Secret <name>-secrets, under the same names, which
+                  Meteorologist writes. Until one has a value, the application
+                  isn't rolled out, and Provisioned says which are missing.
+                items:
+                  description: One of the application's own secrets.
+                  properties:
+                    description:
+                      description: |-
+                        What it is and where to get it, for whoever sets it: "Stripe's
+                        secret key, from the dashboard's API keys page".
+                      type: string
+                    name:
+                      description: The variable's name, and the key its value is kept under.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              shared:
+                description: |-
+                  Values the namespace shares, kept once for every application
+                  there in the ConfigMap and Secret community-cloud-env, each set
+                  as a variable. Whether one is plain or secret is the namespace's
+                  to say. Until one is there, the application isn't rolled out.
+                items:
+                  description: One of the namespace's shared values.
+                  properties:
+                    as:
+                      description: The variable to set it as. Left out, the value's own name.
+                      nullable: true
+                      type: string
+                    name:
+                      description: The shared value's name.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               source:
                 description: Where new images come from.
                 nullable: true
@@ -472,6 +515,47 @@ spec:
                 description: The image the Deployment runs.
                 nullable: true
                 type: string
+              environment:
+                description: |-
+                  Which of its secrets and shared values have a value, never what
+                  it is: for those who can read the application but not Secrets.
+                nullable: true
+                properties:
+                  secrets:
+                    items:
+                      description: Whether a value is there, and for a shared one, which kind it is.
+                      properties:
+                        kind:
+                          description: 'For a shared value: "plain" or "secret", once it''s there.'
+                          nullable: true
+                          type: string
+                        name:
+                          type: string
+                        set:
+                          type: boolean
+                      required:
+                      - name
+                      - set
+                      type: object
+                    type: array
+                  shared:
+                    items:
+                      description: Whether a value is there, and for a shared one, which kind it is.
+                      properties:
+                        kind:
+                          description: 'For a shared value: "plain" or "secret", once it''s there.'
+                          nullable: true
+                          type: string
+                        name:
+                          type: string
+                        set:
+                          type: boolean
+                      required:
+                      - name
+                      - set
+                      type: object
+                    type: array
+                type: object
               imagePorts:
                 description: |-
                   The ports read from images, for the images deployed and about

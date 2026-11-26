@@ -120,6 +120,21 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
         ? { name: variable.name, value: variable.value ?? "" }
         : { name: variable.name, from: variable.valueFrom },
     ),
+    // Whether each has a value, as Cirrus last saw; never the value
+    secrets: (spec.secrets ?? []).map((secret) => ({
+      name: secret.name,
+      ...(secret.description ? { description: secret.description } : {}),
+      set: app.status?.environment?.secrets?.find((each) => each.name === secret.name)?.set ?? false,
+    })),
+    shared: (spec.shared ?? []).map((shared) => {
+      const found = app.status?.environment?.shared?.find((each) => each.name === shared.name);
+      return {
+        name: shared.name,
+        variable: shared.as ?? shared.name,
+        set: found?.set ?? false,
+        ...(found?.kind ? { kind: found.kind } : {}),
+      };
+    }),
     gitlab: spec.source?.gitlab && {
       project: spec.source.gitlab.project,
       connection: spec.source.gitlab.tokenSecret.name,
@@ -201,8 +216,38 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   env: {
     type: "object",
     description:
-      "Plain environment variables by name: a string sets one, null removes it. Never put secrets here; variables read from Secrets can't be changed from here.",
+      "Plain environment variables by name: a string sets one, null removes it. Anyone who can see the application can read these, so never put secrets here: ask for them in secrets.",
     additionalProperties: { type: ["string", "null"] },
+  },
+  secrets: {
+    type: "array",
+    description:
+      "Secrets it needs, such as API keys, added to those it has: a name and what it is, never a value. A person sets the value in Meteorologist, and the application isn't rolled out until each has one. Each is set as a variable of its name.",
+    items: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The variable's name, such as STRIPE_SECRET_KEY." },
+        description: {
+          type: "string",
+          description:
+            "What it is and where to get it, for the person setting it: \"Stripe's secret key, from the dashboard's API keys page\".",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  shared: {
+    type: "array",
+    description:
+      "The namespace's shared values it reads, added to those it reads: get_capabilities lists them, plain ones with their values and secret ones by name. Each is set as a variable of its name, or of as.",
+    items: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        as: { type: "string", description: "The variable to set it as, when the application expects another name." },
+      },
+      required: ["name"],
+    },
   },
   volumes: {
     type: "array",
@@ -347,11 +392,28 @@ async function waitFor(
  * @param outcome
  * @returns
  */
+/**
+ * The secrets and shared values an application is waiting for.
+ *
+ * @param app
+ * @returns
+ */
+function unsetValues(app: WebApplication): string[] {
+  const environment = app.status?.environment;
+  return [
+    ...(environment?.secrets ?? []).filter((each) => !each.set).map((each) => `the secret ${each.name}`),
+    ...(environment?.shared ?? []).filter((each) => !each.set).map((each) => `the shared value ${each.name}`),
+  ];
+}
+
 function rolloutSummary(outcome: RolloutOutcome): Record<string, unknown> {
   const migrationJob = outcome.app.status?.migrationJob;
   let next: string | undefined;
   if (outcome.timedOut) {
     next = "It's still going. Call wait_for_rollout to keep waiting.";
+  } else if (!outcome.ok && outcome.health.state === "failing" && unsetValues(outcome.app).length > 0) {
+    const waiting = unsetValues(outcome.app);
+    next = `It's waiting for ${waiting.join(", ")}. Ask a person to set ${waiting.length === 1 ? "it" : "them"} in Meteorologist: secrets on the application's page (page, in this answer), shared values on the namespace's Environment tab. Then call wait_for_rollout.`;
   } else if (!outcome.ok && outcome.health.state === "failing") {
     next = migrationJob
       ? `Its migration Job is ${migrationJob}, and it won't run again for this image. A person can read its logs, or delete it to run it again; or fix it and roll out a new image.`

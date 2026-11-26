@@ -19,6 +19,7 @@
  * module in development.
  */
 import type { Agent } from "../agents/tokens";
+import { ENV_LABEL, SHARED_ENV } from "../environment";
 import { getCapability } from "../capabilities";
 import { CAPABILITIES_CONFIG_MAP, CAPABILITIES_KEY, SERVICES, type Capabilities } from "../mcp/capabilities";
 import type { NodeUsage } from "../cluster";
@@ -611,6 +612,15 @@ function seed(): FixtureStore {
         },
       ],
       [
+        `team-shop/${SHARED_ENV}`,
+        {
+          type: "Opaque",
+          data: { SENDGRID_API_KEY: "SG.fixture-not-a-real-key" },
+          labels: { [ENV_LABEL]: "namespace" },
+          creationTimestamp: CREATED,
+        },
+      ],
+      [
         "team-shop/shop-gitlab-token",
         {
           type: "Opaque",
@@ -822,11 +832,23 @@ function seed(): FixtureStore {
       // What Cirrus says each can have. sandbox has none, as if Cirrus
       // were from before it reported, so nothing is held back there.
       ...[
-        capabilitiesFor("team-shop", {
-          bucket:
-            'This namespace can\'t have buckets until a person gives it the label storage.community-cloud.technology/buckets="true" (the Buckets capability in Meteorologist).',
-        }),
+        capabilitiesFor(
+          "team-shop",
+          {
+            bucket:
+              'This namespace can\'t have buckets until a person gives it the label storage.community-cloud.technology/buckets="true" (the Buckets capability in Meteorologist).',
+          },
+          [
+            { name: "SMTP_HOST", kind: "plain", value: "smtp.example.org" },
+            { name: "SMTP_PORT", kind: "plain", value: "587" },
+            { name: "SENDGRID_API_KEY", kind: "secret" },
+          ],
+        ),
         capabilitiesFor("cc-office", {}),
+        {
+          metadata: { name: SHARED_ENV, namespace: "team-shop", labels: { [ENV_LABEL]: "namespace" } },
+          data: { SMTP_HOST: "smtp.example.org", SMTP_PORT: "587" },
+        },
       ].map((each): [string, ConfigMap] => [key(each.metadata.namespace ?? "", each.metadata.name), each]),
     ]),
     buckets: new Map(
@@ -1017,7 +1039,11 @@ function inNamespace<T extends { metadata: { namespace?: string } }>(map: Map<st
  * @param missing reasons, by service
  * @returns
  */
-function capabilitiesFor(namespace: string, missing: Partial<Record<(typeof SERVICES)[number], string>>): ConfigMap {
+function capabilitiesFor(
+  namespace: string,
+  missing: Partial<Record<(typeof SERVICES)[number], string>>,
+  shared: NonNullable<Capabilities["shared"]> = [],
+): ConfigMap {
   const availability = (service: (typeof SERVICES)[number]) =>
     missing[service] === undefined ? { available: true } : { available: false, reason: missing[service] };
   const report: Capabilities = {
@@ -1040,6 +1066,7 @@ function capabilitiesFor(namespace: string, missing: Partial<Record<(typeof SERV
       { name: "plane", namespace: "cc-office", title: "Plane API", protocol: "http", ready: true },
       { name: "cache", namespace: "cc-office", title: "Shared Redis", protocol: "redis", ready: true },
     ],
+    shared,
   };
   return {
     metadata: { name: CAPABILITIES_CONFIG_MAP, namespace, labels: { "app.kubernetes.io/managed-by": "cirrus" } },
@@ -1171,6 +1198,14 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
     createAgent: async (namespace) => refuse("rolebindings", namespace),
     requestAgentToken: async (namespace) => refuse("serviceaccounts/token", namespace),
     deleteAgent: async (namespace) => refuse("serviceaccounts", namespace),
+    listSecretKeys: async (namespace, name) => {
+      within("secrets", namespace);
+      return client.listSecretKeys(namespace, name);
+    },
+    patchEnvironmentSecret: async (namespace, name, changes, labels, owner) => {
+      within("secrets", namespace);
+      return client.patchEnvironmentSecret(namespace, name, changes, labels, owner);
+    },
     listSecrets: async (namespace) => {
       within("secrets", namespace);
       return client.listSecrets(namespace);
@@ -1576,6 +1611,36 @@ export function fixtureClient(): KubeClient {
 
     deleteSecret: async (namespace, name) => {
       store().secrets.delete(key(namespace, name));
+    },
+
+    listSecretKeys: async (namespace, name) => {
+      const secret = store().secrets.get(key(namespace, name));
+      return secret === undefined ? undefined : Object.keys(secret.data).sort();
+    },
+
+    patchEnvironmentSecret: async (namespace, name, changes, labels) => {
+      requireNamespace(namespace);
+      const id = key(namespace, name);
+      const existing = store().secrets.get(id);
+      if (existing !== undefined && existing.labels?.[ENV_LABEL] === undefined) {
+        throw new KubeError(
+          409,
+          `There's already a Secret called ${name} in ${namespace} that Meteorologist didn't make, so it's left alone.`,
+          "AlreadyExists",
+        );
+      }
+      const data = { ...existing?.data };
+      for (const [each, value] of Object.entries(changes)) {
+        if (value === null) delete data[each];
+        else data[each] = value;
+      }
+      store().secrets.set(id, {
+        type: "Opaque",
+        data,
+        labels: { ...existing?.labels, ...labels },
+        creationTimestamp: existing?.creationTimestamp ?? now(),
+      });
+      store().version += 1;
     },
 
     listDnsProviders: async () => copy([...store().dnsProviders.values()]),

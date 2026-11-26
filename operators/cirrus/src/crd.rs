@@ -57,10 +57,26 @@ pub struct WebApplicationSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<i32>,
 
-    /// Environment variables, added after the ones Cirrus provides,
-    /// so one set here wins.
+    /// Environment variables, added after everything else, so one set
+    /// here wins. Plain values here can be read by anyone who can read
+    /// the application: keep secrets in `secrets`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVar>,
+
+    /// The application's own secrets, such as API keys, each set as a
+    /// variable of its name. Only names are kept here: the values are
+    /// in the Secret <name>-secrets, under the same names, which
+    /// Meteorologist writes. Until one has a value, the application
+    /// isn't rolled out, and Provisioned says which are missing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<SecretValueSpec>,
+
+    /// Values the namespace shares, kept once for every application
+    /// there in the ConfigMap and Secret community-cloud-env, each set
+    /// as a variable. Whether one is plain or secret is the namespace's
+    /// to say. Until one is there, the application isn't rolled out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared: Vec<SharedValueSpec>,
 
     /// CPU and memory. Left out, the application gets 256Mi.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -238,6 +254,36 @@ impl StorageType {
     }
 }
 
+/// One of the application's own secrets.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretValueSpec {
+    /// The variable's name, and the key its value is kept under.
+    pub name: String,
+    /// What it is and where to get it, for whoever sets it: "Stripe's
+    /// secret key, from the dashboard's API keys page".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+/// One of the namespace's shared values.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedValueSpec {
+    /// The shared value's name.
+    pub name: String,
+    /// The variable to set it as. Left out, the value's own name.
+    #[serde(rename = "as", default, skip_serializing_if = "Option::is_none")]
+    pub variable: Option<String>,
+}
+
+impl SharedValueSpec {
+    /// The variable it's set as.
+    pub fn variable(&self) -> &str {
+        self.variable.as_deref().unwrap_or(&self.name)
+    }
+}
+
 /// A connection to a ServiceOffering.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -389,6 +435,30 @@ pub struct WebApplicationStatus {
     /// to be, so a registry is asked once per image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_ports: Vec<ImagePort>,
+    /// Which of its secrets and shared values have a value, never what
+    /// it is: for those who can read the application but not Secrets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentStatus>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentStatus {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<ValueStatus>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared: Vec<ValueStatus>,
+}
+
+/// Whether a value is there, and for a shared one, which kind it is.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ValueStatus {
+    pub name: String,
+    pub set: bool,
+    /// For a shared value: "plain" or "secret", once it's there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]

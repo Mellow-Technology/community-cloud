@@ -35,7 +35,8 @@ import { SegmentedControl } from "gui-mellow/SegmentedControl";
 import { Steps } from "gui-mellow/Steps";
 import { Switch } from "gui-mellow/Switch";
 
-import { saveWebApplication, setNamespaceCapability } from "@/lib/actions";
+import { revealEnvironmentValue, saveWebApplication, setNamespaceCapability } from "@/lib/actions";
+import { appSecretName, type SharedKind } from "@/lib/environment";
 import { enabledCapabilities, type Capability } from "@/lib/capabilities";
 import { publisherOf } from "@/lib/dns/providers";
 import type { DnsProvider } from "@/lib/dns/types";
@@ -45,6 +46,7 @@ import {
   splitList,
   validateForm,
   type EnvRow,
+  type SharedEnvRow,
   type ImageSource,
   type VolumeRow,
   type WebApplicationForm as FormModel,
@@ -77,6 +79,8 @@ export interface NamespaceChoice {
   pullSecrets?: PullSecret[];
   // The DNS providers publishing its routes
   dnsProviders?: DnsProvider[];
+  // Its shared environment values, by name only
+  sharedEnv?: Array<{ key: string; kind: SharedKind }>;
 }
 
 export interface WebApplicationFormProps {
@@ -640,10 +644,25 @@ export function WebApplicationForm({
       body: (
         <div className={styles.fields}>
           <p className={styles.note}>
-            Environment variables, set after the ones Cirrus provides, so one set here wins. For secrets, put them in a
-            Secret and reference it with kubectl; those are kept as they are when you save here.
+            Environment variables, set after the ones Cirrus provides, so one set here wins. Mark API keys and other
+            secrets as secret: they&apos;re kept in a Secret of the application&apos;s own,{" "}
+            <code>{appSecretName(form.name || "<app>")}</code>, not in the application, where anyone who can see it
+            could read them. Changing a value restarts the application.
           </p>
-          <EnvEditor rows={form.env} error={shownErrors.env} onChange={(env) => set("env", env)} />
+          <EnvEditor
+            rows={form.env}
+            error={shownErrors.env}
+            onChange={(env) => set("env", env)}
+            reveal={
+              editing ? (name) => revealEnvironmentValue(form.namespace, appSecretName(form.name), name) : undefined
+            }
+          />
+          <SharedEnvPicker
+            namespace={form.namespace}
+            available={namespace?.sharedEnv}
+            rows={form.sharedEnv}
+            onChange={(sharedEnv) => set("sharedEnv", sharedEnv)}
+          />
           {form.preservedEnv.length > 0 && (
             <div>
               <p className={styles.note}>Read from elsewhere, and kept as they are:</p>
@@ -826,14 +845,40 @@ function ListEditor({
 }
 
 /**
- * Environment variables, a name and a value to a row.
+ * Environment variables, a name and a value to a row, each plain or
+ * secret. A secret already kept isn't shown: leaving it blank keeps
+ * it, and Show reads it on request, for whoever may read Secrets.
  *
  * @param props
+ * @param props.rows
+ * @param props.error
+ * @param props.onChange
+ * @param props.reveal reads a kept secret's value, when editing
  * @returns
  */
-function EnvEditor({ rows, error, onChange }: { rows: EnvRow[]; error?: string; onChange: (rows: EnvRow[]) => void }) {
+function EnvEditor({
+  rows,
+  error,
+  onChange,
+  reveal,
+}: {
+  rows: EnvRow[];
+  error?: string;
+  onChange: (rows: EnvRow[]) => void;
+  reveal?: (name: string) => Promise<{ ok: true; value: string } | { ok: false; error: string }>;
+}) {
+  const [revealError, setRevealError] = useState<string>();
   const update = (index: number, change: Partial<EnvRow>) =>
     onChange(rows.map((row, at) => (at === index ? { ...row, ...change } : row)));
+
+  const show = async (index: number) => {
+    const row = rows[index];
+    if (row === undefined || reveal === undefined) return;
+    setRevealError(undefined);
+    const read = await reveal(row.name);
+    if (read.ok) update(index, { value: read.value });
+    else setRevealError(read.error);
+  };
 
   return (
     <fieldset className={styles.list}>
@@ -845,15 +890,37 @@ function EnvEditor({ rows, error, onChange }: { rows: EnvRow[]; error?: string; 
             className={styles.grow}
             placeholder="LOG_LEVEL"
             value={row.name}
+            // A kept secret is under its name; renaming it is a new one
+            disabled={row.stored}
             onChange={(event) => update(index, { name: event.target.value })}
           />
           <TextField
             label="Value"
             className={styles.grow}
-            placeholder="info"
+            type={row.secret ? "password" : "text"}
+            autoComplete="off"
+            placeholder={row.stored ? "Kept; type to replace" : row.secret ? "Not set yet" : "info"}
+            hint={
+              row.secret
+                ? (row.description ?? (row.stored ? undefined : "Needs a value before it rolls out."))
+                : undefined
+            }
             value={row.value}
             onChange={(event) => update(index, { value: event.target.value })}
           />
+          <Switch
+            label="Secret"
+            checked={row.secret ?? false}
+            // A kept one stops being secret by being removed and added
+            // again as plain, so its value is never copied into the spec
+            disabled={row.stored}
+            onChange={(event) => update(index, { secret: event.target.checked })}
+          />
+          {row.stored && reveal && row.value === "" && (
+            <Button variant="ghost" size="sm" onClick={() => void show(index)}>
+              Show
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -865,11 +932,89 @@ function EnvEditor({ rows, error, onChange }: { rows: EnvRow[]; error?: string; 
         </div>
       ))}
       {error && <p className={styles.error}>{error}</p>}
+      {revealError && <p className={styles.error}>{revealError}</p>}
       <div>
         <Button variant="secondary" size="sm" onClick={() => onChange([...rows, { name: "", value: "" }])}>
           Add a variable
         </Button>
       </div>
+    </fieldset>
+  );
+}
+
+/**
+ * The namespace's shared values, each one the application may read as
+ * a variable of the same name.
+ *
+ * @param props
+ * @param props.namespace
+ * @param props.available what the namespace has, by name, if known
+ * @param props.rows the ones it reads
+ * @param props.onChange
+ * @returns
+ */
+function SharedEnvPicker({
+  namespace,
+  available,
+  rows,
+  onChange,
+}: {
+  namespace: string;
+  available?: Array<{ key: string; kind: SharedKind }>;
+  rows: SharedEnvRow[];
+  onChange: (rows: SharedEnvRow[]) => void;
+}) {
+  const reads = (key: string) => rows.some((row) => row.key === key);
+  // Ones it reads that the namespace doesn't have: Cirrus waits for them
+  const missing = rows.filter((row) => !(available ?? []).some((each) => each.key === row.key));
+  const environmentTab = `/namespaces/${encodeURIComponent(namespace)}?tab=environment`;
+
+  return (
+    <fieldset className={styles.list}>
+      <legend className={styles.legend}>Shared with the namespace</legend>
+      {namespace === "" ? (
+        <p className={styles.note}>Choose a namespace to see the values it shares.</p>
+      ) : available === undefined ? (
+        <p className={styles.note}>The namespace&apos;s shared values couldn&apos;t be read.</p>
+      ) : available.length === 0 ? (
+        <p className={styles.note}>
+          {namespace} shares no values yet. Add them on its <a href={environmentTab}>Environment tab</a>, for whatever
+          several applications use.
+        </p>
+      ) : (
+        <>
+          <p className={styles.note}>
+            Values kept once for {namespace}, on its <a href={environmentTab}>Environment tab</a>. Each one chosen is
+            set as a variable of the same name, and changing one there restarts the applications reading it.
+          </p>
+          {available.map((each) => (
+            <Switch
+              key={`${each.kind}/${each.key}`}
+              label={each.key}
+              description={each.kind === "secret" ? "Secret" : "Plain"}
+              checked={reads(each.key)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...rows, { key: each.key, name: each.key }]
+                    : rows.filter((row) => row.key !== each.key),
+                )
+              }
+            />
+          ))}
+        </>
+      )}
+      {missing.map((row) => (
+        <div className={styles.listRow} key={row.key}>
+          <p className={styles.note}>
+            <code>{row.name}</code> reads {row.key}, which {namespace} doesn&apos;t share yet, so it waits until
+            it&apos;s added on the Environment tab.
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => onChange(rows.filter((other) => other !== row))}>
+            Remove
+          </Button>
+        </div>
+      ))}
     </fieldset>
   );
 }

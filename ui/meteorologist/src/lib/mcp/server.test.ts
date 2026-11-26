@@ -335,3 +335,95 @@ test("volumes are explained: one node, how rollouts change, and what ram is", as
   expect(instructions).toContain("stopping the old copies before starting the new");
   expect(instructions).toContain("Migrations don't mount volumes");
 });
+
+describe("secrets and shared values", () => {
+  test("an agent asks for a secret by name, and no value goes anywhere", async () => {
+    const result = await call("update_application", {
+      name: "shop",
+      secrets: [{ name: "STRIPE_SECRET_KEY", description: "Stripe's secret key, from the dashboard" }],
+    });
+    expect(result.isError).toBeUndefined();
+    const app = await fixtureClient().getWebApplication("team-shop", "shop");
+    expect(app.spec.secrets).toEqual([
+      { name: "STRIPE_SECRET_KEY", description: "Stripe's secret key, from the dashboard" },
+    ]);
+    expect(await fixtureClient().listSecretKeys("team-shop", "shop-secrets")).toBeUndefined();
+    expect(result.structuredContent.secrets).toEqual([
+      { name: "STRIPE_SECRET_KEY", description: "Stripe's secret key, from the dashboard", set: false },
+    ]);
+  });
+
+  test("a later change isn't held up by a secret still waiting for its value", async () => {
+    await call("update_application", { name: "shop", secrets: [{ name: "STRIPE_SECRET_KEY" }] });
+    const result = await call("update_application", { name: "shop", replicas: 3 });
+    expect(result.isError).toBeUndefined();
+  });
+
+  test("an agent can't give a secret a value through env", async () => {
+    await call("update_application", { name: "shop", secrets: [{ name: "STRIPE_SECRET_KEY" }] });
+    const result = await call("update_application", { name: "shop", env: { STRIPE_SECRET_KEY: "sk_live_x" } });
+    expect(result.isError).toBe(true);
+  });
+
+  test("an agent uses a shared value the namespace has, and not one it hasn't", async () => {
+    const used = await call("update_application", {
+      name: "shop",
+      shared: [{ name: "SENDGRID_API_KEY", as: "MAIL_KEY" }],
+    });
+    expect(used.isError).toBeUndefined();
+    expect((await fixtureClient().getWebApplication("team-shop", "shop")).spec.shared).toEqual([
+      { name: "SENDGRID_API_KEY", as: "MAIL_KEY" },
+    ]);
+    const unknown = await call("update_application", { name: "shop", shared: [{ name: "NOPE" }] });
+    expect(unknown.content[0]?.text).toContain("shares no value called NOPE");
+  });
+
+  test("shared values are listed, secret ones without their value", async () => {
+    const shared = (await call("get_capabilities", {})).structuredContent.shared;
+    expect(shared).toContainEqual({ name: "SMTP_HOST", kind: "plain", value: "smtp.example.org" });
+    expect(shared).toContainEqual({ name: "SENDGRID_API_KEY", kind: "secret" });
+    expect(JSON.stringify(shared)).not.toContain("SG.fixture");
+  });
+});
+
+test("a rollout waiting for a secret says which, for the agent to pass on", async () => {
+  const kube = fixtureClient();
+  const shop = await kube.getWebApplication("team-shop", "shop");
+  const waiting = {
+    ...shop,
+    metadata: { ...shop.metadata, generation: 1 },
+    status: {
+      observedGeneration: 1,
+      conditions: [
+        {
+          type: "Ready",
+          status: "False" as const,
+          reason: "",
+          message: "",
+          lastTransitionTime: "2026-11-26T00:00:00Z",
+        },
+        {
+          type: "Provisioned",
+          status: "False" as const,
+          reason: "Blocked",
+          message: "the secret STRIPE_SECRET_KEY has no value yet",
+          lastTransitionTime: "2026-11-26T00:00:00Z",
+        },
+      ],
+      environment: { secrets: [{ name: "STRIPE_SECRET_KEY", set: false }] },
+    },
+  };
+  const answer = await handleMessage(
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "wait_for_rollout", arguments: { name: "shop", timeoutSeconds: 2 } },
+    },
+    async () => ({ ...(await context()), kube: { ...kube, getWebApplication: async () => structuredClone(waiting) } }),
+  );
+  const rollout = (answer?.result as { structuredContent: { rollout: { finished: boolean; next: string } } })
+    .structuredContent.rollout;
+  expect(rollout.finished).toBe(true);
+  expect(rollout.next).toContain("the secret STRIPE_SECRET_KEY");
+});

@@ -19,6 +19,7 @@ import { unstable_rethrow } from "next/navigation";
 
 import { TOKEN_LIFETIMES, agentNameProblem, type AgentToken } from "./agents/tokens";
 import { CAPABILITIES, capabilityLabelPatch, type CapabilityId } from "./capabilities";
+import { ENV_LABEL, SHARED_ENV, appSecretName, secretChanges, sharedValueUsers, type SharedKind } from "./environment";
 import {
   credentialsData,
   domainConflicts,
@@ -51,7 +52,7 @@ import {
   type GitLabProject,
 } from "./gitlab/connections";
 import { getKube, getViewer } from "./kube";
-import { KubeError, describeError, isForbidden, settle, type KubeClient } from "./kube/client";
+import { KubeError, describeError, isForbidden, settle, type KubeClient, type OwnerReference } from "./kube/client";
 import {
   CREATED_BY,
   DEFAULT_SERVICE_ACCOUNT,
@@ -82,6 +83,7 @@ import {
 import { confirmsDeletion } from "./webapp/deletion";
 import { fromForm, validateForm, type WebApplicationForm } from "./webapp/form";
 import { REGISTRY_ANNOTATION, normaliseRegistry } from "./webapp/registry";
+import { API_VERSION, KIND, type WebApplication } from "./webapp/types";
 
 /**
  * What an action did: done, with anything worth handing back, or not,
@@ -155,14 +157,48 @@ export async function saveWebApplication(
 
   const result = await run(async () => {
     const kube = await getKube();
+    const namespace = form.namespace.trim();
+    const name = form.name.trim();
+    const secret = appSecretName(name);
+    const labels = { ...CREATED_BY, [ENV_LABEL]: "application" };
+    const owner = (app: WebApplication): OwnerReference => ({
+      apiVersion: API_VERSION,
+      kind: KIND,
+      name: app.metadata.name,
+      uid: app.metadata.uid ?? "",
+    });
+
     if (resourceVersion === undefined) {
+      const changes = secretChanges(form.env, []);
+      // The values first, so the first pods find them
+      if (Object.keys(changes).length > 0) {
+        await kube.patchEnvironmentSecret(namespace, secret, changes, labels);
+      }
       const created = await kube.createWebApplication(fromForm(form));
-      return { namespace: created.metadata.namespace ?? form.namespace, name: created.metadata.name };
+      if (Object.keys(changes).length > 0) {
+        await kube.patchEnvironmentSecret(namespace, secret, {}, labels, owner(created));
+      }
+      return { namespace: created.metadata.namespace ?? namespace, name: created.metadata.name };
     }
-    const current = await kube.getWebApplication(form.namespace, form.name);
+
+    const current = await kube.getWebApplication(namespace, name);
     current.metadata.resourceVersion = resourceVersion;
+    const changes = secretChanges(
+      form.env,
+      (current.spec.secrets ?? []).map((each) => each.name),
+    );
+    const setting = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== null));
+    const removing = Object.fromEntries(Object.entries(changes).filter(([, value]) => value === null));
+    // New values before the application reads them, and old ones taken
+    // away only once it no longer does
+    if (Object.keys(setting).length > 0) {
+      await kube.patchEnvironmentSecret(namespace, secret, setting, labels, owner(current));
+    }
     const saved = await kube.replaceWebApplication(fromForm(form, current));
-    return { namespace: saved.metadata.namespace ?? form.namespace, name: saved.metadata.name };
+    if (Object.keys(removing).length > 0) {
+      await kube.patchEnvironmentSecret(namespace, secret, removing, labels, owner(saved));
+    }
+    return { namespace: saved.metadata.namespace ?? namespace, name: saved.metadata.name };
   });
   revalidatePath("/", "layout");
   return result;
@@ -966,4 +1002,125 @@ export async function deleteAgent(namespace: string, name: string): Promise<Acti
   });
   revalidatePath("/", "layout");
   return result;
+}
+
+// What a shared value's name may be: an environment variable's
+const SHARED_NAME = /^[-._a-zA-Z][-._a-zA-Z0-9]*$/;
+
+/**
+ * Sets one of a namespace's shared values (lib/environment.ts): a
+ * plain one in its ConfigMap, or a secret one in its Secret, making
+ * either if it isn't there. Applications reading it are restarted by
+ * Cirrus to pick it up.
+ *
+ * @param namespace
+ * @param key the value's name
+ * @param value
+ * @param kind
+ * @returns
+ */
+export async function setSharedValue(
+  namespace: string,
+  key: string,
+  value: string,
+  kind: SharedKind,
+): Promise<ActionResult> {
+  const name = key.trim();
+  if (!SHARED_NAME.test(name)) {
+    return { ok: false, error: "A name an environment variable can have, such as STRIPE_KEY." };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const [configMap, secretKeys] = await Promise.all([
+      kube.getConfigMap(namespace, SHARED_ENV),
+      settle(() => kube.listSecretKeys(namespace, SHARED_ENV)),
+    ]);
+    const other =
+      kind === "config" ? secretKeys.ok && secretKeys.value?.includes(name) : configMap?.data?.[name] !== undefined;
+    if (other) {
+      throw new Error(
+        `${name} is already a ${kind === "config" ? "secret" : "plain"} value here. Remove that one first.`,
+      );
+    }
+    const labels = { ...CREATED_BY, [ENV_LABEL]: "namespace" };
+    if (kind === "secret") {
+      await kube.patchEnvironmentSecret(namespace, SHARED_ENV, { [name]: value }, labels);
+      return undefined;
+    }
+    if (configMap !== undefined && configMap.metadata.labels?.[ENV_LABEL] === undefined) {
+      throw new Error(
+        `There's already a ConfigMap called ${SHARED_ENV} in ${namespace} that Meteorologist didn't make.`,
+      );
+    }
+    await kube.saveConfigMap({
+      metadata: { ...(configMap?.metadata ?? { name: SHARED_ENV, namespace }), labels },
+      data: { ...configMap?.data, [name]: value },
+    });
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Removes one of a namespace's shared values, unless an application
+ * still reads it: it would stop starting.
+ *
+ * @param namespace
+ * @param key
+ * @param kind
+ * @returns
+ */
+export async function removeSharedValue(namespace: string, key: string, kind: SharedKind): Promise<ActionResult> {
+  const result = await run(async () => {
+    const kube = await getKube();
+    const users = sharedValueUsers(await kube.listWebApplications(namespace), key);
+    if (users.length > 0) {
+      throw new Error(
+        `${users.join(", ")} still ${users.length === 1 ? "reads" : "read"} ${key}. Take it out of them first.`,
+      );
+    }
+    if (kind === "secret") {
+      await kube.patchEnvironmentSecret(
+        namespace,
+        SHARED_ENV,
+        { [key]: null },
+        { ...CREATED_BY, [ENV_LABEL]: "namespace" },
+      );
+      return undefined;
+    }
+    const configMap = await kube.getConfigMap(namespace, SHARED_ENV);
+    if (configMap?.data?.[key] === undefined) return undefined;
+    const data = { ...configMap.data };
+    delete data[key];
+    await kube.saveConfigMap({ ...configMap, data });
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * A secret environment value, read on request as the person asking, so
+ * only someone who may read Secrets in the namespace sees it. Only from
+ * the Secrets Meteorologist keeps them in.
+ *
+ * @param namespace
+ * @param secret the namespace's shared Secret, or an application's
+ * @param key
+ * @returns
+ */
+export async function revealEnvironmentValue(
+  namespace: string,
+  secret: string,
+  key: string,
+): Promise<ActionResult<string>> {
+  if (secret !== SHARED_ENV && !secret.endsWith("-secrets")) {
+    return { ok: false, error: "Only environment values can be shown here." };
+  }
+  return run(async () => {
+    const value = await (await getKube()).readSecretValue(namespace, secret, key);
+    if (value === undefined) throw new Error(`${key} isn't in ${secret}.`);
+    return value;
+  });
 }
