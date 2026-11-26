@@ -217,6 +217,21 @@ impl std::fmt::Display for ExposedPort {
     }
 }
 
+/// Read `config.Labels` out of an image config. Values that aren't
+/// strings, which a config shouldn't have, are left out.
+pub fn read_labels(config: &serde_json::Value) -> BTreeMap<String, String> {
+    config
+        .pointer("/config/Labels")
+        .and_then(serde_json::Value::as_object)
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Read `config.ExposedPorts` out of an image config: keys like
 /// "3000/tcp", or a bare "3000", which Docker takes as TCP.
 pub fn read_exposed_ports(config: &serde_json::Value) -> Vec<ExposedPort> {
@@ -302,6 +317,16 @@ impl Registry {
 
     /// The ports the image declares.
     pub async fn exposed_ports(&mut self) -> Result<Vec<ExposedPort>> {
+        Ok(read_exposed_ports(&self.config().await?))
+    }
+
+    /// The labels the image carries, from its Dockerfile's LABELs.
+    pub async fn labels(&mut self) -> Result<BTreeMap<String, String>> {
+        Ok(read_labels(&self.config().await?))
+    }
+
+    /// The image's config: what `docker inspect` shows as Config.
+    async fn config(&mut self) -> Result<serde_json::Value> {
         let mut manifest = self.manifest(&self.image.reference.clone()).await?;
 
         // An index: one more step, to a single platform's image
@@ -320,9 +345,7 @@ impl Registry {
             ))
         })?;
         let blob = self.get(&format!("blobs/{}", config.digest), None).await?;
-        let config: serde_json::Value =
-            serde_json::from_slice(&blob).map_err(|_| self.problem("has a config that isn't JSON"))?;
-        Ok(read_exposed_ports(&config))
+        serde_json::from_slice(&blob).map_err(|_| self.problem("has a config that isn't JSON"))
     }
 
     async fn manifest(&mut self, reference: &str) -> Result<Manifest> {
@@ -553,6 +576,16 @@ mod tests {
         );
         assert_eq!(credentials_for(config.as_bytes(), "docker.io").unwrap().username, "me");
         assert_eq!(credentials_for(config.as_bytes(), "ghcr.io"), None);
+    }
+
+    #[test]
+    fn reads_labels() {
+        let config = json!({"config": {"Labels": {"technology.community-cloud.postgres": "true", "odd": 3}}});
+        assert_eq!(
+            read_labels(&config),
+            BTreeMap::from([("technology.community-cloud.postgres".to_string(), "true".to_string())])
+        );
+        assert!(read_labels(&json!({"config": {"Labels": null}})).is_empty());
     }
 
     #[test]

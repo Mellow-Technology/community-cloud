@@ -167,6 +167,9 @@ export interface WebApplicationSpec {
   rabbitmq?: RabbitMqSpec;
   migrations?: MigrationsSpec;
   source?: SourceSpec;
+  // Whether the image's labels may fill in what the spec leaves out;
+  // on unless false
+  detect?: boolean;
 }
 
 export interface Release {
@@ -196,6 +199,14 @@ export interface WebApplicationStatus {
   imagePorts?: ImagePort[];
   // Which of its secrets and shared values have a value, never what
   environment?: { secrets?: ValueStatus[]; shared?: ValueStatus[] };
+  // What the image's labels filled in
+  detected?: DetectedStatus;
+}
+
+export interface DetectedStatus {
+  image: string;
+  labels?: Record<string, string>;
+  applied?: Array<{ field: string; value?: string; evidence: string; image: string }>;
 }
 
 export interface ValueStatus {

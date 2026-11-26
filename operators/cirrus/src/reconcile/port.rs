@@ -103,7 +103,7 @@ pub fn prune(known: &mut Vec<ImagePort>, keep: &[Option<&str>]) {
 // Credentials for the image's registry, from the pull Secrets its
 // pods will use. None for a public image, or one the nodes can pull
 // without help.
-async fn credentials(ctx: &Context, app: &WebApplication, registry: &str) -> Result<Option<Credentials>> {
+pub(super) async fn credentials(ctx: &Context, app: &WebApplication, registry: &str) -> Result<Option<Credentials>> {
     let (namespace, _) = super::identity(app);
     let names = if app.spec.image_pull_secrets.is_empty() {
         let account = Api::<ServiceAccount>::namespaced(ctx.client.clone(), &namespace)
