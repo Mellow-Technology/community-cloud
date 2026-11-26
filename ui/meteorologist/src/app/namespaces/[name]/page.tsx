@@ -1,7 +1,8 @@
 /**
  * @file
  * One namespace, in tabs: General (its capabilities, its Postgres, what
- * it's using and its settings), DNS (the providers publishing it),
+ * it's using and its settings), Environment (values its applications
+ * share), DNS (the providers publishing it),
  * Forges (its GitLab connections), and Agents (tokens for managing its
  * applications over MCP). Applications, the other tab, is a
  * route of its own: ./applications/page.tsx.
@@ -22,12 +23,14 @@ import { GitLabBuilds } from "@/components/GitLabBuilds";
 import { GitLabConnections } from "@/components/GitLabConnections";
 import { NamespaceDns } from "@/components/NamespaceDns";
 import { NamespaceHeader } from "@/components/NamespaceHeader";
+import { SharedEnvironment, type SharedValue } from "@/components/SharedEnvironment";
 import { NamespaceSettingsForm } from "@/components/NamespaceSettingsForm";
 import { NamespaceTabs } from "@/components/NamespaceTabs";
 import { PageHeader } from "@/components/PageHeader";
 import styles from "@/components/page.module.scss";
 import { CAPABILITIES, hasCapability } from "@/lib/capabilities";
 import { getPublicUrl } from "@/lib/config";
+import { SHARED_ENV, sharedValueUsers } from "@/lib/environment";
 import { BUILDS_CONFIG_MAP, buildSettingsFrom, includeUrl } from "@/lib/gitlab/builds";
 import { connectionsIn } from "@/lib/gitlab/connections";
 import { getKube } from "@/lib/kube";
@@ -111,6 +114,9 @@ export default async function NamespacePage({
     deploying,
     agents,
     binding,
+    sharedConfig,
+    sharedSecretKeys,
+    changingConfig,
   ] = await Promise.all([
     settle(() => kube.listResourceQuotas(name)),
     settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
@@ -126,7 +132,25 @@ export default async function NamespacePage({
     namespacesAllowing(kube, { verb: "create", resource: PLURAL, group: GROUP }, [name]),
     settle(() => kube.listAgents(name)),
     namespacesAllowing(kube, { verb: "create", resource: "rolebindings", group: "rbac.authorization.k8s.io" }, [name]),
+    settle(() => kube.getConfigMap(name, SHARED_ENV)),
+    settle(() => kube.listSecretKeys(name, SHARED_ENV)),
+    // Saving writes a ConfigMap or a Secret, which "edit" may
+    namespacesAllowing(kube, { verb: "update", resource: "secrets" }, [name]),
   ]);
+  const appList = apps.ok ? apps.value : [];
+  const sharedValues: SharedValue[] = [
+    ...Object.entries((sharedConfig.ok ? sharedConfig.value?.data : undefined) ?? {}).map(([key, value]) => ({
+      key,
+      kind: "config" as const,
+      value,
+      usedBy: sharedValueUsers(appList, key),
+    })),
+    ...((sharedSecretKeys.ok ? sharedSecretKeys.value : undefined) ?? []).map((key) => ({
+      key,
+      kind: "secret" as const,
+      usedBy: sharedValueUsers(appList, key),
+    })),
+  ].sort((a, b) => a.key.localeCompare(b.key));
   const canLabel = labelling.size > 0;
   // Saving the settings writes the namespace and its quota, so it
   // takes both. The "edit" role has neither, on purpose: a team
@@ -330,6 +354,12 @@ export default async function NamespacePage({
               )}
             </>
           ),
+          environment:
+            sharedConfig.ok || sharedSecretKeys.ok ? (
+              <SharedEnvironment namespace={name} values={sharedValues} canEdit={changingConfig.size > 0} />
+            ) : (
+              <ErrorNotice error={sharedConfig.error} title="Couldn't read this namespace's shared environment" />
+            ),
           agents: agents.ok ? (
             <AgentTokens
               namespace={name}

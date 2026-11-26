@@ -26,9 +26,11 @@ know about:
   capability means adding one entry there.
 
   A namespace can be created from here, and each one has a page in
-  five tabs: General (capabilities, Postgres, usage against its quota
+  six tabs: General (capabilities, Postgres, usage against its quota
   and settings), Applications (the applications list, for that
-  namespace alone), DNS, Forges (GitLab connections) and Agents
+  namespace alone), Environment (values its applications share; see
+  [Environment and secrets](#environment-and-secrets)), DNS, Forges
+  (GitLab connections) and Agents
   (tokens for managing its applications over MCP; see
   [Agents and MCP](#agents-and-mcp)). The tab shown
   is in the address, as `?tab=dns` or `?tab=forges`, except
@@ -299,6 +301,48 @@ A watch runs for four minutes and then the browser starts another,
 which is what gets it a refreshed token: the API server only checks a
 token when a watch starts. Nothing runs while the tab is hidden.
 
+### Environment and secrets
+
+`src/lib/environment.ts`. An application's environment variables are
+plain, secret or shared, each in a field of its own in the
+WebApplication (see "Secrets and shared values" in
+`operators/cirrus/README.md`):
+
+- **Plain** ones are `spec.env`, written into the WebApplication.
+  Anyone who can see the application can read them.
+- **Secret** ones, switched on per variable in the form, are
+  `spec.secrets`: names in the resource, values in the application's own
+  Secret, `<app>-secrets`, which the WebApplication owns, so it goes
+  when the application does. The form never reads them back: a kept
+  secret is blank, leaving it blank keeps it, typing replaces it, and
+  "Show" reads it on request as the person, so only someone who may
+  read Secrets there sees it. A new value is written before the
+  application is saved, and one no longer used is removed after. A
+  secret's description, such as one an agent gave when asking for it,
+  is shown beside it, and one still without a value has to be given one
+  before saving.
+- **Shared** ones are `spec.shared`: the namespace's values, kept once
+  on its Environment tab for whatever several workloads use, plain
+  values in the ConfigMap `community-cloud-env` and secret ones in the
+  Secret of the same name. An application chooses the ones it reads in
+  its form. The tab says which applications read each value, and one
+  still read can't be removed. Changing them takes `edit`.
+
+Everything Meteorologist writes here is labelled
+`community-cloud.technology/environment`, and a Secret or ConfigMap of
+the same name that isn't is left alone rather than written over.
+Variables in `spec.env` read from a Secret or ConfigMap, or from the
+pod's own fields, are shown and kept as they are. Cirrus holds the
+rollout until every secret and shared value has a value, says which do
+in `status.environment`, and restarts an application when a value it
+reads changes.
+
+Over MCP, an agent asks for a secret by name and description and never
+gives or sees a value: a person sets it here, and `wait_for_rollout`
+says what the application is waiting for. Agents see the namespace's
+shared values in `get_capabilities`, plain ones with their values and
+secret ones by name, and use them through `shared`.
+
 ### Agents and MCP
 
 `/mcp` is an [MCP](https://modelcontextprotocol.io) server that lets
@@ -354,6 +398,10 @@ only reachable inside the cluster until a person gives it one; see
 CC-45), turning a database, bucket or queue off, changing or removing a
 volume, and anything read from a Secret, which the agent sees only by
 reference.
+
+Secrets and shared values work as described in
+[Environment and secrets](#environment-and-secrets): agents ask for
+secrets, never set them, and use what the namespace shares.
 
 Every answer about an application includes the Dockerfile `LABEL`
 for what it needs (`src/lib/webapp/labels.ts`), and the agent is asked
@@ -543,6 +591,7 @@ src/
   components/               the form, switches, and local pieces GUI Mellow lacks
   lib/
     capabilities.ts         the namespace capability registry
+    environment.ts          where secret and shared environment values are kept
     actions.ts              server actions: every change made to the cluster
     config.ts               settings, from the environment
     auth/                   OIDC and the session cookie

@@ -32,7 +32,9 @@
 
 pub mod bucket;
 pub mod cleanup;
+pub mod config_hash;
 pub mod connections;
+pub mod environment;
 pub mod migrations;
 pub mod network;
 pub mod pods;
@@ -50,7 +52,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::batch::v1::Job;
-use k8s_openapi::api::core::v1::{EnvVar, Pod, Service};
+use k8s_openapi::api::core::v1::{ConfigMap, EnvVar, Pod, Secret, Service};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
 use k8s_openapi::jiff::Timestamp;
 use kube::api::{Api, Patch, PatchParams};
@@ -127,7 +129,12 @@ pub async fn run(client: Client, settings: Settings) {
         client: client.clone(),
         settings,
     });
-    Controller::new(apps, watcher::Config::default())
+    let controller = Controller::new(apps, watcher::Config::default());
+    // The applications as last seen, to find which read a Secret or
+    // ConfigMap that changed
+    let secret_readers = controller.store();
+    let config_readers = controller.store();
+    controller
         .owns(Api::<Deployment>::all(client.clone()), watcher::Config::default())
         .owns(Api::<Service>::all(client.clone()), watcher::Config::default())
         .owns(Api::<Job>::all(client.clone()), watcher::Config::default())
@@ -156,6 +163,17 @@ pub async fn run(client: Client, settings: Settings) {
                     .collect::<Vec<_>>()
             },
         )
+        // A value it reads changing restarts it (config_hash.rs)
+        .watches(
+            Api::<Secret>::all(client.clone()),
+            watcher::Config::default(),
+            move |secret| readers(&secret_readers, config_hash::Source::Secret, &secret),
+        )
+        .watches(
+            Api::<ConfigMap>::all(client.clone()),
+            watcher::Config::default(),
+            move |config| readers(&config_readers, config_hash::Source::ConfigMap, &config),
+        )
         .shutdown_on_signal()
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -164,6 +182,24 @@ pub async fn run(client: Client, settings: Settings) {
             }
         })
         .await;
+}
+
+/// The applications in an object's namespace that read from it.
+fn readers<K: kube::Resource>(
+    store: &kube::runtime::reflector::Store<WebApplication>,
+    source: config_hash::Source,
+    object: &K,
+) -> Vec<ObjectRef<WebApplication>> {
+    let (Some(namespace), Some(name)) = (object.meta().namespace.as_deref(), object.meta().name.as_deref()) else {
+        return Vec::new();
+    };
+    store
+        .state()
+        .iter()
+        .filter(|app| app.namespace().as_deref() == Some(namespace))
+        .filter(|app| config_hash::references_object(app, source, name))
+        .map(|app| ObjectRef::from_obj(app.as_ref()))
+        .collect()
 }
 
 async fn reconcile(app: Arc<WebApplication>, ctx: Arc<Context>) -> Result<Action> {
@@ -259,6 +295,18 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             &mut problems,
             &mut pending,
         )?;
+    }
+    // Its secrets and the namespace's shared values, which hold the
+    // rollout until each has a value
+    let mut environment_status = None;
+    let mut given_env = Vec::new();
+    if !app.spec.secrets.is_empty() || !app.spec.shared.is_empty() {
+        let (outcome, status) = environment::ensure(ctx, app).await;
+        if let Ok(Outcome::Ready(ready)) = &outcome {
+            given_env.clone_from(&ready.env);
+        }
+        environment_status = Some(status);
+        settle(outcome, &mut provided, &mut problems, &mut pending)?;
     }
     // Its own offering, which waits on nothing: the offering's status
     // says when its Service is there
@@ -425,12 +473,13 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
 
         if let (Some(image), Some(port)) = (run, run_port) {
             let deployments = Api::<Deployment>::namespaced(ctx.client.clone(), &namespace);
-            let applied = resources::apply(
-                &deployments,
-                &name,
-                &workload::deployment(app, &image, port, &provided.env_from, &provided.env),
-            )
-            .await?;
+            let mut deployment = workload::deployment(app, &image, port, &provided.env_from, &provided.env);
+            // A changed value it reads restarts it
+            config_hash::annotate(
+                &mut deployment,
+                config_hash::compute(&ctx.client, &namespace, app, &given_env).await?,
+            );
+            let applied = resources::apply(&deployments, &name, &deployment).await?;
             rolled_out = workload::rolled_out(&applied, app.spec.replicas) && image == desired;
             deployed = Some(image);
             if migration_job.is_none() && port_problem.is_none() {
@@ -488,6 +537,8 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
         "url": url,
         "port": service_port,
         "imagePorts": image_ports,
+        // Null when it has none, so a merge patch takes away an old one
+        "environment": environment_status,
     });
     if let Some(webhook) = &found.webhook {
         status["webhook"] = json!(webhook);

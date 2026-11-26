@@ -20,9 +20,13 @@
  *   queue is where data gets lost, or a vhost deleted.
  * - Volumes are only added, never changed or taken away, for the same
  *   reason.
- * - A variable read from a Secret can't be set or removed: the agent
- *   never sees what's in it, and replacing it with a plain value would
- *   put a secret in the spec.
+ * - Secrets are asked for by name and description, never given a
+ *   value: a person sets that in Meteorologist, and Cirrus holds the
+ *   rollout until they have. Shared values are only added, too.
+ * - A variable read from a Secret or ConfigMap can't be set or
+ *   removed: the application's own secrets, the namespace's shared
+ *   values, or anything else. The agent never sees what's in them, and
+ *   replacing one with a plain value would put a secret in the spec.
  */
 import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_TOKEN_KEY, type StorageType } from "../webapp/types";
 import { validateForm, type WebApplicationForm } from "../webapp/form";
@@ -44,6 +48,11 @@ export interface ApplicationChanges {
   migrations?: { command: string[]; args?: string[]; timeoutSeconds?: number } | null;
   // A value sets the variable; null removes it
   env?: Record<string, string | null>;
+  // Secrets it needs, by name, for a person to give values to; added
+  // to those it has
+  secrets?: Array<{ name: string; description?: string }>;
+  // The namespace's shared values it reads; added to those it reads
+  shared?: Array<{ name: string; as?: string }>;
   volumes?: Array<{ name: string; mountPath: string; size: string; type?: StorageType }>;
   connections?: Array<{ offering: string; namespace?: string; name?: string }>;
   gitlab?: { project: string; connection: string; url?: string; ref?: string };
@@ -82,6 +91,9 @@ export function applyChanges(
 ): { form: WebApplicationForm; problems: string[] } {
   const form = structuredClone(base);
   const problems: string[] = [];
+  // Secrets still without a value are waiting for a person, not
+  // something an agent's change has to fill in
+  form.env = form.env.map((row) => (row.secret && !row.stored ? { ...row, requested: true } : row));
 
   if (changes.image !== undefined) {
     form.repository = changes.image.repository;
@@ -122,12 +134,41 @@ export function applyChanges(
   }
 
   for (const [name, value] of Object.entries(changes.env ?? {})) {
-    if (form.preservedEnv.some((variable) => variable.name === name)) {
+    // The application's own secrets, the namespace's shared values,
+    // and anything else read from elsewhere
+    const readFromElsewhere =
+      form.env.some((row) => row.name === name && row.secret) ||
+      form.sharedEnv.some((row) => row.name === name) ||
+      form.preservedEnv.some((variable) => variable.name === name);
+    if (readFromElsewhere) {
       problems.push(`${name} is read from a Secret or ConfigMap, so it can't be changed from here.`);
       continue;
     }
     const rows = form.env.filter((row) => row.name !== name);
     form.env = value === null ? rows : [...rows, { name, value }];
+  }
+
+  for (const secret of changes.secrets ?? []) {
+    const name = secret.name.trim();
+    const existing = form.env.find((row) => row.name === name);
+    if (existing?.secret) continue;
+    if (existing !== undefined) {
+      problems.push(`${name} is already a plain variable. Remove it from env first, then ask for it as a secret.`);
+      continue;
+    }
+    form.env.push({
+      name,
+      value: "",
+      secret: true,
+      requested: true,
+      ...(secret.description ? { description: secret.description } : {}),
+    });
+  }
+
+  for (const shared of changes.shared ?? []) {
+    const key = shared.name.trim();
+    if (form.sharedEnv.some((row) => row.key === key)) continue;
+    form.sharedEnv.push({ key, name: shared.as?.trim() || key });
   }
 
   for (const volume of changes.volumes ?? []) {

@@ -17,6 +17,9 @@
 //! - egress: whether any network policy limits what it can reach
 //! - offerings: the ServiceOfferings it may connect to, its own and
 //!   those shared with it
+//! - shared: the values the namespace shares with its applications
+//!   (spec.shared), plain ones with their values and secret ones by
+//!   name alone, never what they are
 //!
 //! Anyone with view in the namespace may read that ConfigMap, and so
 //! may an agent's token (cirrus-webapplications-edit grants `get` on
@@ -129,6 +132,20 @@ pub struct Capabilities {
     pub ingress: Availability,
     pub egress: Egress,
     pub offerings: Vec<Offering>,
+    #[serde(default)]
+    pub shared: Vec<SharedValue>,
+}
+
+/// One of the namespace's shared values: a plain one's value, a secret
+/// one's name alone.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedValue {
+    pub name: String,
+    /// "plain" or "secret"
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 /// What's known about a namespace and the cluster, as read.
@@ -155,6 +172,9 @@ pub struct Facts {
     pub egress_policies: Vec<String>,
     pub cluster_egress_policies: Vec<String>,
     pub offerings: Vec<Offering>,
+    /// The namespace's shared plain values, and its secret ones' names
+    pub shared_plain: std::collections::BTreeMap<String, String>,
+    pub shared_secret: Vec<String>,
 }
 
 /// What a namespace can have, from what was read.
@@ -236,6 +256,20 @@ pub fn decide(facts: &Facts) -> Capabilities {
             cluster_policies: facts.cluster_egress_policies.clone(),
         },
         offerings,
+        shared: facts
+            .shared_plain
+            .iter()
+            .map(|(name, value)| SharedValue {
+                name: name.clone(),
+                kind: "plain".to_string(),
+                value: Some(value.clone()),
+            })
+            .chain(facts.shared_secret.iter().map(|name| SharedValue {
+                name: name.clone(),
+                kind: "secret".to_string(),
+                value: None,
+            }))
+            .collect(),
     }
 }
 
@@ -381,6 +415,23 @@ mod tests {
             &json!({"specs": [{"ingress": []}, {"egress": []}]})
         ));
         assert!(!cilium_policy_limits_egress(&json!({"spec": {"ingress": [{}]}})));
+    }
+
+    #[test]
+    fn shared_values_show_plain_ones_and_only_the_names_of_secret_ones() {
+        let facts = Facts {
+            shared_plain: [("SMTP_HOST".to_string(), "smtp.example.org".to_string())].into(),
+            shared_secret: vec!["SENDGRID".to_string()],
+            ..everything()
+        };
+        let json = serde_json::to_value(decide(&facts)).unwrap();
+        assert_eq!(
+            json["shared"],
+            json!([
+                {"name": "SMTP_HOST", "kind": "plain", "value": "smtp.example.org"},
+                {"name": "SENDGRID", "kind": "secret"}
+            ])
+        );
     }
 
     #[test]

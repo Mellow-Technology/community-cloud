@@ -33,6 +33,12 @@ Before creating or updating, work out what the application needs:
    - Redis has no field yet; say so if the application needs one.
 3. After creating or updating, write the returned dockerfileLabels into the project's Dockerfile, in the stage that's run (the last one), replacing any ${LABEL_PREFIX}* labels already there. That's what makes the next look quick, and what Cirrus will read.
 
+Environment and secrets:
+- env is for plain settings, such as LOG_LEVEL. Anyone who can see the application reads them, so never put a secret there, even one you can see in the project.
+- Secrets, such as API keys, go in secrets, by name and with a description of what each is and where to get it. You never give or see a value: a person sets it in Meteorologist, and the application waits until each has one. Look for them in .env.example, the config the application reads, and its README, and leave out what Cirrus already provides (DATABASE_URL, PG*, AMQP_URL, S3_*, AWS_*).
+- The namespace may already share values its applications use, such as an SMTP host or a common API key: get_capabilities lists them, plain ones with their values and secret ones by name. Use one through shared, with as when the application expects another name, rather than asking for the same secret again.
+- get_application says which secrets and shared values have a value (set), never what it is. wait_for_rollout says when the application is waiting for one, and which, for you to pass on.
+
 How migrations run:
 - A Job with the new image and the application's environment (DATABASE_URL, PG* and the rest), on the first deploy and on each new image after. The Deployment is given the image only once the Job succeeds, and the old version serves until then.
 - command replaces the image's entrypoint and runs without a shell: ["bin/rails", "db:migrate"], not ["bin/rails db:migrate"]. For &&, pipes or $VARIABLES, use ["/bin/sh", "-c", "..."]. The ${LABEL_PREFIX}migrate label takes either form; a plain string there is run with /bin/sh -c.

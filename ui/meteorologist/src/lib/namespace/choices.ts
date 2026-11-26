@@ -3,13 +3,14 @@
  * The namespaces an application could go in, with what the form needs
  * to know about each: its labels, whether it has a Postgres yet, how
  * much storage its quota leaves, its GitLab connections, its registry
- * credentials and the registries they're for, and which DNS providers
- * publish it.
+ * credentials and the registries they're for, which DNS providers
+ * publish it, and its shared environment values, by name only.
  */
 import "server-only";
 
 import type { NamespaceChoice } from "@/components/WebApplicationForm";
 import { providersFor } from "../dns/providers";
+import { SHARED_ENV, type SharedKind } from "../environment";
 import { connectionsIn } from "../gitlab/connections";
 import { settle, type KubeClient } from "../kube/client";
 import type { Namespace, SecretSummary } from "../kube/types";
@@ -70,6 +71,23 @@ export async function namespaceChoices(
     // refused just has none offered
     Promise.all(namespaces.map((ns) => settle(() => kube.listSecrets(ns.metadata.name)))),
   ]);
+  // Names only: a shared secret's value never goes to the form
+  const shared = await Promise.all(
+    namespaces.map(async (ns): Promise<Array<{ key: string; kind: SharedKind }> | undefined> => {
+      const [config, secret] = await Promise.all([
+        settle(() => kube.getConfigMap(ns.metadata.name, SHARED_ENV)),
+        settle(() => kube.listSecretKeys(ns.metadata.name, SHARED_ENV)),
+      ]);
+      if (!config.ok && !secret.ok) return undefined;
+      return [
+        ...Object.keys((config.ok ? config.value?.data : undefined) ?? {}).map((key) => ({
+          key,
+          kind: "config" as const,
+        })),
+        ...((secret.ok ? secret.value : undefined) ?? []).map((key) => ({ key, kind: "secret" as const })),
+      ].sort((a, b) => a.key.localeCompare(b.key));
+    }),
+  );
   const pullSecrets = await Promise.all(
     namespaces.map((ns, index) => {
       const listed = secrets[index];
@@ -98,6 +116,7 @@ export async function namespaceChoices(
         gitlabConnections: listed?.ok ? connectionsIn(listed.value) : undefined,
         pullSecrets: pullSecrets[index],
         dnsProviders: dns.ok ? providersFor(dns.value, name) : undefined,
+        sharedEnv: shared[index],
       };
     })
     .toSorted((a, b) => a.name.localeCompare(b.name));

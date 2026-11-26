@@ -13,6 +13,7 @@ import { isNotFound, settle } from "@/lib/kube/client";
 import { reachableNamespaces } from "@/lib/namespace/access";
 import { namespaceChoices } from "@/lib/namespace/choices";
 import { offeringChoices } from "@/lib/offerings/choices";
+import { appSecretName } from "@/lib/environment";
 import { toForm } from "@/lib/webapp/form";
 
 export const metadata: Metadata = { title: "Edit application" };
@@ -25,9 +26,12 @@ export const metadata: Metadata = { title: "Edit application" };
 export default async function EditAppPage({ params }: { params: Promise<{ namespace: string; name: string }> }) {
   const { namespace, name } = await params;
   const kube = await getKube();
-  const [found, ns] = await Promise.all([
+  const [found, ns, stored] = await Promise.all([
     settle(() => kube.getWebApplication(decodeURIComponent(namespace), decodeURIComponent(name))),
     settle(() => kube.getNamespace(decodeURIComponent(namespace))),
+    // Which of its secrets have a value, by name; without access to
+    // Secrets, what Cirrus last reported is used instead
+    settle(() => kube.listSecretKeys(decodeURIComponent(namespace), appSecretName(decodeURIComponent(name)))),
   ]);
   const choices = ns.ok ? await namespaceChoices(kube, [ns.value], ns.value.metadata.name) : [];
   // Any namespace's offerings may be shared with this one
@@ -56,7 +60,7 @@ export default async function EditAppPage({ params }: { params: Promise<{ namesp
         back={back}
       />
       <WebApplicationForm
-        initial={toForm(found.value)}
+        initial={toForm(found.value, stored.ok ? (stored.value ?? []) : undefined)}
         resourceVersion={found.value.metadata.resourceVersion ?? ""}
         namespaces={choices}
         offerings={offerings}

@@ -39,6 +39,7 @@ import {
   bindingName,
   type Agent,
 } from "../agents/tokens";
+import { ENV_LABEL } from "../environment";
 import { getApiServerOverride, getDevKubeconfig, getNamespaceListerTokenFile, hasDevKubeconfig } from "../config";
 import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
 import { DNS_PLURAL, type DnsProvider } from "../dns/types";
@@ -546,6 +547,46 @@ function clientFor(config: KubeConfig): KubeClient {
             force: true,
           },
           apply,
+        );
+      }),
+
+    listSecretKeys: (namespace, name) =>
+      attempt(async () => {
+        const secret = await optional(() => core.readNamespacedSecret({ name, namespace }));
+        return secret === undefined ? undefined : Object.keys(secret.data ?? {}).sort();
+      }),
+
+    patchEnvironmentSecret: (namespace, name, changes, labels, owner) =>
+      attempt(async () => {
+        const existing = await optional(() => core.readNamespacedSecret({ name, namespace }));
+        const ownerReferences = owner === undefined ? undefined : [owner];
+        if (existing === undefined) {
+          const data = Object.fromEntries(
+            Object.entries(changes).filter((entry): entry is [string, string] => entry[1] !== null),
+          );
+          await core.createNamespacedSecret({
+            namespace,
+            body: { metadata: { name, namespace, labels, ownerReferences }, type: "Opaque", stringData: data },
+          });
+          return;
+        }
+        if (existing.metadata?.labels?.[ENV_LABEL] === undefined) {
+          throw new KubeError(
+            409,
+            `There's already a Secret called ${name} in ${namespace} that Meteorologist didn't make, so it's left alone.`,
+            "AlreadyExists",
+          );
+        }
+        // A merge patch: keys named are set or removed, the rest kept
+        const data = Object.fromEntries(
+          Object.entries(changes).map(([key, value]) => [
+            key,
+            value === null ? null : Buffer.from(value, "utf8").toString("base64"),
+          ]),
+        );
+        await core.patchNamespacedSecret(
+          { name, namespace, body: { metadata: { labels, ...(ownerReferences ? { ownerReferences } : {}) }, data } },
+          merge,
         );
       }),
 

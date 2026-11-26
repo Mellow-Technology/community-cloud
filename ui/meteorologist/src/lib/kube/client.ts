@@ -237,6 +237,38 @@ export interface KubeClient {
   ): Promise<void>;
 
   /**
+   * The keys in a Secret, without its values, or nothing when there's
+   * no such Secret.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  listSecretKeys(namespace: string, name: string): Promise<string[] | undefined>;
+
+  /**
+   * Sets and removes keys in one of Meteorologist's environment
+   * Secrets (../environment.ts), making it if it isn't there. Keys it
+   * doesn't name are left alone. Refused with a 409 when a Secret of
+   * that name is there that isn't one of these, so nobody's own is
+   * written over.
+   *
+   * @param namespace
+   * @param name
+   * @param changes a value sets a key; null removes it
+   * @param labels
+   * @param owner the object it belongs to, which Kubernetes deletes it
+   *   with
+   */
+  patchEnvironmentSecret(
+    namespace: string,
+    name: string,
+    changes: Record<string, string | null>,
+    labels: Record<string, string>,
+    owner?: OwnerReference,
+  ): Promise<void>;
+
+  /**
    * Removes a Secret, if it's there.
    *
    * @param namespace
@@ -560,6 +592,16 @@ export interface KubeClient {
     type?: string,
     annotations?: Record<string, string>,
   ): Promise<void>;
+}
+
+/**
+ * What an object belongs to, so Kubernetes deletes it along with it.
+ */
+export interface OwnerReference {
+  apiVersion: string;
+  kind: string;
+  name: string;
+  uid: string;
 }
 
 /**

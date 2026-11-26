@@ -15,6 +15,8 @@ services the cluster already runs:
 | `connections` | environment variables for each ServiceOffering it uses: `<NAME>_HOST`, `_PORT`, `_URL`… | ServiceOfferings |
 | `offers` | a ServiceOffering for its own Service, so others can connect to it | ServiceOfferings |
 | `migrations` | a Job, run with each new image before the rollout | Kubernetes |
+| `secrets` | a variable for each, read from the application's Secret `<app>-secrets` | Kubernetes |
+| `shared` | a variable for each of the namespace's shared values, from `community-cloud-env` | Kubernetes |
 | `source.gitlab` | a project webhook; each successful pipeline on `ref` rolls out | GitLab's API |
 
 It runs in `community-cloud`, and the installer's `cirrus` package
@@ -140,6 +142,47 @@ applications reaching it by `<app>:<port>` have to follow.
   and `_VHOST`.
 
 Anything in `spec.env` comes after these, so it wins.
+
+### Secrets and shared values
+
+```yaml
+  secrets:
+    - name: STRIPE_SECRET_KEY
+      description: Stripe's secret key, from the dashboard's API keys page
+  shared:
+    - name: SMTP_HOST
+    - name: SENDGRID_API_KEY
+      as: MAIL_KEY       # the variable it's set as; its own name unless said
+```
+
+`secrets` are the application's own: only their names are in the
+resource, and their values are in the Secret `<app>-secrets` under the
+same names, which Meteorologist writes and the WebApplication owns.
+`shared` are values the namespace keeps once for all its applications,
+plain ones in the ConfigMap `community-cloud-env` and secret ones in the
+Secret of the same name; whether one is plain or secret is the
+namespace's to say, so Cirrus looks it up. Each becomes a variable that
+refers to its value, so nothing secret is written into the Deployment,
+and they come after what Cirrus provides and before `spec.env`
+(`src/reconcile/environment.rs`).
+
+A secret without a value, or a shared value the namespace doesn't have,
+holds the rollout: `Provisioned` is False, `Blocked`, saying which and
+where to set it. That's how an application can ask for a secret nobody
+has given it yet, such as one an agent found it needs, and wait for a
+person. `status.environment` says which have a value (`set`), and for
+shared ones whether they're plain or secret, never what the value is,
+for whoever can read the application but not its Secrets.
+
+A container only reads its environment when it starts, so Cirrus hashes
+the values the application reads, from these and from any
+`secretKeyRef` or `configMapKeyRef` in `spec.env`, into the pod
+template's `community-cloud.technology/config-hash` annotation
+(`src/reconcile/config_hash.rs`). It looks again whenever one of those
+Secrets or ConfigMaps changes, so a changed value is a rollout, as a new
+image is. Only the keys it reads count: changing one shared value
+restarts only the applications reading it. An application reading
+nothing from Secrets or ConfigMaps has no annotation.
 
 ### Postgres
 
@@ -332,9 +375,11 @@ report as JSON under `capabilities.json` (`src/capabilities/`):
 - `offerings`: the ServiceOfferings applications here may connect to,
   their own namespace's and those shared with it, and whether each is
   ready.
+- `shared`: the namespace's shared values, plain ones with their
+  values and secret ones by name alone.
 
-It's looked at again when the namespace changes and every three
-minutes. `view`, `edit` and `admin` may read it, through the aggregated
+It's looked at again when the namespace or its shared values change,
+and every three minutes. `view`, `edit` and `admin` may read it, through the aggregated
 roles in `k8s/operators/cirrus/Cirrus.rbac.yaml`, and so may an agent's
 token, which has nothing else beyond applications. Meteorologist's MCP
 tools use it to say what an application can ask for and to refuse what

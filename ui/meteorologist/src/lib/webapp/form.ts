@@ -18,6 +18,7 @@
  * a field Cirrus adds after this was written all come through as they
  * were.
  */
+import { secretsSet } from "../environment";
 import type { GitLabConnection } from "../gitlab/connections";
 import type { EnvVar, ResourceRequirements } from "../kube/types";
 import { parseQuantity } from "../quantity";
@@ -38,11 +39,33 @@ import {
 } from "./types";
 
 /**
- * A plain environment variable, as a row in the form.
+ * An environment variable the application sets itself, as a row in
+ * the form: a plain value (spec.env), or one of its own secrets
+ * (spec.secrets, ../environment.ts).
+ *
+ * A secret's value is never read back into the form. stored says it
+ * already has one, so leaving the value blank keeps it; anything typed
+ * replaces it. description is what it's for, kept as it was.
  */
 export interface EnvRow {
   name: string;
   value: string;
+  secret?: boolean;
+  stored?: boolean;
+  description?: string;
+  // Asked for by an agent, for a person to give a value: saved without
+  // one, and Cirrus waits for it
+  requested?: boolean;
+}
+
+/**
+ * One of the namespace's shared values it reads (spec.shared).
+ */
+export interface SharedEnvRow {
+  // The shared value's name
+  key: string;
+  // The variable it's set as, the value's own name unless said
+  name: string;
 }
 
 /**
@@ -107,8 +130,11 @@ export interface WebApplicationForm {
   gitlabFindByPushTime: boolean;
 
   env: EnvRow[];
-  // Variables the form can't edit — those read from a Secret or a
-  // ConfigMap — shown, and written back as they were
+  // The namespace's shared values it reads
+  sharedEnv: SharedEnvRow[];
+  // Variables in spec.env the form can't edit — those read from a
+  // Secret or ConfigMap, or the pod's own fields — shown, and written
+  // back as they were
   preservedEnv: EnvVar[];
 }
 
@@ -162,6 +188,7 @@ export function emptyForm(namespace = ""): WebApplicationForm {
     gitlabImageTag: "",
     gitlabFindByPushTime: false,
     env: [],
+    sharedEnv: [],
     preservedEnv: [],
   };
 }
@@ -220,9 +247,11 @@ export function splitList(text: string): string[] {
  * the form shows what Cirrus will actually do.
  *
  * @param app
+ * @param storedSecrets the keys its Secret has, when they could be
+ *   read; otherwise what Cirrus last reported
  * @returns
  */
-export function toForm(app: WebApplication): WebApplicationForm {
+export function toForm(app: WebApplication, storedSecrets?: string[]): WebApplicationForm {
   const spec = app.spec;
   const gitlab = spec.source?.gitlab;
   const env = spec.env ?? [];
@@ -276,9 +305,23 @@ export function toForm(app: WebApplication): WebApplicationForm {
     gitlabTokenSecretKey: gitlab?.tokenSecret.key ?? DEFAULT_TOKEN_KEY,
     gitlabImageTag: gitlab?.imageTag ?? "",
     gitlabFindByPushTime: gitlab?.findImageByPushTime ?? false,
-    env: env
-      .filter((variable) => variable.valueFrom === undefined)
-      .map((variable) => ({ name: variable.name, value: variable.value ?? "" })),
+    env: [
+      ...env
+        .filter((variable) => variable.valueFrom === undefined)
+        .map((variable) => ({ name: variable.name, value: variable.value ?? "" })),
+      ...(spec.secrets ?? []).map((secret): EnvRow => {
+        const stored =
+          storedSecrets !== undefined ? storedSecrets.includes(secret.name) : secretsSet(app).has(secret.name);
+        return {
+          name: secret.name,
+          value: "",
+          secret: true,
+          stored,
+          ...(secret.description ? { description: secret.description } : {}),
+        };
+      }),
+    ],
+    sharedEnv: (spec.shared ?? []).map((shared) => ({ key: shared.name, name: shared.as ?? shared.name })),
     preservedEnv: env.filter((variable) => variable.valueFrom !== undefined),
   };
 }
@@ -392,11 +435,24 @@ export function fromForm(form: WebApplicationForm, base?: WebApplication): WebAp
     spec.port = port;
   }
 
+  const named = form.env.filter((row) => row.name.trim() !== "");
   const env: EnvVar[] = [
-    ...form.env.filter((row) => row.name.trim() !== "").map((row) => ({ name: row.name.trim(), value: row.value })),
+    ...named.filter((row) => !row.secret).map((row) => ({ name: row.name.trim(), value: row.value })),
     ...copy(form.preservedEnv),
   ];
   setOrDelete(spec, "env", env.length > 0 ? env : undefined);
+  // Names only: the values go to the application's Secret
+  const secrets = named
+    .filter((row) => row.secret)
+    .map((row) => ({ name: row.name.trim(), ...(row.description ? { description: row.description } : {}) }));
+  setOrDelete(spec, "secrets", secrets.length > 0 ? secrets : undefined);
+  const shared = form.sharedEnv
+    .filter((row) => row.key.trim() !== "")
+    .map((row) => ({
+      name: row.key.trim(),
+      ...(row.name.trim() !== "" && row.name.trim() !== row.key.trim() ? { as: row.name.trim() } : {}),
+    }));
+  setOrDelete(spec, "shared", shared.length > 0 ? shared : undefined);
 
   setOrDelete(spec, "resources", buildResources(form, spec.resources));
 
@@ -598,15 +654,22 @@ export function validateForm(form: WebApplicationForm): Partial<Record<keyof Web
     errors.volumes = volumeProblem;
   }
 
-  const envNames = form.env.map((row) => row.name.trim()).filter((envName) => envName !== "");
+  const envNames = [...form.env, ...form.sharedEnv, ...form.preservedEnv]
+    .map((row) => row.name.trim())
+    .filter((envName) => envName !== "");
   const badEnv = envNames.find((envName) => !ENV_NAME.test(envName));
   const repeated = envNames.find((envName, index) => envNames.indexOf(envName) !== index);
+  const unsetSecret = form.env.find(
+    (row) => row.secret && !row.stored && !row.requested && row.name.trim() !== "" && row.value === "",
+  );
   if (badEnv !== undefined) {
     errors.env = `${badEnv} can't be an environment variable's name.`;
   } else if (repeated !== undefined) {
     errors.env = `${repeated} is set twice.`;
   } else if (form.env.some((row) => row.name.trim() === "" && row.value !== "")) {
     errors.env = "Every variable with a value needs a name.";
+  } else if (unsetSecret !== undefined) {
+    errors.env = `Give ${unsetSecret.name.trim()} a value${unsetSecret.description ? ` (${unsetSecret.description})` : ""}. It's kept in a Secret, not in the application.`;
   }
 
   if (form.migrations) {

@@ -129,11 +129,32 @@ export interface SourceSpec {
   gitlab?: GitLabSource;
 }
 
+/**
+ * One of the application's own secrets: its value is in the Secret
+ * <app>-secrets, under its name, never in the spec.
+ */
+export interface SecretValueSpec {
+  name: string;
+  // What it is and where to get it, for whoever sets it
+  description?: string;
+}
+
+/**
+ * One of the namespace's shared values, set as a variable of its name
+ * or the one in as.
+ */
+export interface SharedValueSpec {
+  name: string;
+  as?: string;
+}
+
 export interface WebApplicationSpec {
   image: ImageSpec;
   replicas?: number;
   port?: number;
   env?: EnvVar[];
+  secrets?: SecretValueSpec[];
+  shared?: SharedValueSpec[];
   resources?: ResourceRequirements;
   imagePullSecrets?: string[];
   healthCheck?: HealthCheckSpec;
@@ -173,6 +194,15 @@ export interface WebApplicationStatus {
   // image
   port?: number;
   imagePorts?: ImagePort[];
+  // Which of its secrets and shared values have a value, never what
+  environment?: { secrets?: ValueStatus[]; shared?: ValueStatus[] };
+}
+
+export interface ValueStatus {
+  name: string;
+  set: boolean;
+  // For a shared value, once it's there
+  kind?: "plain" | "secret";
 }
 
 export interface ImagePort {
