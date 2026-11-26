@@ -124,6 +124,28 @@ rules:
   - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
+  # What's available in each namespace, kept in its cirrus-capabilities
+  # ConfigMap (operators/cirrus/src/capabilities). Reads, and writing
+  # that one ConfigMap: Kubernetes can't limit creating to a name, so
+  # the rule is for ConfigMaps, and Cirrus only ever writes its own.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list"]
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumnetworkpolicies", "ciliumclusterwidenetworkpolicies"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rabbitmq.com"]
+    resources: ["rabbitmqclusters"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -159,6 +181,13 @@ rules:
   - apiGroups: ["community-cloud.technology"]
     resources: ["webapplications", "serviceofferings"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  # What Cirrus can give applications here. This is all of what an
+  # agent's token (Meteorologist's Agents tab) may read beyond its
+  # applications, since "edit" itself isn't bound to it.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cirrus-capabilities"]
+    verbs: ["get"]
 ---
 # The same for "view", along with the Postgres Cirrus starts in a
 # namespace, which Meteorologist shows beside its applications.
@@ -181,6 +210,10 @@ rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cirrus-capabilities"]
+    verbs: ["get"]
 ---
 # What every ExternalDNS a DnsProvider runs may do: exactly what the
 # ExternalDNS chart's own ClusterRole grants with the Gateway route

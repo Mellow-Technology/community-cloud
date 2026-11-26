@@ -18,7 +18,9 @@
  * The store hangs off globalThis so it survives Next reloading this
  * module in development.
  */
+import type { Agent } from "../agents/tokens";
 import { getCapability } from "../capabilities";
+import { CAPABILITIES_CONFIG_MAP, CAPABILITIES_KEY, SERVICES, type Capabilities } from "../mcp/capabilities";
 import type { NodeUsage } from "../cluster";
 import { DNS_API_VERSION, DNS_KIND, DNS_NAMESPACE, type DnsProvider } from "../dns/types";
 import { CONNECTION_LABEL, URL_ANNOTATION } from "../gitlab/connections";
@@ -49,6 +51,8 @@ interface FixtureStore {
   quotas: Map<string, ResourceQuota>;
   limitRanges: Map<string, LimitRange>;
   serviceAccounts: Map<string, ServiceAccount>;
+  // By namespace/name
+  agents: Map<string, Agent>;
   postgres: Map<string, PostgresCluster>;
   certificates: Map<string, Certificate>;
   configMaps: Map<string, ConfigMap>;
@@ -594,6 +598,7 @@ function seed(): FixtureStore {
   ];
 
   return {
+    agents: new Map([["team-shop/deploy-bot", { name: "deploy-bot", createdAt: CREATED, createdBy: "fixtures" }]]),
     namespaces: new Map(namespaces.map((ns) => [ns.metadata.name, ns])),
     webapps: new Map(webapps.map((app) => [key(app.metadata.namespace ?? "", app.metadata.name), app])),
     secrets: new Map<string, FixtureSecret>([
@@ -736,8 +741,8 @@ function seed(): FixtureStore {
         }),
       ],
     ]),
-    configMaps: new Map(
-      [
+    configMaps: new Map([
+      ...[
         packageRecord({
           name: "authentik",
           namespace: "cc-office",
@@ -813,8 +818,17 @@ function seed(): FixtureStore {
         }),
         // Not an application, so not on the Office page
         packageRecord({ name: "cert-manager", namespace: "cert-manager", chartVersion: "v1.19.1", rollout: [] }),
-      ].map((each) => [key(RECORD_NAMESPACE, each.metadata.name), each]),
-    ),
+      ].map((each): [string, ConfigMap] => [key(RECORD_NAMESPACE, each.metadata.name), each]),
+      // What Cirrus says each can have. sandbox has none, as if Cirrus
+      // were from before it reported, so nothing is held back there.
+      ...[
+        capabilitiesFor("team-shop", {
+          bucket:
+            'This namespace can\'t have buckets until a person gives it the label storage.community-cloud.technology/buckets="true" (the Buckets capability in Meteorologist).',
+        }),
+        capabilitiesFor("cc-office", {}),
+      ].map((each): [string, ConfigMap] => [key(each.metadata.namespace ?? "", each.metadata.name), each]),
+    ]),
     buckets: new Map(
       [
         fixtureBucket("cc-office", "authentik", {
@@ -995,6 +1009,45 @@ function inNamespace<T extends { metadata: { namespace?: string } }>(map: Map<st
 }
 
 /**
+ * A cirrus-capabilities ConfigMap, as Cirrus writes it, with
+ * everything available but the services given, which aren't for the
+ * reason given, and hard disks, which this cluster hasn't got.
+ *
+ * @param namespace
+ * @param missing reasons, by service
+ * @returns
+ */
+function capabilitiesFor(namespace: string, missing: Partial<Record<(typeof SERVICES)[number], string>>): ConfigMap {
+  const availability = (service: (typeof SERVICES)[number]) =>
+    missing[service] === undefined ? { available: true } : { available: false, reason: missing[service] };
+  const report: Capabilities = {
+    version: 1,
+    namespace,
+    services: {
+      postgres: availability("postgres"),
+      rabbitmq: availability("rabbitmq"),
+      bucket: availability("bucket"),
+    },
+    storage: [
+      { type: "fast", storageClass: "cc-local-ssd-fast", available: true },
+      { type: "sata", storageClass: "cc-local-ssd-sata", available: true },
+      { type: "hdd", storageClass: "cc-local-hdd", available: false },
+      { type: "ram", available: true },
+    ],
+    ingress: { available: true, reason: "A person gives an application its hostnames, in Meteorologist." },
+    egress: { restricted: false },
+    offerings: [
+      { name: "plane", namespace: "cc-office", title: "Plane API", protocol: "http", ready: true },
+      { name: "cache", namespace: "cc-office", title: "Shared Redis", protocol: "redis", ready: true },
+    ],
+  };
+  return {
+    metadata: { name: CAPABILITIES_CONFIG_MAP, namespace, labels: { "app.kubernetes.io/managed-by": "cirrus" } },
+    data: { [CAPABILITIES_KEY]: JSON.stringify(report, null, 2) },
+  };
+}
+
+/**
  * The store, made on first use.
  *
  * @returns
@@ -1003,7 +1056,7 @@ function store(): FixtureStore {
   const holder = globalThis as typeof globalThis & { __meteorologistFixtures?: FixtureStore };
   // A store from before this module last changed shape is started
   // again rather than read half-formed
-  if (holder.__meteorologistFixtures?.offerings === undefined) {
+  if (holder.__meteorologistFixtures?.agents === undefined) {
     holder.__meteorologistFixtures = seed();
   }
   return holder.__meteorologistFixtures;
@@ -1110,6 +1163,14 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
       within("deployments", namespace);
       return client.listWorkloads(namespace);
     },
+    listAgents: async (namespace) => {
+      within("serviceaccounts", namespace);
+      return client.listAgents(namespace);
+    },
+    // "edit" can't bind roles, so can't make agents
+    createAgent: async (namespace) => refuse("rolebindings", namespace),
+    requestAgentToken: async (namespace) => refuse("serviceaccounts/token", namespace),
+    deleteAgent: async (namespace) => refuse("serviceaccounts", namespace),
     listSecrets: async (namespace) => {
       within("secrets", namespace);
       return client.listSecrets(namespace);
@@ -1611,6 +1672,34 @@ export function fixtureClient(): KubeClient {
 
     deleteLimitRange: async (namespace, name) => {
       store().limitRanges.delete(key(namespace, name));
+    },
+
+    listAgents: async (namespace) =>
+      copy([...store().agents.entries()].filter(([id]) => id.startsWith(`${namespace}/`)).map(([, agent]) => agent)),
+
+    createAgent: async (namespace, name, createdBy) => {
+      requireNamespace(namespace);
+      const id = key(namespace, name);
+      if (store().agents.has(id) || store().serviceAccounts.has(id)) {
+        throw new KubeError(409, `serviceaccounts "${name}" already exists`, "AlreadyExists");
+      }
+      store().agents.set(id, { name, createdAt: now(), createdBy });
+    },
+
+    requestAgentToken: async (namespace, name, seconds) => {
+      const agent = store().agents.get(key(namespace, name));
+      if (agent === undefined) {
+        throw new KubeError(404, `${name} isn't an agent in ${namespace}.`, "NotFound");
+      }
+      const expiresAt = new Date(Date.now() + seconds * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+      agent.tokenExpires = expiresAt;
+      // Not a real token: in fixtures mode, /mcp takes its namespace
+      // from the address and ignores this
+      return { token: `fixture-token-${namespace}-${name}`, expiresAt };
+    },
+
+    deleteAgent: async (namespace, name) => {
+      store().agents.delete(key(namespace, name));
     },
 
     getServiceAccount: async (namespace, name) => copy(store().serviceAccounts.get(key(namespace, name))),

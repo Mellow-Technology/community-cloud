@@ -308,6 +308,39 @@ Cirrus checks for them rather than adding them itself:
 Without the label, `Provisioned` is False and says which label is
 missing.
 
+### What's available
+
+Installs differ, and so do namespaces, so Cirrus writes down what it can
+give applications in each one before any of them asks. Every namespace
+but Kubernetes's own gets a ConfigMap, `cirrus-capabilities`, with a
+report as JSON under `capabilities.json` (`src/capabilities/`):
+
+- `services`: `postgres`, `rabbitmq` and `bucket`, each `available` or
+  not, with a `reason`. A service is missing when its operator's CRD
+  isn't installed or, for RabbitMQ, its shared cluster isn't there.
+  Buckets also need the namespace's label. The first database also
+  needs room under the storage quota for the namespace's Postgres
+  volume.
+- `storage`: each storage type, and whether its StorageClass exists.
+  `ram` always does.
+- `ingress`: whether applications here can have public hostnames, which
+  is the Gateway label.
+- `egress`: whether a NetworkPolicy or CiliumNetworkPolicy in the
+  namespace limits egress, naming them. Cluster-wide Cilium policies
+  that limit egress are listed apart, since whether they select this
+  namespace's pods isn't worked out.
+- `offerings`: the ServiceOfferings applications here may connect to,
+  their own namespace's and those shared with it, and whether each is
+  ready.
+
+It's looked at again when the namespace changes and every three
+minutes. `view`, `edit` and `admin` may read it, through the aggregated
+roles in `k8s/operators/cirrus/Cirrus.rbac.yaml`, and so may an agent's
+token, which has nothing else beyond applications. Meteorologist's MCP
+tools use it to say what an application can ask for and to refuse what
+it can't. Cirrus's own checks when provisioning are unchanged: the
+report is advice ahead of time, not a gate.
+
 ## Rollouts
 
 GitLab has no webhook for an image being pushed, so Cirrus listens for

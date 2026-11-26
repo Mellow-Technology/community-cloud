@@ -26,9 +26,11 @@ know about:
   capability means adding one entry there.
 
   A namespace can be created from here, and each one has a page in
-  four tabs: General (capabilities, Postgres, usage against its quota
+  five tabs: General (capabilities, Postgres, usage against its quota
   and settings), Applications (the applications list, for that
-  namespace alone), DNS and Forges (GitLab connections). The tab shown
+  namespace alone), DNS, Forges (GitLab connections) and Agents
+  (tokens for managing its applications over MCP; see
+  [Agents and MCP](#agents-and-mcp)). The tab shown
   is in the address, as `?tab=dns` or `?tab=forges`, except
   Applications, which is its own route,
   `/namespaces/<name>/applications`. Links to the old `?tab=integration`
@@ -297,6 +299,94 @@ A watch runs for four minutes and then the browser starts another,
 which is what gets it a refreshed token: the API server only checks a
 token when a watch starts. Nothing runs while the tab is hidden.
 
+### Agents and MCP
+
+`/mcp` is an [MCP](https://modelcontextprotocol.io) server that lets
+an AI agent, such as Claude Code working in a project's repository,
+manage one namespace's applications. It has six tools (in
+`src/lib/mcp/tools.ts`):
+
+- `get_capabilities`, what Cirrus can give applications in this
+  namespace, from its `cirrus-capabilities` ConfigMap (see "What's
+  available" in `operators/cirrus/README.md`): which of Postgres,
+  RabbitMQ and buckets it can provide and why not, the storage types,
+  whether applications can have public hostnames, whether egress is
+  limited, and the ServiceOfferings shared with it. The same report
+  trims `create_application` and `update_application` in `tools/list`,
+  leaving out a service that isn't available and storage types with no
+  StorageClass, and both refuse what isn't available, with Cirrus's
+  reason (`src/lib/mcp/capabilities.ts`). Without a report, from an
+  older Cirrus, nothing is held back.
+- `list_applications` and `get_application`, for what's there and how
+  it's doing
+- `create_application`, which works out nothing itself: the agent
+  reads the project's files for what it needs, guided by the server's
+  instructions (`src/lib/mcp/instructions.ts`)
+- `update_application`, which changes the fields it's given and only
+  those
+- `wait_for_rollout`, which waits until Cirrus has rolled out the
+  latest change and it's healthy, or it fails, or the time runs out
+  (five minutes unless asked, ten at most), saying what Cirrus is
+  doing as it goes: provisioning, migrating, rolling out. Create and
+  update do the same before answering when given `wait: true`. It
+  watches the application, as the live pages do, with a poll beside
+  the watch (`src/lib/mcp/rollout.ts`). When the time runs out it isn't
+  an answer either way, and the agent is told to call it again.
+
+A change is laid over the form made from the live resource and saved
+the way the application form saves (`src/lib/mcp/changes.ts`), so the
+same validation applies, nothing the agent doesn't mention is lost, and
+a write over someone else's is refused and tried again. Some things
+are left to people, here, and are refused with a reason rather than
+dropped: deleting an application, its hostnames (one made over MCP is
+only reachable inside the cluster until a person gives it one; see
+CC-45), turning a database, bucket or queue off, changing or removing a
+volume, and anything read from a Secret, which the agent sees only by
+reference.
+
+Every answer about an application includes the Dockerfile `LABEL`
+for what it needs (`src/lib/webapp/labels.ts`), and the agent is asked
+to write it into the project. The labels are CC-56's
+`technology.community-cloud.*` ones (`postgres`, `rabbitmq`,
+`bucket`, `migrate` and `health`). With them in the Dockerfile, the
+next agent reads them rather than working it out again, and Cirrus can
+read them from the image once CC-56 is done.
+
+An agent is a ServiceAccount in the namespace labelled
+`community-cloud.technology/agent=true`, with a RoleBinding to
+`cirrus-webapplications-edit` that the ServiceAccount owns, made on
+the Agents tab (`src/lib/agents/tokens.ts`). Its token is a
+TokenRequest token, lasting from a week to a year, shown once and kept
+nowhere; "New token" makes another, and "Revoke" deletes the
+ServiceAccount, which ends all of them. `/mcp` hands the bearer token
+to the API server as it is, just as a person's ID token is handed on,
+and takes the namespace from the API server's answer about who the
+token is (a SelfSubjectReview). So RBAC limits the agent, and
+Meteorologist still has no access of its own. Making or revoking an
+agent binds a role, so it takes the namespace's `admin` or a cluster
+admin. `edit` can't do it.
+
+The transport is Streamable HTTP without sessions: nothing is kept
+between POSTs, so GET (for a stream) is refused. A POST is answered
+with JSON, except a tool call that waits, which is answered as
+server-sent events on that request: a `notifications/progress` for
+each new step, when the client gave a `progressToken`, a comment every
+15 seconds so the Gateway doesn't take the connection for idle, and the
+result last. That needs no session. Since the API server checks a
+token only when a watch starts, a token revoked mid-wait still sees
+that wait out, which is at most ten minutes. `src/proxy.ts` lets `/mcp` through, and a request carrying a
+browser's `Origin` other than Meteorologist's own is refused. In the
+development modes there's no token, and the namespace comes from the
+address: `/mcp?namespace=team-shop`.
+
+Beyond its applications, the token may read only that one ConfigMap.
+How much more of the cluster an agent should see, such as a failed
+migration's logs, is CC-58.
+
+The token's role would also let it delete applications through the
+API server directly; only the tools hold that back. That's no more
+than `edit` gives a person.
+
 ### Development without signing in
 
 There are two other modes. Neither is ever used unless you ask for it
@@ -438,14 +528,16 @@ tag against `package.json` too.
 ```text
 src/
   proxy.ts                  sign-in check and token refresh, before every page
-  app/                      pages, and the /auth/* and /healthz routes
+  app/                      pages, and the /auth/*, /healthz and /mcp routes
   components/               the form, switches, and local pieces GUI Mellow lacks
   lib/
     capabilities.ts         the namespace capability registry
     actions.ts              server actions: every change made to the cluster
     config.ts               settings, from the environment
     auth/                   OIDC and the session cookie
+    agents/                 agent tokens: ServiceAccounts for MCP clients
     kube/                   the KubeClient interface and its implementations
+    mcp/                    the MCP endpoint's protocol, tools and instructions
     namespace/              namespace settings, and what someone with limited access can reach
     office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults

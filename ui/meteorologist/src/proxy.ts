@@ -81,6 +81,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 export const config = {
   // Everything but sign-in itself, the health check, GitLab CI's
   // builds (ci/gitlab and ci/gitlab-bake, fetched by GitLab with a key;
-  // see lib/gitlab/serveBuild.ts), and Next's own files
-  matcher: ["/((?!auth/|healthz|ci/gitlab/|ci/gitlab-bake/|_next/static|_next/image|favicon.ico|icon.svg).*)"],
+  // see lib/gitlab/serveBuild.ts), the MCP endpoint (an agent's bearer
+  // token, checked by the API server; see app/mcp/route.ts), and Next's
+  // own files
+  matcher: ["/((?!auth/|healthz|ci/gitlab/|ci/gitlab-bake/|mcp$|_next/static|_next/image|favicon.ico|icon.svg).*)"],
 };
