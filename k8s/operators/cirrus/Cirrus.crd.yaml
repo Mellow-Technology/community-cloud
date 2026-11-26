@@ -72,6 +72,13 @@ spec:
                   - offering
                   type: object
                 type: array
+              detect:
+                description: |-
+                  Whether the image's technology.community-cloud.* labels may fill
+                  in what this spec leaves out: a database, a queue, a bucket, the
+                  migration command, the health check. On unless false.
+                nullable: true
+                type: boolean
               env:
                 description: |-
                   Environment variables, added after everything else, so one set
@@ -515,6 +522,49 @@ spec:
                 description: The image the Deployment runs.
                 nullable: true
                 type: string
+              detected:
+                description: What the image's labels filled in.
+                nullable: true
+                properties:
+                  applied:
+                    description: |-
+                      What they filled in that the spec left out. A service stays here
+                      once an image has asked for it, even if a later image doesn't.
+                    items:
+                      description: One thing filled in, and how it was known.
+                      properties:
+                        evidence:
+                          description: 'How it was known: "image label".'
+                          type: string
+                        field:
+                          description: |-
+                            The spec field, as it's written: postgres, rabbitmq, bucket,
+                            migrations.command, healthCheck.path.
+                          type: string
+                        image:
+                          description: The image it was first read from.
+                          type: string
+                        value:
+                          description: What it was set to, for the command and the path.
+                          nullable: true
+                          type: string
+                      required:
+                      - evidence
+                      - field
+                      - image
+                      type: object
+                    type: array
+                  image:
+                    description: 'The image the labels were read from: the one being rolled out.'
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Its technology.community-cloud.* labels, as they were.
+                    type: object
+                required:
+                - image
+                type: object
               environment:
                 description: |-
                   Which of its secrets and shared values have a value, never what

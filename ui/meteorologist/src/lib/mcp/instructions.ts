@@ -4,7 +4,7 @@
  * what an application needs from its project's files, and to write the
  * answer down as image labels so it needn't be worked out again.
  *
- * This is the agent's half of CC-56. Cirrus will read the same labels
+ * This is the agent's half of CC-56. Cirrus reads the same labels
  * from images (../webapp/labels.ts); the signals below are the ones
  * CC-56 lists for later, which an agent with the files in front of it
  * can use today.
@@ -31,7 +31,7 @@ Before creating or updating, work out what the application needs:
    - Health check: a route such as /up (Rails 7.1+), /healthz, /health or /api/health.
    - Port: EXPOSE in the Dockerfile is read by Cirrus, so only set port when there isn't one.
    - Redis has no field yet; say so if the application needs one.
-3. After creating or updating, write the returned dockerfileLabels into the project's Dockerfile, in the stage that's run (the last one), replacing any ${LABEL_PREFIX}* labels already there. That's what makes the next look quick, and what Cirrus will read.
+3. After creating or updating, write the returned dockerfileLabels into the project's Dockerfile, in the stage that's run (the last one), replacing any ${LABEL_PREFIX}* labels already there. That's what makes the next look quick, and Cirrus reads them too: once they're in the image, what they ask for is filled in where the spec says nothing (get_application shows it under detected). The spec wins, and detect: false turns them off.
 
 Environment and secrets:
 - env is for plain settings, such as LOG_LEVEL. Anyone who can see the application reads them, so never put a secret there, even one you can see in the project.

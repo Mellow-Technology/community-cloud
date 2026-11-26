@@ -4,16 +4,17 @@
  * Dockerfile lines that set them.
  *
  * They're CC-56's first step: an image saying "I use Postgres" or "run
- * this to migrate" so its WebApplication needn't. Cirrus doesn't read
- * them yet. What uses them today is an agent working over MCP (see
- * ../mcp/): it finds what an application needs by reading the
- * project's files, sets the fields, and writes these labels into the
- * Dockerfile, so the next time anything looks, the answer is already
+ * this to migrate" so its WebApplication needn't. Cirrus reads them
+ * from the image it rolls out and fills in what the spec leaves out
+ * (operators/cirrus/src/reconcile/labels.rs), recording what it filled
+ * in under status.detected. An agent working over MCP (see ../mcp/)
+ * writes them into the Dockerfile once it has read the project's
+ * files, so the next time anything looks, the answer is already
  * written down rather than worked out again.
  *
- * The names and what each means are the contract with Cirrus, which
- * will read the same labels from the image it rolls out, so they're
- * kept here once and changed only together with it:
+ * The names and what each means are the contract with Cirrus's
+ * labels.rs, so they're kept here once and changed only together with
+ * it:
  *
  * - postgres, rabbitmq, bucket: "true" is the same as the field being
  *   in the spec, asking for one with the defaults

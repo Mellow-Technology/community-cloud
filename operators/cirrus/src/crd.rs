@@ -136,6 +136,12 @@ pub struct WebApplicationSpec {
     /// Where new images come from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceSpec>,
+
+    /// Whether the image's technology.community-cloud.* labels may fill
+    /// in what this spec leaves out: a database, a queue, a bucket, the
+    /// migration command, the health check. On unless false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detect: Option<bool>,
 }
 
 fn default_replicas() -> i32 {
@@ -439,6 +445,40 @@ pub struct WebApplicationStatus {
     /// it is: for those who can read the application but not Secrets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<EnvironmentStatus>,
+    /// What the image's labels filled in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected: Option<DetectedStatus>,
+}
+
+/// What was read from an image's labels, and what it was used for.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedStatus {
+    /// The image the labels were read from: the one being rolled out.
+    pub image: String,
+    /// Its technology.community-cloud.* labels, as they were.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// What they filled in that the spec left out. A service stays here
+    /// once an image has asked for it, even if a later image doesn't.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applied: Vec<Detection>,
+}
+
+/// One thing filled in, and how it was known.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Detection {
+    /// The spec field, as it's written: postgres, rabbitmq, bucket,
+    /// migrations.command, healthCheck.path.
+    pub field: String,
+    /// What it was set to, for the command and the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// How it was known: "image label".
+    pub evidence: String,
+    /// The image it was first read from.
+    pub image: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]

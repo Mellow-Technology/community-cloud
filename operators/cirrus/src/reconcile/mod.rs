@@ -35,6 +35,7 @@ pub mod cleanup;
 pub mod config_hash;
 pub mod connections;
 pub mod environment;
+pub mod labels;
 pub mod migrations;
 pub mod network;
 pub mod pods;
@@ -63,8 +64,8 @@ use kube::runtime::watcher;
 use kube::{Client, Resource, ResourceExt};
 use serde_json::json;
 
-use crate::conditions::{self, HEALTHY, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
-use crate::crd::WebApplication;
+use crate::conditions::{self, HEALTHY, LABELS_READ, PROVISIONED, READY, RELEASE_CHECKED, ROLLED_OUT, WEBHOOK};
+use crate::crd::{DetectedStatus, WebApplication};
 use crate::error::{Error, Result};
 use crate::offerings::ServiceOffering;
 use crate::resources;
@@ -246,11 +247,66 @@ fn settle(
     }
 }
 
-async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
-    let (namespace, name) = identity(app);
-    let generation = app.metadata.generation;
-    let previous = app.status.clone().unwrap_or_default();
+async fn apply(ctx: &Context, original: &WebApplication) -> Result<Action> {
+    let (namespace, name) = identity(original);
+    let generation = original.metadata.generation;
+    let previous = original.status.clone().unwrap_or_default();
     let mut conditions = previous.conditions.clone();
+
+    // 0. Which image it's to run, and what that image's labels ask for.
+    // First, so what a new image asks for is provisioned before its
+    // migrations run (labels.rs).
+    let found = source::sync(ctx, original).await;
+    let release = found.release.clone().or(previous.release.clone());
+    let mut current = original.clone();
+    current.status.get_or_insert_with(Default::default).release = release;
+    let desired = current.desired_image();
+
+    let mut detected = previous.detected.clone();
+    let effective = if labels::enabled(original) {
+        match labels::read(ctx, original, &desired, previous.detected.as_ref()).await? {
+            Ok(read) => {
+                let asked = labels::parse(&read);
+                let earlier = previous
+                    .detected
+                    .as_ref()
+                    .map(|each| each.applied.clone())
+                    .unwrap_or_default();
+                let (effective, applied) = labels::fill(original, &desired, &asked, &earlier);
+                let (ok, message) = labels::summary(&asked, &applied);
+                let reason = if ok { "Read" } else { "UnknownLabels" };
+                conditions::set(&mut conditions, LABELS_READ, ok, reason, message, generation);
+                detected = Some(DetectedStatus {
+                    image: desired.clone(),
+                    labels: read,
+                    applied,
+                });
+                effective
+            }
+            Err(problem) => {
+                // What was filled in before stands until they can be read
+                conditions::set(&mut conditions, LABELS_READ, false, "NotRead", problem, generation);
+                let earlier = previous
+                    .detected
+                    .as_ref()
+                    .map(|each| each.applied.clone())
+                    .unwrap_or_default();
+                labels::fill(original, &desired, &labels::Asked::default(), &earlier).0
+            }
+        }
+    } else {
+        detected = None;
+        conditions::set(
+            &mut conditions,
+            LABELS_READ,
+            true,
+            "Off",
+            "spec.detect is false, so the image's labels are ignored",
+            generation,
+        );
+        original.clone()
+    };
+    let app = &effective;
 
     // 1. What it depends on
     let mut provided = Provided::default();
@@ -312,8 +368,7 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
     // says when its Service is there
     connections::ensure_offered(ctx, app).await?;
 
-    // 2. The forge
-    let found = source::sync(ctx, app).await;
+    // 2. The forge, as found above
     if app.gitlab().is_some() {
         match &found.webhook_problem {
             None => conditions::set(&mut conditions, WEBHOOK, true, "Registered", "", generation),
@@ -352,10 +407,6 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
             ),
         }
     }
-    let release = found.release.clone().or(previous.release.clone());
-    let mut current = app.clone();
-    current.status.get_or_insert_with(Default::default).release = release;
-    let desired = current.desired_image();
 
     // 3. The port, for the image about to run. The Service and the
     // route follow it, or keep the port they had while it isn't known.
@@ -539,6 +590,7 @@ async fn apply(ctx: &Context, app: &WebApplication) -> Result<Action> {
         "imagePorts": image_ports,
         // Null when it has none, so a merge patch takes away an old one
         "environment": environment_status,
+        "detected": detected,
     });
     if let Some(webhook) = &found.webhook {
         status["webhook"] = json!(webhook);

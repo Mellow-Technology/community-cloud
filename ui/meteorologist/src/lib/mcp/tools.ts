@@ -148,6 +148,8 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
       reason,
       message,
     })),
+    // What the image's labels filled in that the spec leaves out
+    detected: app.status?.detected?.applied ?? [],
     page: new URL(appHref(app), publicUrl).toString(),
     dockerfileLabels: dockerfileLabels(needsOf(spec)),
   };

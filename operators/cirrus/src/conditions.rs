@@ -16,6 +16,10 @@ pub const WEBHOOK: &str = "WebhookRegistered";
 pub const RELEASE_CHECKED: &str = "ReleaseChecked";
 // How its pods are doing, after the rollout as well as during it
 pub const HEALTHY: &str = "Healthy";
+/// Whether the image's technology.community-cloud.* labels could be
+/// read and used (reconcile/labels.rs). Not part of Ready: a label it
+/// doesn't know is worth saying, not worth stopping for.
+pub const LABELS_READ: &str = "LabelsRead";
 
 /// Set a condition in `conditions`, keeping its transition time when
 /// its status hasn't changed.

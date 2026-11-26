@@ -127,6 +127,50 @@ A new image that declares a different port is rolled out on it. The
 Service and route move to the new port with it, and other
 applications reaching it by `<app>:<port>` have to follow.
 
+### What the image asks for
+
+An image can say what it needs with labels in its Dockerfile, so its
+WebApplication needn't:
+
+```dockerfile
+LABEL technology.community-cloud.postgres="true" \
+      technology.community-cloud.migrate="[\"bin/rails\",\"db:migrate\"]" \
+      technology.community-cloud.health="/up"
+```
+
+| Label | Fills in |
+|---|---|
+| `technology.community-cloud.postgres="true"` | `postgres: {}` |
+| `technology.community-cloud.rabbitmq="true"` | `rabbitmq: {}` |
+| `technology.community-cloud.bucket="true"` | `bucket: {}` |
+| `technology.community-cloud.migrate` | `migrations.command`: a JSON array, or a string run with `/bin/sh -c` |
+| `technology.community-cloud.health` | `healthCheck.path` |
+
+Cirrus reads them from the image being rolled out, from its config in
+the registry as it reads `EXPOSE`, once per image, before anything is
+provisioned for it, so a new image's database is there before its
+migrations run (`src/reconcile/labels.rs`). Meteorologist's MCP tools
+hand an agent the same labels to write into a project's Dockerfile.
+
+- The spec wins: a field it sets is used as it is, and the label for it
+  is ignored. `detect: false` ignores every label.
+- A service an image asked for stays once a later image stops asking:
+  taking a database away is for the spec, not a side effect of editing
+  a Dockerfile. The migration command and the health check follow the
+  image.
+- What was filled in is in `status.detected.applied`, each with its
+  field, its value, `evidence: image label` and the image it came from.
+  The labels themselves are kept beside it, so the registry is asked
+  once per image.
+- `LabelsRead` says what was used. It's False with `UnknownLabels` for
+  a `technology.community-cloud.*` label it doesn't know, such as a
+  typo, or one with a value it can't use, and `NotRead` when the
+  registry couldn't be read, when what was filled in before stands.
+  Neither stops a rollout.
+
+Reading them means asking the image's registry even when `port` is set,
+with the same pull Secrets. `detect: false` skips that too.
+
 ### What the application is given
 
 - **Postgres:** the Secret `<app>-postgres`, loaded whole, with
