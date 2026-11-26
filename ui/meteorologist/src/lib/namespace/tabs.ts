@@ -8,7 +8,7 @@
  * applications list with live updates rather than a part of the
  * namespace's page.
  */
-export const NAMESPACE_TABS = ["general", "applications", "dns", "forges"] as const;
+export const NAMESPACE_TABS = ["general", "applications", "dns", "forges", "agents"] as const;
 export type NamespaceTab = (typeof NAMESPACE_TABS)[number];
 
 export const TAB_LABELS: Record<NamespaceTab, string> = {
@@ -16,6 +16,7 @@ export const TAB_LABELS: Record<NamespaceTab, string> = {
   applications: "Applications",
   dns: "DNS",
   forges: "Forges",
+  agents: "Agents",
 };
 
 // What tabs used to be called, so links made before still land

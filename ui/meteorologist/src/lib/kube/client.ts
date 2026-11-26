@@ -24,6 +24,7 @@ import type {
   ServiceAccount,
   Workload,
 } from "./types";
+import type { Agent, AgentToken } from "../agents/tokens";
 import type { ClusterUsage } from "../cluster";
 import type { DnsProvider } from "../dns/types";
 import type { ServiceOffering } from "../offerings/types";
@@ -500,6 +501,46 @@ export interface KubeClient {
    * @returns
    */
   deleteWebApplication(namespace: string, name: string): Promise<void>;
+
+  /**
+   * The namespace's agents: its ServiceAccounts labelled as one
+   * (../agents/tokens.ts).
+   *
+   * @param namespace
+   * @returns
+   */
+  listAgents(namespace: string): Promise<Agent[]>;
+
+  /**
+   * Makes an agent: its ServiceAccount, and the RoleBinding that lets
+   * it manage applications, owned by the ServiceAccount so it goes
+   * when the agent does.
+   *
+   * @param namespace
+   * @param name
+   * @param createdBy who asked, to show beside it
+   */
+  createAgent(namespace: string, name: string, createdBy: string): Promise<void>;
+
+  /**
+   * A new token for an agent, from the API server, and a note on the
+   * agent of when it expires. The token itself is kept nowhere.
+   *
+   * @param namespace
+   * @param name
+   * @param seconds how long it lasts; the API server may cap it
+   * @returns
+   */
+  requestAgentToken(namespace: string, name: string, seconds: number): Promise<AgentToken>;
+
+  /**
+   * Deletes an agent, which ends every token made for it. One already
+   * gone counts as deleted.
+   *
+   * @param namespace
+   * @param name
+   */
+  deleteAgent(namespace: string, name: string): Promise<void>;
 
   /**
    * Makes a Secret from plain strings.

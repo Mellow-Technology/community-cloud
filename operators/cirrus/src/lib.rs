@@ -12,6 +12,7 @@
 //! Split into a library so the CRD generator and the tests see the
 //! same types the operator runs with.
 
+pub mod capabilities;
 pub mod conditions;
 pub mod crd;
 pub mod dns;

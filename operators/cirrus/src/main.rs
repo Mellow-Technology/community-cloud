@@ -1,6 +1,7 @@
 //! @file
-//! Cirrus's entry point: the controllers — WebApplications and
-//! DnsProviders — and the webhook server, side by side in one process.
+//! Cirrus's entry point: the controllers — WebApplications,
+//! DnsProviders, ServiceOfferings and each namespace's capabilities —
+//! and the webhook server, side by side in one process.
 //!
 //! They share a Kubernetes client and nothing else; the webhook only
 //! writes a release into a WebApplication's status, and the controller
@@ -10,6 +11,7 @@
 
 use std::sync::Arc;
 
+use cirrus::capabilities;
 use cirrus::dns;
 use cirrus::offerings;
 use cirrus::reconcile::{self, Context};
@@ -47,7 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         result = server => result?,
         () = reconcile::run(client.clone(), settings.clone()) => {}
-        () = dns::controller::run(client.clone(), settings) => {}
+        () = dns::controller::run(client.clone(), settings.clone()) => {}
+        () = capabilities::controller::run(client.clone(), settings) => {}
         () = offerings::controller::run(client) => {}
     }
     Ok(())

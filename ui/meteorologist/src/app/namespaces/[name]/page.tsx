@@ -1,8 +1,9 @@
 /**
  * @file
  * One namespace, in tabs: General (its capabilities, its Postgres, what
- * it's using and its settings), DNS (the providers publishing it), and
- * Forges (its GitLab connections). Applications, the other tab, is a
+ * it's using and its settings), DNS (the providers publishing it),
+ * Forges (its GitLab connections), and Agents (tokens for managing its
+ * applications over MCP). Applications, the other tab, is a
  * route of its own: ./applications/page.tsx.
  */
 import type { Metadata } from "next";
@@ -13,6 +14,7 @@ import { Stat } from "gui-mellow/Stat";
 import { StatusDot } from "gui-mellow/StatusDot";
 import { Table } from "gui-mellow/Table";
 
+import { AgentTokens } from "@/components/AgentTokens";
 import { CapabilitySwitch } from "@/components/CapabilitySwitch";
 import { DetailList } from "@/components/DetailList";
 import { ErrorNotice } from "@/components/ErrorNotice";
@@ -107,6 +109,8 @@ export default async function NamespacePage({
     labelling,
     limiting,
     deploying,
+    agents,
+    binding,
   ] = await Promise.all([
     settle(() => kube.listResourceQuotas(name)),
     settle(() => kube.getLimitRange(name, SETTINGS_NAME)),
@@ -120,6 +124,8 @@ export default async function NamespacePage({
     namespacesAllowing(kube, { verb: "patch", resource: "namespaces" }, [name]),
     namespacesAllowing(kube, { verb: "patch", resource: "resourcequotas" }, [name]),
     namespacesAllowing(kube, { verb: "create", resource: PLURAL, group: GROUP }, [name]),
+    settle(() => kube.listAgents(name)),
+    namespacesAllowing(kube, { verb: "create", resource: "rolebindings", group: "rbac.authorization.k8s.io" }, [name]),
   ]);
   const canLabel = labelling.size > 0;
   // Saving the settings writes the namespace and its quota, so it
@@ -323,6 +329,20 @@ export default async function NamespacePage({
                 <ErrorNotice error={builds.error} title="Couldn't read this namespace's GitLab build settings" />
               )}
             </>
+          ),
+          agents: agents.ok ? (
+            <AgentTokens
+              namespace={name}
+              agents={agents.value}
+              canManage={binding.size > 0}
+              publicUrl={getPublicUrl()}
+            />
+          ) : isForbidden(agents.error) ? (
+            <p className={styles.empty}>
+              Agents are ServiceAccounts, and you don&apos;t have access to the ServiceAccounts in this namespace.
+            </p>
+          ) : (
+            <ErrorNotice error={agents.error} title="Couldn't list this namespace's agents" />
           ),
         }}
       />

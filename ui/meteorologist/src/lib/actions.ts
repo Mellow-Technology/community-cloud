@@ -17,6 +17,7 @@
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 
+import { TOKEN_LIFETIMES, agentNameProblem, type AgentToken } from "./agents/tokens";
 import { CAPABILITIES, capabilityLabelPatch, type CapabilityId } from "./capabilities";
 import {
   credentialsData,
@@ -49,7 +50,7 @@ import {
   normaliseUrl,
   type GitLabProject,
 } from "./gitlab/connections";
-import { getKube } from "./kube";
+import { getKube, getViewer } from "./kube";
 import { KubeError, describeError, isForbidden, settle, type KubeClient } from "./kube/client";
 import {
   CREATED_BY,
@@ -900,4 +901,69 @@ export async function revealAdminCredential(packageName: string): Promise<Action
     }
     return { ok: false, error: describeError(error) };
   }
+}
+
+/**
+ * Makes an agent for a namespace, and its first token. The token is
+ * handed back this once and kept nowhere.
+ *
+ * @param namespace
+ * @param name
+ * @param days how long the token lasts
+ * @returns
+ */
+export async function createAgent(namespace: string, name: string, days: number): Promise<ActionResult<AgentToken>> {
+  const problem = agentNameProblem(name.trim());
+  if (problem !== undefined) {
+    return { ok: false, error: problem };
+  }
+  if (!TOKEN_LIFETIMES.includes(days as (typeof TOKEN_LIFETIMES)[number])) {
+    return { ok: false, error: "Choose how long the token lasts." };
+  }
+  const result = await run(async () => {
+    const kube = await getKube();
+    const viewer = await getViewer();
+    await kube.createAgent(namespace, name.trim(), viewer?.username ?? "someone");
+    return kube.requestAgentToken(namespace, name.trim(), days * 24 * 60 * 60);
+  });
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Another token for an agent. Those made before stay good until they
+ * expire.
+ *
+ * @param namespace
+ * @param name
+ * @param days
+ * @returns
+ */
+export async function renewAgentToken(
+  namespace: string,
+  name: string,
+  days: number,
+): Promise<ActionResult<AgentToken>> {
+  if (!TOKEN_LIFETIMES.includes(days as (typeof TOKEN_LIFETIMES)[number])) {
+    return { ok: false, error: "Choose how long the token lasts." };
+  }
+  const result = await run(async () => (await getKube()).requestAgentToken(namespace, name, days * 24 * 60 * 60));
+  revalidatePath("/", "layout");
+  return result;
+}
+
+/**
+ * Deletes an agent, which ends every token it has.
+ *
+ * @param namespace
+ * @param name
+ * @returns
+ */
+export async function deleteAgent(namespace: string, name: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    await (await getKube()).deleteAgent(namespace, name);
+    return undefined;
+  });
+  revalidatePath("/", "layout");
+  return result;
 }

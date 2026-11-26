@@ -23,6 +23,7 @@ import {
   CustomObjectsApi,
   KubeConfig,
   PatchStrategy,
+  RbacAuthorizationV1Api,
   Watch,
   setHeaderOptions,
   type Cluster,
@@ -30,6 +31,14 @@ import {
 import { readFile } from "node:fs/promises";
 import "server-only";
 
+import {
+  AGENT_LABEL,
+  AGENT_ROLE,
+  CREATED_BY_ANNOTATION,
+  EXPIRES_ANNOTATION,
+  bindingName,
+  type Agent,
+} from "../agents/tokens";
 import { getApiServerOverride, getDevKubeconfig, getNamespaceListerTokenFile, hasDevKubeconfig } from "../config";
 import type { ClusterUsage, KubeletNodeSummary } from "../cluster";
 import { DNS_PLURAL, type DnsProvider } from "../dns/types";
@@ -279,6 +288,7 @@ function clientFor(config: KubeConfig): KubeClient {
   const custom = config.makeApiClient(CustomObjectsApi);
   const authentication = config.makeApiClient(AuthenticationV1Api);
   const authorization = config.makeApiClient(AuthorizationV1Api);
+  const rbac = config.makeApiClient(RbacAuthorizationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
   const buckets = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: BUCKET_PLURAL };
   const identities = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3identities" };
@@ -773,6 +783,86 @@ function clientFor(config: KubeConfig): KubeClient {
     deleteWebApplication: (namespace, name) =>
       attempt(async () => {
         await optional(() => custom.deleteNamespacedCustomObject({ ...webapps, namespace, name }));
+      }),
+
+    listAgents: (namespace) =>
+      attempt(async () =>
+        (await core.listNamespacedServiceAccount({ namespace, labelSelector: `${AGENT_LABEL}=true` })).items.map(
+          (account): Agent => ({
+            name: account.metadata?.name ?? "",
+            createdAt: account.metadata?.creationTimestamp?.toISOString(),
+            createdBy: account.metadata?.annotations?.[CREATED_BY_ANNOTATION],
+            tokenExpires: account.metadata?.annotations?.[EXPIRES_ANNOTATION],
+          }),
+        ),
+      ),
+
+    createAgent: (namespace, name, createdBy) =>
+      attempt(async () => {
+        const account = await core.createNamespacedServiceAccount({
+          namespace,
+          body: {
+            metadata: {
+              name,
+              labels: { [AGENT_LABEL]: "true", "app.kubernetes.io/managed-by": "meteorologist" },
+              annotations: { [CREATED_BY_ANNOTATION]: createdBy },
+            },
+            // Its token is for the API, not for mounting into pods
+            automountServiceAccountToken: false,
+          },
+        });
+        try {
+          await rbac.createNamespacedRoleBinding({
+            namespace,
+            body: {
+              metadata: {
+                name: bindingName(name),
+                labels: { [AGENT_LABEL]: "true" },
+                ownerReferences: [{ apiVersion: "v1", kind: "ServiceAccount", name, uid: account.metadata?.uid ?? "" }],
+              },
+              roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: AGENT_ROLE },
+              subjects: [{ kind: "ServiceAccount", name, namespace }],
+            },
+          });
+        } catch (error) {
+          // Not left behind as an agent that can do nothing
+          await optional(() => core.deleteNamespacedServiceAccount({ name, namespace }));
+          throw error;
+        }
+      }),
+
+    requestAgentToken: (namespace, name, seconds) =>
+      attempt(async () => {
+        const account = await core.readNamespacedServiceAccount({ name, namespace });
+        if (account.metadata?.labels?.[AGENT_LABEL] !== "true") {
+          throw new KubeError(404, `${name} isn't an agent in ${namespace}.`, "NotFound");
+        }
+        const request = await core.createNamespacedServiceAccountToken({
+          name,
+          namespace,
+          body: { spec: { audiences: [], expirationSeconds: seconds } },
+        });
+        const token = request.status?.token;
+        const expires = request.status?.expirationTimestamp;
+        if (!token || expires === undefined) {
+          throw new KubeError(500, "The API server didn't give a token.");
+        }
+        const expiresAt = new Date(expires).toISOString();
+        await core.patchNamespacedServiceAccount(
+          { name, namespace, body: { metadata: { annotations: { [EXPIRES_ANNOTATION]: expiresAt } } } },
+          merge,
+        );
+        return { token, expiresAt };
+      }),
+
+    deleteAgent: (namespace, name) =>
+      attempt(async () => {
+        const account = await optional(() => core.readNamespacedServiceAccount({ name, namespace }));
+        if (account === undefined) return;
+        if (account.metadata?.labels?.[AGENT_LABEL] !== "true") {
+          throw new KubeError(404, `${name} isn't an agent in ${namespace}.`, "NotFound");
+        }
+        await optional(() => core.deleteNamespacedServiceAccount({ name, namespace }));
       }),
 
     createSecret: (namespace, name, data, labels, type = "Opaque", annotations) =>
