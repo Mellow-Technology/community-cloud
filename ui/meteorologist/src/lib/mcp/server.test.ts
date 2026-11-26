@@ -327,3 +327,11 @@ describe("migrations", () => {
     );
   });
 });
+
+test("volumes are explained: one node, how rollouts change, and what ram is", async () => {
+  const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+  const instructions = (answer?.result as { instructions: string }).instructions;
+  expect(instructions).toContain("How volumes work");
+  expect(instructions).toContain("stopping the old copies before starting the new");
+  expect(instructions).toContain("Migrations don't mount volumes");
+});

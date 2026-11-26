@@ -41,6 +41,16 @@ How migrations run:
 - It's retried once, and fails after timeoutSeconds (30 minutes unless said).
 - A failed migration leaves the old version running and isn't rerun for that image. Fix it and roll out a new image, or have a person delete the Job to run it again. You can't read its logs: give the person the Job's name, which wait_for_rollout and get_application report.
 
+How volumes work:
+- Prefer the services: a database for data, a bucket for uploads and files. A volume is for what has to be a filesystem, such as SQLite, a search index or a cache.
+- A disk volume (fast, the default, on NVMe; sata; hdd) is a claim of its own, <application>-<name>, on storage local to one node. It's made on the node the first pod lands on, and every copy of the application shares it and runs on that node, so more replicas don't spread across nodes.
+- An application with a disk volume is rolled out by stopping the old copies before starting the new, so there's a moment with nothing serving.
+- A storage type needs a node with those disks, not only its StorageClass: one no node has waits forever. get_capabilities says which StorageClasses exist; fast is the safe choice.
+- ram is a RAM disk: each pod's own, emptied whenever the pod restarts, and counted against its memory (Cirrus adds its size to the memory request and limit). For caches and scratch space, never for anything to keep.
+- Migrations don't mount volumes, since the Job may run on another node while the old version is still up. An application that keeps its database on a volume, such as SQLite, has to migrate when it starts instead.
+- A volume is kept when the application is deleted, and picked up again by one made with the same name and volume. It can grow but not shrink, and its type can't change; from here, volumes are only added, and a person changes them in Meteorologist.
+- Sizes count against the namespace's storage quota; ask for what's needed, such as 1Gi or 10Gi.
+
 To see a change through, pass wait: true to create_application or update_application, or call wait_for_rollout: it answers once the application is healthy or has failed, saying what Cirrus is doing as it goes. If the time runs out, it's still going; call wait_for_rollout again. A failure's message says why, such as a migration that exited with an error.
 
 Cirrus sets the variables for what it provides: DATABASE_URL and PG*, AMQP_URL and RABBITMQ_*, S3_* and AWS_*. Point the application at those rather than setting them by hand, and never put secrets in env.

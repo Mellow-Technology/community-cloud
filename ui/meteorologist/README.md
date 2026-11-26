@@ -338,7 +338,11 @@ agent setting `migrations` needs to know: a Job with the new image
 before it's rolled out, `command` with no shell, once per image (so
 it must be safe to run twice), one at a time, retried once with a
 30-minute default timeout, and a failure leaving the old version
-serving with the Job's name to hand to a person.
+serving with the Job's name to hand to a person. And how volumes
+work: local to one node and shared by every copy, rollouts that stop
+the old copies first, storage types needing a node with those disks,
+RAM disks emptied on restart and counted as memory, migrations not
+mounting them, and kept when the application is deleted.
 
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the

@@ -207,7 +207,7 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   volumes: {
     type: "array",
     description:
-      "Volumes to add, kept across restarts. Existing ones can't be changed or removed from here. type is fast (NVMe, the default), sata, hdd or ram.",
+      "Volumes to add. A disk volume (fast, the default, on NVMe; sata; hdd) is one claim on one node, shared by every copy, which ties the application to that node and makes rollouts stop the old copies before starting the new. ram is a RAM disk per pod, emptied on restart, counted as memory. Migrations don't mount volumes. Existing ones can't be changed or removed from here. See the server's instructions on volumes.",
     items: {
       type: "object",
       properties: {
