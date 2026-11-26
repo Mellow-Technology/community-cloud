@@ -299,3 +299,31 @@ describe("what the namespace can have", () => {
     expect((answer?.result as { isError?: boolean }).isError).toBeUndefined();
   });
 });
+
+describe("migrations", () => {
+  test("are explained: no shell, once per image, and what a failure leaves", async () => {
+    const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+    const instructions = (answer?.result as { instructions: string }).instructions;
+    expect(instructions).toContain("runs without a shell");
+    expect(instructions).toContain("safe to run twice");
+    expect(instructions).toContain("leaves the old version running");
+  });
+
+  test("name their Job on the application", async () => {
+    const kube = fixtureClient();
+    const shop = await kube.getWebApplication("team-shop", "shop");
+    const answer = await handleMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_application", arguments: { name: "shop" } } },
+      async () => ({
+        ...(await context()),
+        kube: {
+          ...kube,
+          getWebApplication: async () => ({ ...shop, status: { ...shop.status, migrationJob: "shop-migrate-abc" } }),
+        },
+      }),
+    );
+    expect((answer?.result as { structuredContent: { migrationJob?: string } }).structuredContent.migrationJob).toBe(
+      "shop-migrate-abc",
+    );
+  });
+});

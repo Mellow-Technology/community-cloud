@@ -333,6 +333,13 @@ manage one namespace's applications. It has six tools (in
   the watch (`src/lib/mcp/rollout.ts`). When the time runs out it isn't
   an answer either way, and the agent is told to call it again.
 
+The instructions also explain how Cirrus runs migrations, since an
+agent setting `migrations` needs to know: a Job with the new image
+before it's rolled out, `command` with no shell, once per image (so
+it must be safe to run twice), one at a time, retried once with a
+30-minute default timeout, and a failure leaving the old version
+serving with the Job's name to hand to a person.
+
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the
 same validation applies, nothing the agent doesn't mention is lost, and

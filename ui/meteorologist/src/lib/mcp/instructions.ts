@@ -33,6 +33,14 @@ Before creating or updating, work out what the application needs:
    - Redis has no field yet; say so if the application needs one.
 3. After creating or updating, write the returned dockerfileLabels into the project's Dockerfile, in the stage that's run (the last one), replacing any ${LABEL_PREFIX}* labels already there. That's what makes the next look quick, and what Cirrus will read.
 
+How migrations run:
+- A Job with the new image and the application's environment (DATABASE_URL, PG* and the rest), on the first deploy and on each new image after. The Deployment is given the image only once the Job succeeds, and the old version serves until then.
+- command replaces the image's entrypoint and runs without a shell: ["bin/rails", "db:migrate"], not ["bin/rails db:migrate"]. For &&, pipes or $VARIABLES, use ["/bin/sh", "-c", "..."]. The ${LABEL_PREFIX}migrate label takes either form; a plain string there is run with /bin/sh -c.
+- Once per image: applying the same image again doesn't rerun it, but going back to an earlier image does, so it must be safe to run twice (the frameworks' own migrate commands are). It must also leave the schema usable by the image still serving.
+- One at a time: an image arriving while another's migration runs waits for it to finish.
+- It's retried once, and fails after timeoutSeconds (30 minutes unless said).
+- A failed migration leaves the old version running and isn't rerun for that image. Fix it and roll out a new image, or have a person delete the Job to run it again. You can't read its logs: give the person the Job's name, which wait_for_rollout and get_application report.
+
 To see a change through, pass wait: true to create_application or update_application, or call wait_for_rollout: it answers once the application is healthy or has failed, saying what Cirrus is doing as it goes. If the time runs out, it's still going; call wait_for_rollout again. A failure's message says why, such as a migration that exited with an error.
 
 Cirrus sets the variables for what it provides: DATABASE_URL and PG*, AMQP_URL and RABBITMQ_*, S3_* and AWS_*. Point the application at those rather than setting them by hand, and never put secrets in env.

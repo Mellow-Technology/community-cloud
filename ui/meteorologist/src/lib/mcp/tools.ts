@@ -112,6 +112,9 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
     volumes: spec.volumes ?? [],
     connections: spec.connections ?? [],
     migrations: spec.migrations,
+    // The newest image's migration Job, kept until the next image's
+    // starts, so a person can be told where its logs are
+    migrationJob: app.status?.migrationJob,
     env: (spec.env ?? []).map((variable) =>
       variable.valueFrom === undefined
         ? { name: variable.name, value: variable.value ?? "" }
@@ -178,11 +181,20 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   migrations: {
     type: ["object", "null"],
     description:
-      "A command run with each new image before it's rolled out, such as rails db:migrate. It must leave the schema usable by the image still running. null stops running one.",
+      "A command run as a Job with each new image, the first one included, before the image is rolled out; the old version keeps serving until it succeeds. It runs once per image, so it must be safe to run again, and must leave the schema usable by the image still running. null stops running one. See the server's instructions on migrations.",
     properties: {
-      command: { type: "array", items: { type: "string" } },
+      command: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          'Replaces the image\'s entrypoint and runs without a shell: ["bin/rails", "db:migrate"], not ["bin/rails db:migrate"]. For &&, pipes or $VARIABLES, use ["/bin/sh", "-c", "..."].',
+      },
       args: { type: "array", items: { type: "string" } },
-      timeoutSeconds: { type: "integer", minimum: 1 },
+      timeoutSeconds: {
+        type: "integer",
+        minimum: 1,
+        description: "How long it may run before it counts as failed: 1800 (30 minutes) unless said.",
+      },
     },
     required: ["command"],
   },
@@ -342,7 +354,7 @@ function rolloutSummary(outcome: RolloutOutcome): Record<string, unknown> {
     next = "It's still going. Call wait_for_rollout to keep waiting.";
   } else if (!outcome.ok && outcome.health.state === "failing") {
     next = migrationJob
-      ? `Its migration Job is ${migrationJob}; a person can read its logs. Fix it and update the image to try again.`
+      ? `Its migration Job is ${migrationJob}, and it won't run again for this image. A person can read its logs, or delete it to run it again; or fix it and roll out a new image.`
       : "Fix what the message says, then update the application to try again.";
   }
   return {
