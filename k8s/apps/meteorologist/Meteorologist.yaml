@@ -111,6 +111,22 @@ spec:
     spec:
       serviceAccountName: meteorologist
       automountServiceAccountToken: false
+      # Beside an API server. Every page is several rounds of requests
+      # to it, each a round trip, and between Prime's locations that's
+      # a quarter of a second or more apiece. On a control-plane node,
+      # with KUBE_API_SERVER the node's own address below, it's none.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+      # K3s doesn't taint its servers, but a cluster set up otherwise may
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         # The image's "node" user. By name, the kubelet couldn't tell
@@ -152,10 +168,18 @@ spec:
                 secretKeyRef:
                   name: meteorologist-session
                   key: password
-            # The in-cluster address, with the CA mounted below in place
-            # of the ServiceAccount's
+            # The API server on this same node: it runs on a control-plane
+            # node (the affinity above), and every K3s server serves the
+            # API on its own address. The kubernetes Service could send a
+            # request to another server, a location away, once there's
+            # more than one. The server's certificate names the node's
+            # address, checked with the CA mounted below.
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
             - name: KUBE_API_SERVER
-              value: https://kubernetes.default.svc
+              value: https://$(NODE_IP):6443
             - name: KUBE_CA_FILE
               value: /etc/meteorologist/kube-ca/ca.crt
             - name: METEOROLOGIST_NAMESPACE_LISTER_TOKEN_FILE

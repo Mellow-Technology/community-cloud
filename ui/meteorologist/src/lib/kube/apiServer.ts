@@ -23,12 +23,15 @@ import {
   CustomObjectsApi,
   KubeConfig,
   PatchStrategy,
+  type RequestContext,
   RbacAuthorizationV1Api,
   Watch,
   setHeaderOptions,
   type Cluster,
 } from "@kubernetes/client-node";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { Agent as UndiciAgent } from "undici";
 import "server-only";
 
 import {
@@ -131,14 +134,68 @@ function getCluster(): Cluster {
   return cluster;
 }
 
+// How long an idle connection to the API server is kept for the next
+// request. Undici's own default is four seconds, which a person reading
+// a page outlasts; the API server keeps them for longer than this.
+const KEEP_ALIVE_MS = 60_000;
+const KEEP_ALIVE_MAX_MS = 10 * 60_000;
+
+let pool: { server: string; agent: UndiciAgent } | undefined;
+
 /**
- * A KubeConfig that makes requests with a bearer token.
+ * The connections to the API server every token's requests share.
+ *
+ * The client library makes a new connection pool for each request, so
+ * without this every call opened a connection of its own and paid a TLS
+ * handshake, a few round trips to the API server, before the request
+ * itself. Sharing them is safe because a token goes in each request's
+ * Authorization header, not in the connection: a connection is no one's
+ * in particular. Only tokens use it; a kubeconfig's client certificate
+ * is part of the connection, so those keep the library's own.
+ *
+ * @returns
+ */
+function sharedPool(): UndiciAgent {
+  const { server, caFile, skipTLSVerify } = getCluster();
+  if (pool?.server !== server) {
+    void pool?.agent.close();
+    pool = {
+      server,
+      agent: new UndiciAgent({
+        keepAliveTimeout: KEEP_ALIVE_MS,
+        keepAliveMaxTimeout: KEEP_ALIVE_MAX_MS,
+        connect: {
+          ca: caFile === undefined ? undefined : readFileSync(caFile),
+          rejectUnauthorized: skipTLSVerify !== true,
+          // As the library does: probes before a load balancer drops it
+          keepAlive: true,
+          keepAliveInitialDelay: 30_000,
+        },
+      }),
+    };
+  }
+  return pool.agent;
+}
+
+/**
+ * A KubeConfig whose requests go over the shared connections.
+ */
+class PooledKubeConfig extends KubeConfig {
+  override async applySecurityAuthentication(context: RequestContext): Promise<void> {
+    await super.applySecurityAuthentication(context);
+    context.setDispatcher(sharedPool());
+  }
+}
+
+/**
+ * A KubeConfig that makes requests with a bearer token, over the shared
+ * connections.
  *
  * @param token
  * @returns
  */
 function configForToken(token: string): KubeConfig {
-  const config = new KubeConfig();
+  const config = new PooledKubeConfig();
   config.loadFromClusterAndUser(getCluster(), { name: "user", token });
   return config;
 }

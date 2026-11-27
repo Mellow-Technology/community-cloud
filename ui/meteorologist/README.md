@@ -180,6 +180,26 @@ implementations:
 
 To change how the API is reached, you only touch those files.
 
+Every page is a few rounds of requests to the API server, so how far
+away it is decides how fast Meteorologist feels. Two things keep that
+short:
+
+- **It runs beside an API server.** The Deployment requires a
+  control-plane node, and `KUBE_API_SERVER` is that node's own address
+  (`https://$(NODE_IP):6443`, from `status.hostIP`), which K3s's
+  certificate names. The `kubernetes` Service could send a request to
+  another server in another location once there's more than one. On
+  Prime, where nodes are a quarter of a second apart, each request
+  from another node waited that long.
+- **Connections are kept and shared.** `@kubernetes/client-node` makes
+  a new connection pool for every request, so each call opened a
+  connection and paid a TLS handshake first. Requests made with a
+  token use one pool instead (`sharedPool` in `apiServer.ts`), with
+  idle connections kept for a minute. That's safe because the token is
+  in each request's `Authorization` header, not the connection. A
+  development kubeconfig's client certificate is part of the
+  connection, so it keeps the library's own.
+
 ### Signing in (the default, `METEOROLOGIST_KUBE_MODE=user`)
 
 1. People sign in through Authentik with OpenID Connect, using the
