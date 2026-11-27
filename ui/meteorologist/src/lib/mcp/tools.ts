@@ -4,14 +4,15 @@
  *
  * Each runs as the agent's token, in the one namespace that token
  * belongs to, so RBAC decides what it may do; the namespace is never
- * an argument. There are six for now: what the namespace can have
+ * an argument. For applications: what the namespace can have
  * (./capabilities.ts), list and get, which an edit needs, create and
  * update, and waiting for a rollout, which create and update can also
  * do before they answer (./rollout.ts). What Cirrus says isn't
  * available is left out of create and update, and refused if asked
- * for anyway. Deleting
- * is a person's to do in Meteorologist, and so are hostnames (see
- * ./changes.ts for what else is held back, and why).
+ * for anyway. For offerings of Services that aren't applications: get,
+ * create and update (./offerings.ts). Deleting either is a person's
+ * to do in Meteorologist, and so are hostnames (see ./changes.ts and
+ * ./offerings.ts for what else is held back, and why).
  *
  * Every answer about an application carries the Dockerfile LABEL for
  * what it needs (../webapp/labels.ts), for the agent to write into
@@ -23,10 +24,17 @@ import { emptyForm, fromForm, toForm } from "../webapp/form";
 import { appHealth } from "../webapp/health";
 import { dockerfileLabels, needsOf } from "../webapp/labels";
 import { appHref, specImage } from "../webapp/present";
-import { PROTOCOLS } from "../offerings/types";
+import { PROTOCOLS, type ServiceOffering } from "../offerings/types";
 import type { WebApplication } from "../webapp/types";
 import { availableProperties, readCapabilities, unavailable, type Capabilities } from "./capabilities";
 import { applyChanges, type ApplicationChanges } from "./changes";
+import {
+  OFFERING_FIELDS,
+  applyOfferingChanges,
+  describeOffering,
+  owningApplication,
+  type OfferingChanges,
+} from "./offerings";
 import { DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS, describeState, waitForRollout, type RolloutOutcome } from "./rollout";
 
 /**
@@ -451,6 +459,70 @@ function rolloutSummary(outcome: RolloutOutcome): Record<string, unknown> {
   };
 }
 
+// An offering's fields, as JSON Schema
+const OFFERING_PROPERTIES: Record<string, unknown> = {
+  title: { type: "string", description: 'What it is, in a few words: "Product search".' },
+  description: {
+    type: "string",
+    description:
+      "What it does and how to use it, for whoever chooses what to connect to: its endpoints, and how it's authenticated.",
+  },
+  protocol: { type: "string", enum: [...PROTOCOLS], description: "Decides the URL's scheme; http unless said." },
+  service: {
+    type: "object",
+    description: "The Service in this namespace it's for.",
+    properties: {
+      name: { type: "string" },
+      port: {
+        type: ["string", "integer"],
+        description: "One of its ports, by name or number. Left out, its only port, or the one named http.",
+      },
+    },
+    required: ["name"],
+  },
+  path: { type: ["string", "null"], description: "Added to the URL: a path, a database, a vhost. null removes it." },
+  values: {
+    type: "object",
+    description:
+      'More that every connection is given, by name: { region: "sea" } becomes <NAME>_REGION. Never secrets: anyone who can see the offering reads them. null removes one.',
+    additionalProperties: { type: ["string", "null"] },
+  },
+};
+
+/**
+ * The changes in an offering tool's arguments, or why they can't be
+ * made: anything but the fields, shareWith and secret above all.
+ *
+ * @param args
+ * @returns
+ */
+function offeringChangesFrom(args: Record<string, unknown>): OfferingChanges | string {
+  const { name: _name, ...changes } = args;
+  const held = ["shareWith", "secret"].filter((field) => field in changes);
+  if (held.length > 0) {
+    return `${held.join(" and ")} can't be set from here: sharing an offering with other namespaces, and handing connections a Secret's keys, are a person's to decide, in Meteorologist.`;
+  }
+  const unknown = Object.keys(changes).filter((field) => !(OFFERING_FIELDS as readonly string[]).includes(field));
+  if (unknown.length > 0) return `${unknown.join(", ")} can't be set on an offering.`;
+  return changes as OfferingChanges;
+}
+
+/**
+ * Reads an offering, or nothing when there's no such thing.
+ *
+ * @param context
+ * @param name
+ * @returns
+ */
+async function findOffering(context: ToolContext, name: string): Promise<ServiceOffering | undefined> {
+  try {
+    return await context.kube.getServiceOffering(context.namespace, name);
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  }
+}
+
 // How many times an update starts again when someone else wrote the
 // application between its read and its write
 const UPDATE_ATTEMPTS = 3;
@@ -642,6 +714,88 @@ export const TOOLS: Tool[] = [
       if (current === undefined) return refusal(`There's no application called ${name} in ${context.namespace}.`);
       const outcome = await waitFor(context, name, waitSeconds(args), current.metadata.generation);
       return answer({ rollout: rolloutSummary(outcome), ...describeApplication(outcome.app, context.publicUrl) });
+    },
+  },
+  {
+    name: "get_offering",
+    title: "Get an offering",
+    description:
+      "One ServiceOffering in this namespace: what it is, its Service, whether it's ready, the variables a connection to it gets, and what's connected.",
+    inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    run: async (context, args) => {
+      const name = nameFrom(args);
+      if (name === undefined) return refusal("Say which offering, by name.");
+      const offering = await findOffering(context, name);
+      return offering === undefined
+        ? refusal(`There's no offering called ${name} in ${context.namespace}.`)
+        : answer(describeOffering(offering));
+    },
+  },
+  {
+    name: "create_offering",
+    title: "Create an offering",
+    description:
+      "Offers a Service in this namespace that isn't an application's, such as something deployed another way, so applications here connect to it by name. For an application, use offers on create_application or update_application instead. It's offered to this namespace; a person shares it with others.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description:
+            "Lower-case letters, digits and hyphens. Connections' variables start with it: search gives SEARCH_URL.",
+        },
+        ...OFFERING_PROPERTIES,
+      },
+      required: ["name", "title", "service"],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: async (context, args) => {
+      const name = nameFrom(args);
+      if (name === undefined) return refusal("Give the offering a name.");
+      const changes = offeringChangesFrom(args);
+      if (typeof changes === "string") return refusal(changes);
+      const { offering, problems } = applyOfferingChanges(undefined, context.namespace, name, changes);
+      if (problems.length > 0) return refusal(`Nothing was made:\n- ${problems.join("\n- ")}`);
+      const created = await context.kube.createServiceOffering(offering);
+      return answer({ created: true, ...describeOffering(created) });
+    },
+  },
+  {
+    name: "update_offering",
+    title: "Update an offering",
+    description:
+      "Changes the fields given of an offering made for a Service, and only those. An application's own offering is changed through offers on update_application. shareWith and secret stay as a person set them.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" }, ...OFFERING_PROPERTIES },
+      required: ["name"],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async (context, args) => {
+      const name = nameFrom(args);
+      if (name === undefined) return refusal("Say which offering, by name.");
+      const changes = offeringChangesFrom(args);
+      if (typeof changes === "string") return refusal(changes);
+      for (let attempt = 1; ; attempt += 1) {
+        const current = await findOffering(context, name);
+        if (current === undefined) return refusal(`There's no offering called ${name} in ${context.namespace}.`);
+        const owner = owningApplication(current);
+        if (owner !== undefined) {
+          return refusal(
+            `${name} is the application ${owner}'s own offering: change it through offers on update_application.`,
+          );
+        }
+        const { offering, problems } = applyOfferingChanges(current, context.namespace, name, changes);
+        if (problems.length > 0) return refusal(`Nothing was changed:\n- ${problems.join("\n- ")}`);
+        try {
+          const saved = await context.kube.replaceServiceOffering(offering);
+          return answer({ updated: true, ...describeOffering(saved) });
+        } catch (error) {
+          const conflict = error instanceof KubeError && error.status === 409;
+          if (!conflict || attempt >= UPDATE_ATTEMPTS) throw error;
+        }
+      }
     },
   },
 ];

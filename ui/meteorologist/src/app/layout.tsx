@@ -17,6 +17,7 @@ import { SiteHeader } from "gui-mellow/SiteHeader";
 import { ThemeScript, ThemeToggle } from "gui-mellow/ThemeToggle";
 import "gui-mellow/styles.scss";
 
+import { CloudsBackground } from "@/components/CloudsBackground";
 import { ViewerMenu } from "@/components/ViewerMenu";
 import { WeathervaneMark } from "@/components/WeathervaneMark";
 import { getViewer } from "@/lib/kube";
@@ -55,35 +56,38 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ThemeScript />
       </head>
       <body>
-        {viewer && viewer.mode !== "user" && (
-          <Announcement label={viewer.mode === "fixtures" ? "Fixtures" : "Development"}>
-            {DEV_NOTICES[viewer.mode]}
-          </Announcement>
-        )}
-        <SiteHeader
-          brand={
-            <Link href="/" className={styles.brand}>
-              <WeathervaneMark />
-              Meteorologist
-            </Link>
-          }
-          items={[
-            { href: "/", label: "Overview" },
-            { href: "/namespaces", label: "Namespaces" },
-            { href: "/apps", label: "Applications" },
-            { href: "/storage", label: "Storage" },
-            { href: "/office", label: "Office" },
-          ]}
-          actions={
-            <>
-              {viewer && <ViewerMenu viewer={viewer} />}
-              <ThemeToggle />
-            </>
-          }
-        />
-        <Container as="main" className={styles.main}>
-          {children}
-        </Container>
+        <div className={styles.page}>
+          <CloudsBackground />
+          {viewer && viewer.mode !== "user" && (
+            <Announcement label={viewer.mode === "fixtures" ? "Fixtures" : "Development"}>
+              {DEV_NOTICES[viewer.mode]}
+            </Announcement>
+          )}
+          <SiteHeader
+            brand={
+              <Link href="/" className={styles.brand}>
+                <WeathervaneMark />
+                Meteorologist
+              </Link>
+            }
+            items={[
+              { href: "/", label: "Overview" },
+              { href: "/namespaces", label: "Namespaces" },
+              { href: "/apps", label: "Applications" },
+              { href: "/storage", label: "Storage" },
+              { href: "/office", label: "Office" },
+            ]}
+            actions={
+              <>
+                {viewer && <ViewerMenu viewer={viewer} />}
+                <ThemeToggle />
+              </>
+            }
+          />
+          <Container as="main" className={styles.main}>
+            {children}
+          </Container>
+        </div>
       </body>
     </html>
   );

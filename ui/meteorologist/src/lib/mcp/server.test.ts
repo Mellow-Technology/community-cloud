@@ -67,6 +67,9 @@ describe("the protocol", () => {
       "create_application",
       "update_application",
       "wait_for_rollout",
+      "get_offering",
+      "create_offering",
+      "update_offering",
     ]);
   });
 
@@ -486,5 +489,105 @@ test("connections are explained: the variables, credentials, and offering itself
   const instructions = (answer?.result as { instructions: string }).instructions;
   expect(instructions).toContain("How connections work");
   expect(instructions).toContain("<NAME>_URL");
-  expect(instructions).toContain("offers makes the application an offering");
+  expect(instructions).toContain("An application offers itself through offers");
+});
+
+describe("offerings of Services that aren't applications", () => {
+  test("an agent offers one to its namespace, and is told what connecting gives", async () => {
+    const result = await call("create_offering", {
+      name: "search",
+      title: "Product search",
+      description: "Full-text search. POST /query.",
+      service: { name: "search", port: 8080 },
+      path: "/v1",
+      values: { region: "sea" },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      created: true,
+      service: { name: "search", port: "8080" },
+      ready: false,
+      variables: ["SEARCH_HOST", "SEARCH_PORT", "SEARCH_URL", "SEARCH_TYPE", "SEARCH_REGION"],
+    });
+    const made = await fixtureClient().getServiceOffering("team-shop", "search");
+    expect(made.spec.shareWith).toBeUndefined();
+  });
+
+  test("but not shared with other namespaces, nor given a Secret", async () => {
+    for (const held of [{ shareWith: ["sandbox"] }, { secret: "search-api" }]) {
+      const result = await call("create_offering", {
+        name: "search",
+        title: "Search",
+        service: { name: "search" },
+        ...held,
+      });
+      expect(result.content[0]?.text).toContain("a person's to decide");
+    }
+  });
+
+  test("refuses what isn't valid, and makes nothing", async () => {
+    const result = await call("create_offering", {
+      name: "Search!",
+      title: "",
+      service: { name: "search" },
+      path: "v1",
+      values: { host: "x" },
+    });
+    expect(result.isError).toBe(true);
+    for (const problem of ["name:", "title:", "path:", "values.host"]) {
+      expect(result.content[0]?.text).toContain(problem);
+    }
+  });
+
+  test("updates only what's asked, keeping a person's shareWith and secret", async () => {
+    const kube = fixtureClient();
+    await call("create_offering", { name: "search", title: "Search", service: { name: "search" } });
+    const made = await kube.getServiceOffering("team-shop", "search");
+    await kube.replaceServiceOffering({
+      ...made,
+      spec: { ...made.spec, shareWith: ["sandbox"], secret: "search-api" },
+    });
+    const result = await call("update_offering", { name: "search", description: "Now documented.", path: null });
+    expect(result.isError).toBeUndefined();
+    expect((await kube.getServiceOffering("team-shop", "search")).spec).toMatchObject({
+      title: "Search",
+      description: "Now documented.",
+      shareWith: ["sandbox"],
+      secret: "search-api",
+    });
+  });
+
+  test("an application's own offering is changed through the application", async () => {
+    await call("create_offering", { name: "owned", title: "Owned", service: { name: "owned" } });
+    // As Cirrus makes one for an application's offers
+    const store = (
+      globalThis as {
+        __meteorologistFixtures?: { offerings: Array<{ metadata: { name: string; ownerReferences?: unknown } }> };
+      }
+    ).__meteorologistFixtures;
+    const entry = store?.offerings.find((each) => each.metadata.name === "owned");
+    if (entry) entry.metadata.ownerReferences = [{ kind: "WebApplication", name: "shop" }];
+    const result = await call("update_offering", { name: "owned", title: "Renamed" });
+    expect(result.content[0]?.text).toContain("change it through offers on update_application");
+  });
+
+  test("get_offering shows what connecting gives and who's connected", async () => {
+    const result = await call("get_offering", { name: "nope" });
+    expect(result.isError).toBe(true);
+  });
+});
+
+test("offering a service is explained, with both ways and what's a person's", async () => {
+  const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+  const instructions = (answer?.result as { instructions: string }).instructions;
+  // Its examples are JSON an agent can send as they are
+  const offers = instructions.match(/(\{ "offers".*?\} \})\./)?.[1];
+  const standalone = instructions.match(/create_offering: (\{ "name".*?"path": "\/v1" \})/)?.[1];
+  for (const example of [offers, standalone]) {
+    expect(example).toBeDefined();
+    expect(() => JSON.parse(example!)).not.toThrow();
+  }
+  expect(instructions).toContain("How to offer a service");
+  expect(instructions).toContain("create_offering");
+  expect(instructions).toContain("shareWith");
 });

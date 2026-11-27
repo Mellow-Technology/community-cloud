@@ -1212,6 +1212,18 @@ export function limitedToNamespaces(client: KubeClient, allowed: string[]): Kube
     },
     listBuckets: scoped("buckets", client.listBuckets),
     listServiceOfferings: scoped("serviceofferings", client.listServiceOfferings),
+    getServiceOffering: async (namespace, name) => {
+      within("serviceofferings", namespace);
+      return client.getServiceOffering(namespace, name);
+    },
+    createServiceOffering: async (offering) => {
+      within("serviceofferings", offering.metadata.namespace);
+      return client.createServiceOffering(offering);
+    },
+    replaceServiceOffering: async (offering) => {
+      within("serviceofferings", offering.metadata.namespace);
+      return client.replaceServiceOffering(offering);
+    },
     getBucket: async (namespace, name) => {
       within("buckets", namespace);
       return client.getBucket(namespace, name);
@@ -1307,6 +1319,68 @@ export function fixtureClient(): KubeClient {
 
     listServiceOfferings: async (namespace) =>
       copy(store().offerings.filter((each) => namespace === undefined || each.metadata.namespace === namespace)),
+
+    getServiceOffering: async (namespace, name) => {
+      const found = store().offerings.find(
+        (each) => each.metadata.namespace === namespace && each.metadata.name === name,
+      );
+      if (found === undefined) {
+        throw new KubeError(404, `serviceofferings "${name}" not found`, "NotFound");
+      }
+      return copy(found);
+    },
+
+    createServiceOffering: async (offering) => {
+      const namespace = offering.metadata.namespace ?? "";
+      requireNamespace(namespace);
+      if (
+        store().offerings.some(
+          (each) => each.metadata.namespace === namespace && each.metadata.name === offering.metadata.name,
+        )
+      ) {
+        throw new KubeError(409, `serviceofferings "${offering.metadata.name}" already exists`, "AlreadyExists");
+      }
+      // As Cirrus would leave it: not ready until it has found its Service
+      const created: ServiceOffering = copy({
+        ...offering,
+        metadata: {
+          ...offering.metadata,
+          generation: 1,
+          creationTimestamp: now(),
+          resourceVersion: String((store().version += 1)),
+        },
+        status: {
+          conditions: [{ type: "Ready", status: "False", reason: "Pending", message: "", lastTransitionTime: now() }],
+        },
+      });
+      store().offerings.push(created);
+      return copy(created);
+    },
+
+    replaceServiceOffering: async (offering) => {
+      const at = store().offerings.findIndex(
+        (each) =>
+          each.metadata.namespace === offering.metadata.namespace && each.metadata.name === offering.metadata.name,
+      );
+      const existing = store().offerings[at];
+      if (existing === undefined) {
+        throw new KubeError(404, `serviceofferings "${offering.metadata.name}" not found`, "NotFound");
+      }
+      if (
+        offering.metadata.resourceVersion !== undefined &&
+        existing.metadata.resourceVersion !== undefined &&
+        offering.metadata.resourceVersion !== existing.metadata.resourceVersion
+      ) {
+        throw new KubeError(409, "the object has been modified", "Conflict");
+      }
+      const replaced = copy({
+        ...existing,
+        spec: offering.spec,
+        metadata: { ...existing.metadata, resourceVersion: String((store().version += 1)) },
+      });
+      store().offerings[at] = replaced;
+      return copy(replaced);
+    },
 
     listBuckets: async (namespace) =>
       copy(

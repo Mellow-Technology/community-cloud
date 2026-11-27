@@ -348,6 +348,7 @@ function clientFor(config: KubeConfig): KubeClient {
   const authorization = config.makeApiClient(AuthorizationV1Api);
   const rbac = config.makeApiClient(RbacAuthorizationV1Api);
   const webapps = { group: GROUP, version: VERSION, plural: PLURAL };
+  const offerings = { group: GROUP, version: VERSION, plural: OFFERING_PLURAL };
   const buckets = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: BUCKET_PLURAL };
   const identities = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3identities" };
   const credentialsKind = { group: BUCKET_GROUP, version: BUCKET_VERSION, plural: "s3credentials" };
@@ -701,6 +702,32 @@ function clientFor(config: KubeConfig): KubeClient {
             : await custom.listNamespacedCustomObject({ ...kind, namespace });
         return (list as { items: ServiceOffering[] }).items;
       })) ?? [],
+
+    getServiceOffering: (namespace, name) =>
+      attempt(
+        async () => (await custom.getNamespacedCustomObject({ ...offerings, namespace, name })) as ServiceOffering,
+      ),
+
+    createServiceOffering: (offering) =>
+      attempt(
+        async () =>
+          (await custom.createNamespacedCustomObject({
+            ...offerings,
+            namespace: offering.metadata.namespace ?? "",
+            body: { apiVersion: `${GROUP}/${VERSION}`, kind: "ServiceOffering", ...offering },
+          })) as ServiceOffering,
+      ),
+
+    replaceServiceOffering: (offering) =>
+      attempt(
+        async () =>
+          (await custom.replaceNamespacedCustomObject({
+            ...offerings,
+            namespace: offering.metadata.namespace ?? "",
+            name: offering.metadata.name,
+            body: { apiVersion: `${GROUP}/${VERSION}`, kind: "ServiceOffering", ...offering },
+          })) as ServiceOffering,
+      ),
 
     listBuckets: async (namespace) =>
       // A 404 means SeaweedFS's operator isn't installed, so there are none

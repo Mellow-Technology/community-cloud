@@ -396,8 +396,9 @@ secret ones by name, and use them through `shared`.
 
 `/mcp` is an [MCP](https://modelcontextprotocol.io) server that lets
 an AI agent, such as Claude Code working in a project's repository,
-manage one namespace's applications. It has six tools (in
-`src/lib/mcp/tools.ts`):
+manage one namespace's applications. It has nine tools (in
+`src/lib/mcp/tools.ts`), six for applications and three for
+offerings:
 
 - `get_capabilities`, what Cirrus can give applications in this
   namespace, from its `cirrus-capabilities` ConfigMap (see "What's
@@ -445,7 +446,14 @@ only from the namespace's own offerings, when two applications can
 simply use each other's Service, and `offers`. An agent may make its
 application an offering for its own namespace, and change its title,
 description, protocol and path; `shareWith` and taking an offer away
-are refused, for a person to do here.
+are refused, for a person to do here. And how to offer a service, of
+both kinds: an application through `offers`, and a Service that isn't
+an application's through `create_offering`, `update_offering` and
+`get_offering` (`src/lib/mcp/offerings.ts`), with an example call for
+each. Those set an offering's title, description, protocol, Service and
+port, path and plain values. `shareWith` and `secret` are refused and
+kept as a person set them, an application's own offering is changed
+only through the application, and there's no deleting one.
 
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the

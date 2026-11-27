@@ -1,5 +1,12 @@
 // The frame around every page
 
+// What the clouds fill, behind everything else in it
+.page {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
