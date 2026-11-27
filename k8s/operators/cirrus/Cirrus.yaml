@@ -35,7 +35,7 @@ spec:
           # Pinned, so the operator and the CRD beside it move together.
           # Released from a cirrus-v<version> tag; see
           # .github/workflows/cirrus.yml.
-          image: ghcr.io/mellow-technology/cirrus:0.8.0
+          image: ghcr.io/mellow-technology/cirrus:0.9.0
           ports:
             - name: http
               containerPort: 8080
@@ -47,6 +47,12 @@ spec:
             # DnsProvider runs, as the installer does for its own
             - name: CIRRUS_CLUSTER_DOMAIN
               value: "{{ .Values.domain.main }}"
+{{ if .Values.domain.storage }}
+            # Where browsers reach S3, for the links applications with a
+            # bucket hand them (S3_PUBLIC_ENDPOINT); SeaweedFS.network.yaml
+            - name: CIRRUS_S3_PUBLIC_ENDPOINT
+              value: "https://{{ .Values.domain.storage }}"
+{{ end }}
             - name: RUST_LOG
               value: info
           readinessProbe:

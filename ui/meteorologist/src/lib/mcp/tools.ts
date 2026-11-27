@@ -192,7 +192,7 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   bucket: {
     type: ["boolean", "object"],
     description:
-      "true, or { quota }, gives it an S3 bucket with S3_* and AWS_* variables. Can't be turned off from here.",
+      "true, or { quota }, gives it an S3 bucket of its own with S3_* and AWS_* variables. Use path-style addressing. S3_ENDPOINT is inside the cluster; S3_PUBLIC_ENDPOINT, when there is one, is for links handed to browsers. See the server's instructions on buckets. Can't be turned off from here.",
     properties: { quota: { type: "string", description: "Such as 10Gi." } },
   },
   migrations: {

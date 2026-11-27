@@ -47,6 +47,13 @@ How migrations run:
 - It's retried once, and fails after timeoutSeconds (30 minutes unless said).
 - A failed migration leaves the old version running and isn't rerun for that image. Fix it and roll out a new image, or have a person delete the Job to run it again. You can't read its logs: give the person the Job's name, which wait_for_rollout and get_application report.
 
+How buckets work:
+- bucket gives the application an S3 bucket of its own in the cluster's SeaweedFS, called <namespace>-<application> (S3_BUCKET), with a key that reaches that bucket and no other. Nothing else in it is configurable from here but quota, such as { quota: "10Gi" }.
+- Cirrus sets S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, and AWS_ENDPOINT_URL_S3, AWS_REGION, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, which AWS's SDKs read by themselves. Point the application's storage config at them; a framework that wants its own names (Rails' Active Storage, Django's django-storages, Laravel's filesystems) should read them from these.
+- Use path-style addressing (forcePathStyle: true, use_path_style_endpoint, addressing_style "path"): SeaweedFS doesn't serve buckets as subdomains. The region is us-east-1, which SeaweedFS ignores but SDKs insist on.
+- S3_ENDPOINT is inside the cluster only. Uploads and downloads that go through the application work as they are; links handed to browsers, such as presigned URLs, don't, since a signature covers the host. Where the cluster serves S3 outside, S3_PUBLIC_ENDPOINT is that address: sign browser links with a client pointed at it. Without it, serve files through the application. Objects aren't public: every read needs the keys or a signed link.
+- The bucket and its contents are kept when the application is deleted, and it can't be turned off from here.
+
 How volumes work:
 - Prefer the services: a database for data, a bucket for uploads and files. A volume is for what has to be a filesystem, such as SQLite, a search index or a cache.
 - A disk volume (fast, the default, on NVMe; sata; hdd) is a claim of its own, <application>-<name>, on storage local to one node. It's made on the node the first pod lands on, and every copy of the application shares it and runs on that node, so more replicas don't spread across nodes.

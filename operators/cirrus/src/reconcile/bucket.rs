@@ -152,7 +152,7 @@ pub fn env(app: &WebApplication, settings: &crate::settings::Settings) -> Vec<En
             ..Default::default()
         }),
     };
-    vec![
+    let mut variables = vec![
         plain("S3_ENDPOINT", settings.s3_endpoint.clone()),
         plain("S3_BUCKET", shared_name(&namespace, &name)),
         plain("S3_REGION", REGION.to_string()),
@@ -162,7 +162,14 @@ pub fn env(app: &WebApplication, settings: &crate::settings::Settings) -> Vec<En
         plain("AWS_REGION", REGION.to_string()),
         from_secret("AWS_ACCESS_KEY_ID", "accessKey"),
         from_secret("AWS_SECRET_ACCESS_KEY", "secretKey"),
-    ]
+    ];
+    // Where browsers reach the same buckets, for links handed to them:
+    // a link signed for S3_ENDPOINT names a host only the cluster can
+    // reach, and a signature covers the host it's for
+    if let Some(public) = &settings.s3_public_endpoint {
+        variables.push(plain("S3_PUBLIC_ENDPOINT", public.clone()));
+    }
+    variables
 }
 
 #[cfg(test)]
@@ -170,6 +177,25 @@ mod tests {
     use super::*;
     use crate::reconcile::tests::app;
     use crate::settings::Settings;
+
+    #[test]
+    fn the_public_address_is_given_only_when_there_is_one() {
+        let app = app();
+        let names = |settings: &Settings| -> Vec<String> {
+            env(&app, settings).into_iter().map(|variable| variable.name).collect()
+        };
+        assert!(!names(&Settings::default()).contains(&"S3_PUBLIC_ENDPOINT".to_string()));
+        let public = Settings {
+            s3_public_endpoint: Some("https://storage.example.org".into()),
+            ..Settings::default()
+        };
+        let given = env(&app, &public);
+        let endpoint = given
+            .iter()
+            .find(|variable| variable.name == "S3_PUBLIC_ENDPOINT")
+            .unwrap();
+        assert_eq!(endpoint.value.as_deref(), Some("https://storage.example.org"));
+    }
 
     #[test]
     fn bucket_is_named_for_its_namespace_and_limited_to_its_user() {

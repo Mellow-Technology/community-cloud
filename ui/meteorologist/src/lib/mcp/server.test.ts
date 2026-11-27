@@ -427,3 +427,11 @@ test("a rollout waiting for a secret says which, for the agent to pass on", asyn
   expect(rollout.finished).toBe(true);
   expect(rollout.next).toContain("the secret STRIPE_SECRET_KEY");
 });
+
+test("buckets are explained: path style, and which endpoint browsers can use", async () => {
+  const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+  const instructions = (answer?.result as { instructions: string }).instructions;
+  expect(instructions).toContain("How buckets work");
+  expect(instructions).toContain("path-style addressing");
+  expect(instructions).toContain("S3_PUBLIC_ENDPOINT");
+});

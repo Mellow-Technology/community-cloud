@@ -181,6 +181,13 @@ with the same pull Secrets. `detect: false` skips that too.
   `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and the `AWS_*`
   equivalents AWS's SDKs read on their own. The bucket is called
   `<namespace>-<app>`. Address it by path, not by virtual host.
+  `S3_ENDPOINT` is SeaweedFS inside the cluster. Where the cluster also
+  serves S3 outside (the installer's `domain.storage`),
+  `S3_PUBLIC_ENDPOINT` is that address, for links handed to browsers:
+  a signed URL covers the host it's for, so one signed for
+  `S3_ENDPOINT` can't be fetched from outside. Sign those with a
+  client pointed at `S3_PUBLIC_ENDPOINT` instead. Objects aren't
+  readable without keys or a signed link.
 - **RabbitMQ:** the Secret `<app>-rabbitmq`, loaded whole, with
   `AMQP_URL` and `RABBITMQ_HOST`, `_PORT`, `_USERNAME`, `_PASSWORD`
   and `_VHOST`.
@@ -583,6 +590,7 @@ names the installer uses.
 | `CIRRUS_RABBITMQ_CLUSTER` | `rabbitmq` |
 | `CIRRUS_SEAWEED_NAME`, `CIRRUS_SEAWEED_NAMESPACE` | `seaweed`, `seaweedfs` |
 | `CIRRUS_S3_ENDPOINT` | `http://seaweed-s3.seaweedfs.svc:8333` |
+| `CIRRUS_S3_PUBLIC_ENDPOINT` | none; `https://<domain.storage>` from the installer when it's set |
 | `CIRRUS_GATEWAY_NAME`, `CIRRUS_GATEWAY_NAMESPACE` | `cc-letsencrypt-web-gateway`, `community-cloud` |
 | `CIRRUS_CLUSTER_ISSUER` | `cc-lets-encrypt` |
 | `CIRRUS_DNS_NAMESPACE` | `external-dns`, where DnsProviders' ExternalDNS instances and credentials are |

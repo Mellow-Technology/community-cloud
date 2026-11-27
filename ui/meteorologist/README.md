@@ -386,7 +386,10 @@ serving with the Job's name to hand to a person. And how volumes
 work: local to one node and shared by every copy, rollouts that stop
 the old copies first, storage types needing a node with those disks,
 RAM disks emptied on restart and counted as memory, migrations not
-mounting them, and kept when the application is deleted.
+mounting them, and kept when the application is deleted. And how
+buckets work: their name and keys, the variables Cirrus sets,
+path-style addressing, and that `S3_ENDPOINT` is only inside the
+cluster, so links for browsers are signed for `S3_PUBLIC_ENDPOINT`.
 
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the
