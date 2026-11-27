@@ -415,7 +415,11 @@ offerings:
   application offered a moment ago can be connected to straight away;
   those shared from other namespaces are the report's.
 - `list_applications` and `get_application`, for what's there and how
-  it's doing
+  it's doing. `get_application` lists every variable the application is given
+  (`src/lib/webapp/variables.ts`): Cirrus's `status.variables`, with
+  where each comes from and a plain one's value, or, until Cirrus has
+  reported them, the names the spec leads to, marked as expected
+  (`variablesReported: false`).
 - `create_application`, which works out nothing itself: the agent
   reads the project's files for what it needs, guided by the server's
   instructions (`src/lib/mcp/instructions.ts`)

@@ -448,6 +448,27 @@ pub struct WebApplicationStatus {
     /// What the image's labels filled in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected: Option<DetectedStatus>,
+    /// Every environment variable it's given, where each comes from,
+    /// and a plain one's value; one from a Secret only by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variables: Vec<VariableStatus>,
+}
+
+/// One environment variable an application is given.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableStatus {
+    pub name: String,
+    /// What gives it: postgres, bucket, rabbitmq, connections, secrets,
+    /// shared or env.
+    pub from: String,
+    /// Its value, when it's a plain one rather than read from a Secret or
+    /// ConfigMap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// Whether it's read from a Secret, so never shown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
 }
 
 /// What was read from an image's labels, and what it was used for.

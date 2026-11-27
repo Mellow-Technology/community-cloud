@@ -43,6 +43,7 @@ pub mod port;
 pub mod postgres;
 pub mod rabbitmq;
 pub mod source;
+pub mod variables;
 pub mod volumes;
 pub mod workload;
 
@@ -224,13 +225,20 @@ fn error_policy(_app: Arc<WebApplication>, error: &Error, _ctx: Arc<Context>) ->
 // A dependency's outcome, with the problems a person has to fix kept
 // as messages rather than errors
 fn settle(
+    source: &str,
     outcome: Result<Outcome>,
     provided: &mut Provided,
+    origins: &mut Vec<variables::Origin>,
     problems: &mut Vec<String>,
     pending: &mut Vec<String>,
 ) -> Result<()> {
     match outcome {
         Ok(Outcome::Ready(more)) => {
+            origins.push(variables::Origin {
+                source: source.to_string(),
+                env: more.env.clone(),
+                env_from: more.env_from.clone(),
+            });
             provided.env_from.extend(more.env_from);
             provided.env.extend(more.env);
             Ok(())
@@ -310,44 +318,55 @@ async fn apply(ctx: &Context, original: &WebApplication) -> Result<Action> {
 
     // 1. What it depends on
     let mut provided = Provided::default();
+    let mut origins = Vec::new();
     let mut problems = Vec::new();
     let mut pending = Vec::new();
     if app.spec.postgres.is_some() {
         settle(
+            "postgres",
             postgres::ensure(ctx, app).await,
             &mut provided,
+            &mut origins,
             &mut problems,
             &mut pending,
         )?;
     }
     if app.spec.bucket.is_some() {
         settle(
+            "bucket",
             bucket::ensure(ctx, app).await,
             &mut provided,
+            &mut origins,
             &mut problems,
             &mut pending,
         )?;
     }
     if app.spec.rabbitmq.is_some() {
         settle(
+            "rabbitmq",
             rabbitmq::ensure(ctx, app).await,
             &mut provided,
+            &mut origins,
             &mut problems,
             &mut pending,
         )?;
     }
     if !app.spec.volumes.is_empty() {
         settle(
+            "volumes",
             volumes::ensure(ctx, app).await,
             &mut provided,
+            &mut origins,
             &mut problems,
             &mut pending,
         )?;
     }
     if !app.spec.connections.is_empty() {
         settle(
+            "connections",
             connections::ensure(ctx, app).await,
             &mut provided,
+            &mut origins,
             &mut problems,
             &mut pending,
         )?;
@@ -362,7 +381,14 @@ async fn apply(ctx: &Context, original: &WebApplication) -> Result<Action> {
             given_env.clone_from(&ready.env);
         }
         environment_status = Some(status);
-        settle(outcome, &mut provided, &mut problems, &mut pending)?;
+        settle(
+            "environment",
+            outcome,
+            &mut provided,
+            &mut origins,
+            &mut problems,
+            &mut pending,
+        )?;
     }
     // Its own offering, which waits on nothing: the offering's status
     // says when its Service is there
@@ -580,6 +606,18 @@ async fn apply(ctx: &Context, original: &WebApplication) -> Result<Action> {
 
     // Only the images still in play; the spec's own port needs none
     port::prune(&mut image_ports, &[deployed.as_deref(), Some(desired.as_str())]);
+    // What it's given, by name and source, for whoever configures it:
+    // the keys of each Secret loaded whole, never their values
+    let secrets = Api::<Secret>::namespaced(ctx.client.clone(), &namespace);
+    let mut secret_keys = BTreeMap::new();
+    for name in origins.iter().flat_map(|origin| origin.env_from.iter()) {
+        if let Some(secret) = secrets.get_opt(name).await? {
+            let keys = secret.data.unwrap_or_default().into_keys().collect::<Vec<_>>();
+            secret_keys.insert(name.clone(), keys);
+        }
+    }
+    let given_variables = variables::list(&origins, &app.spec.env, &secret_keys);
+
     let mut status = json!({
         "observedGeneration": generation,
         "conditions": conditions,
@@ -591,6 +629,7 @@ async fn apply(ctx: &Context, original: &WebApplication) -> Result<Action> {
         // Null when it has none, so a merge patch takes away an old one
         "environment": environment_status,
         "detected": detected,
+        "variables": given_variables,
     });
     if let Some(webhook) = &found.webhook {
         status["webhook"] = json!(webhook);

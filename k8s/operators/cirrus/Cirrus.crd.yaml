@@ -667,6 +667,34 @@ spec:
               url:
                 nullable: true
                 type: string
+              variables:
+                description: |-
+                  Every environment variable it's given, where each comes from,
+                  and a plain one's value; one from a Secret only by name.
+                items:
+                  description: One environment variable an application is given.
+                  properties:
+                    from:
+                      description: |-
+                        What gives it: postgres, bucket, rabbitmq, connections, secrets,
+                        shared or env.
+                      type: string
+                    name:
+                      type: string
+                    secret:
+                      description: Whether it's read from a Secret, so never shown.
+                      type: boolean
+                    value:
+                      description: |-
+                        Its value, when it's a plain one rather than read from a Secret or
+                        ConfigMap.
+                      nullable: true
+                      type: string
+                  required:
+                  - from
+                  - name
+                  type: object
+                type: array
               webhook:
                 nullable: true
                 properties:
