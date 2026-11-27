@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
-// The installer's own list, which puts the codes on the nodes. Read
-// from the repository, which CI checks out whole; Meteorologist's
-// image is built without it, so it keeps the copy this checks.
-import { regions as installerRegions } from "../../../../installer/src/topology/regions";
 import { REGIONS, regionName, sortRegions } from "./regions";
 
-test("the regions are the installer's, in its order", () => {
-  expect(REGIONS).toEqual(installerRegions.map(({ code, name }) => ({ code, name })));
+// The installer's own list, which puts the codes on the nodes. It's
+// loaded when the test runs, from a path TypeScript doesn't follow:
+// Meteorologist's image is built from this directory alone, and its
+// build type checks every file, tests included, so a static import of
+// something outside would fail there. The tests run where the whole
+// repository is checked out.
+const INSTALLER_REGIONS = join(import.meta.dir, "../../../../installer/src/topology/regions.ts");
+
+test.if(existsSync(INSTALLER_REGIONS))("the regions are the installer's, in its order", async () => {
+  const { regions } = (await import(INSTALLER_REGIONS)) as { regions: Array<{ code: string; name: string }> };
+  expect(REGIONS).toEqual(regions.map(({ code, name }) => ({ code, name })));
 });
 
 describe("a region's name", () => {
