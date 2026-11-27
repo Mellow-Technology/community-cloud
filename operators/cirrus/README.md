@@ -430,7 +430,8 @@ report as JSON under `capabilities.json` (`src/capabilities/`):
   values and secret ones by name alone.
 
 It's looked at again when the namespace or its shared values change,
-and every three minutes. `view`, `edit` and `admin` may read it, through the aggregated
+when an offering it lists does (in its own namespace, or one it's
+shared with), and every three minutes. `view`, `edit` and `admin` may read it, through the aggregated
 roles in `k8s/operators/cirrus/Cirrus.rbac.yaml`, and so may an agent's
 token, which has nothing else beyond applications. Meteorologist's MCP
 tools use it to say what an application can ask for and to refuse what

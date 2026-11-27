@@ -3,7 +3,7 @@
 //!
 //! It looks again when a namespace changes, since its labels are what
 //! let it in to the Gateway and SeaweedFS, when its shared values do,
-//! and every few minutes,
+//! when an offering it lists does, and every few minutes,
 //! which is what notices an operator being installed, a quota filling
 //! up or an offering being shared, without watching all of them.
 //!
@@ -81,6 +81,15 @@ pub async fn run(client: Client, settings: Settings) {
         .watches(Api::<Secret>::all(context.client.clone()), shared(), move |secret| {
             namespace_of(secret.metadata.namespace)
         })
+        // An offering made, changed or gone: its own namespace and those
+        // it's shared with, so an application offered a moment ago is
+        // listed before anyone tries to connect to it. A namespace it
+        // stops being shared with catches up on its next look.
+        .watches(
+            Api::<ServiceOffering>::all(context.client.clone()),
+            watcher::Config::default(),
+            |offering| offered_to(&offering),
+        )
         .shutdown_on_signal()
         .run(reconcile, error_policy, context)
         .for_each(|result| async move {
@@ -94,6 +103,17 @@ pub async fn run(client: Client, settings: Settings) {
 fn error_policy(_namespace: Arc<Namespace>, error: &Error, _ctx: Arc<Context>) -> Action {
     tracing::warn!(%error, "will retry");
     Action::requeue(Duration::from_secs(60))
+}
+
+/// The namespaces an offering is listed in: its own, and those it's
+/// shared with.
+pub fn offered_to(offering: &ServiceOffering) -> Vec<ObjectRef<Namespace>> {
+    offering
+        .namespace()
+        .into_iter()
+        .chain(offering.spec.share_with.iter().cloned())
+        .map(|name| ObjectRef::<Namespace>::new(&name))
+        .collect()
 }
 
 /// Whether a namespace is one of Kubernetes's own.
@@ -342,6 +362,22 @@ mod tests {
             ..ResourceQuota::default()
         };
         assert_eq!(storage_room(&[cpu_only]), None);
+    }
+
+    #[test]
+    fn an_offering_is_listed_in_its_namespace_and_those_it_is_shared_with() {
+        let mut offering = ServiceOffering::new(
+            "search",
+            serde_json::from_value(serde_json::json!({
+                "title": "Search",
+                "service": {"name": "search"},
+                "shareWith": ["shop", "blog"]
+            }))
+            .unwrap(),
+        );
+        offering.metadata.namespace = Some("catalogue".into());
+        let names: Vec<String> = offered_to(&offering).into_iter().map(|each| each.name).collect();
+        assert_eq!(names, vec!["catalogue", "shop", "blog"]);
     }
 
     #[test]

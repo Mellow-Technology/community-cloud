@@ -591,3 +591,32 @@ test("offering a service is explained, with both ways and what's a person's", as
   expect(instructions).toContain("create_offering");
   expect(instructions).toContain("shareWith");
 });
+
+test("an application can connect to one offered a moment ago, before Cirrus's report has it", async () => {
+  await call("update_application", { name: "shop", offers: { title: "Shop API" } });
+  // The fixture's report is fixed, like one written before the offer
+  const kube = fixtureClient();
+  const shop = await kube.getWebApplication("team-shop", "shop");
+  const offered = await kube.listServiceOfferings("team-shop");
+  if (!offered.some((each) => each.metadata.name === "shop")) {
+    // The fixtures have no Cirrus to make it, so stand in for one
+    await kube.createServiceOffering({
+      metadata: { name: "shop", namespace: "team-shop", ownerReferences: [{ kind: "WebApplication", name: "shop" }] },
+      spec: { title: shop.spec.offers?.title ?? "Shop API", service: { name: "shop" } },
+    });
+  }
+  const result = await call("update_application", { name: "files", connections: [{ offering: "shop" }] });
+  expect(result.isError).toBeUndefined();
+});
+
+test("an application's bucket is shown by name, and its services in the list", async () => {
+  const kube = fixtureClient();
+  const shop = await kube.getWebApplication("team-shop", "shop");
+  await kube.replaceWebApplication({ ...shop, spec: { ...shop.spec, bucket: {} } });
+  const app = (await call("get_application", { name: "shop" })).structuredContent;
+  expect(app.bucket).toEqual({ name: "team-shop-shop" });
+  const listed = (await call("list_applications", {})).structuredContent.applications.find(
+    (each: { name: string }) => each.name === "shop",
+  );
+  expect(listed.uses).toContain("Bucket");
+});
