@@ -1,0 +1,54 @@
+// Shapes standing in for what's still loading. Until GUI Mellow has its
+// own (see Placeholder.tsx).
+
+.bar {
+  display: inline-block;
+  height: 0.85em;
+  border-radius: var(--gm-radius-sm, 4px);
+  background-color: var(--gm-color-border);
+  vertical-align: middle;
+  animation: pulse 1.4s var(--gm-ease, ease-in-out) infinite;
+}
+
+.title {
+  height: 1.6em;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-space-4, 1rem);
+  margin-bottom: var(--gm-space-6, 1.5rem);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--gm-space-4, 1rem);
+}
+
+// For whoever can't see the shapes
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+    opacity: 0.7;
+  }
+}

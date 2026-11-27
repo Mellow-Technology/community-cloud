@@ -297,6 +297,18 @@ GitLab only includes a remote file whose last path segment, query and
 all, ends in `.yml` or `.yaml`. Changing the key (Forges tab) breaks
 every project's include until its line is replaced.
 
+### Loading
+
+A namespace's Applications tab draws its header and tabs as soon as the
+namespace is read, and the list streams in after them, with
+placeholder rows under its real columns until it does (a `<Suspense>`
+around `ApplicationList`). Its route's `loading.tsx` stands in for the
+whole tab before even the namespace is read, as when the tab is first
+clicked. The placeholders are `src/components/Placeholder.tsx`: grey
+bars that pulse, and hold still under `prefers-reduced-motion`, announced once
+to screen readers as loading. GUI Mellow has no spinner or placeholder
+of its own yet; when it does (GM-15), these move there.
+
 ### Live status
 
 `src/components/LiveRefresh.tsx` opens a server-sent event stream at
@@ -596,7 +608,7 @@ tag against `package.json` too.
 src/
   proxy.ts                  sign-in check and token refresh, before every page
   app/                      pages, and the /auth/*, /healthz and /mcp routes
-  components/               the form, switches, and local pieces GUI Mellow lacks
+  components/               the form, switches, and local pieces GUI Mellow lacks, such as loading placeholders (GM-15)
   lib/
     capabilities.ts         the namespace capability registry
     environment.ts          where secret and shared environment values are kept

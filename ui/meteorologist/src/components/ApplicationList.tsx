@@ -12,6 +12,7 @@ import { certificateCell } from "@/components/CertificateBadge";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { HealthBadge } from "@/components/HealthBadge";
 import { LiveRefresh } from "@/components/LiveRefresh";
+import { PlaceholderTable } from "@/components/Placeholder";
 import styles from "@/components/page.module.scss";
 import { getKube } from "@/lib/kube";
 import { settle } from "@/lib/kube/client";
@@ -106,5 +107,31 @@ export async function ApplicationList({
         />
       )}
     </>
+  );
+}
+
+/**
+ * The list as it will look, while it's still being read: its columns,
+ * with placeholder rows.
+ *
+ * @param props
+ * @param props.showNamespace as for the list
+ * @returns
+ */
+export function ApplicationListPlaceholder({ showNamespace = true }: { showNamespace?: boolean }) {
+  return (
+    <PlaceholderTable
+      label="Loading applications"
+      columns={[
+        "Name",
+        ...(showNamespace ? ["Namespace"] : []),
+        "Health",
+        "Forge status",
+        "Certificate",
+        "Image",
+        "Address",
+        "Uses",
+      ]}
+    />
   );
 }
