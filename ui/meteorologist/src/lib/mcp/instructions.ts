@@ -36,7 +36,7 @@ Before creating or updating, work out what the application needs:
 
 Environment and secrets:
 - env is for plain settings, such as LOG_LEVEL. Anyone who can see the application reads them, so never put a secret there, even one you can see in the project.
-- Secrets, such as API keys, go in secrets, by name and with a description of what each is and where to get it. You never give or see a value: a person sets it in Meteorologist, and the application waits until each has one. Look for them in .env.example, the config the application reads, and its README, and leave out what Cirrus already provides (DATABASE_URL, PG*, AMQP_URL, S3_*, AWS_*).
+- Secrets, such as API keys, go in secrets, by name and with a description of what each is and where to get it. You never give or see a value: a person sets it in Meteorologist, and the application waits until each has one. Look for them in .env.example, the config the application reads, and its README, and leave out what Cirrus already provides: DATABASE_URL and PG*, AMQP_URL and RABBITMQ_*, S3_* and AWS_*, and each connection's <NAME>_* variables. Point the application's config at those rather than setting them by hand.
 - The namespace may already share values its applications use, such as an SMTP host or a common API key: get_capabilities lists them, plain ones with their values and secret ones by name. Use one through shared, with as when the application expects another name, rather than asking for the same secret again.
 - get_application says which secrets and shared values have a value (set), never what it is. wait_for_rollout says when the application is waiting for one, and which, for you to pass on.
 
@@ -54,8 +54,18 @@ How connections work:
 - Credentials come only from an offering in this namespace, as <NAME>_USERNAME, <NAME>_PASSWORD and the like. One shared from another namespace gives the address alone, so its description says how to authenticate.
 - Prefer an offering to asking for a secret: an application using an OpenAI-compatible client, for one, may have models offered here rather than needing an API key. Only connect to what the application actually uses.
 - Two applications in this namespace, such as an application and the API built beside it from the same repository, can also reach each other by Service name (http://<application>:<port>) without an offering. Offer one when others should find it by name, or to describe it.
-- offers makes the application an offering itself, named for it, for its Service's http port: give it a title, a description that says what it does and how to use it, a protocol if it isn't http, and a path if its API isn't at /. It's offered to this namespace. A person shares it with others, and only a person can take it away, since what connects to it would stop working.
+- An application here can also offer itself, and a Service here that isn't an application can be offered: see below.
 - A connection waits, in Provisioned, until its offering is there and has found its Service.
+
+How to offer a service:
+- Offer something when applications here should find it by name, with what it is and how to use it written down: an API another application uses, or a service deployed some other way, such as a model server. Two applications that only call each other by Service name don't need one.
+- An application offers itself through offers, on create_application or update_application: { "offers": { "title": "Shop API", "description": "Orders and baskets. POST /orders, GET /orders/{id}. Bearer tokens from Authentik.", "path": "/api" } }. The offering is named for the application, for the port its Service serves on, and goes with it. Add protocol when it isn't http, such as grpc.
+- A Service that isn't an application is offered with create_offering: { "name": "search", "title": "Product search", "description": "Full-text search over the catalogue. POST /query with a JSON body holding q, the search.", "service": { "name": "search", "port": "http" }, "path": "/v1" }. You can't list the namespace's Services from here, so take the Service's name and port from what deployed it, such as its manifests, or ask a person. Change it later with update_offering; an application's own is changed through its offers.
+- The name is what connections' variables start with: search gives SEARCH_HOST, SEARCH_PORT, SEARCH_URL and SEARCH_TYPE.
+- Write the description for whoever chooses what to connect to: what it does, its main endpoints, and how a client authenticates. It's the documentation they get.
+- values are plain settings every connection gets, as <NAME>_<KEY>: { "region": "sea" } gives SEARCH_REGION. Never put a secret in values: anyone who can see the offering reads them.
+- It's offered to this namespace. Sharing it with other namespaces (shareWith), handing connections a Secret's keys (secret), and taking it away are a person's to do in Meteorologist; they're refused from here, and left as a person set them.
+- get_offering says whether it's ready, which is once its Service has a ready pod behind it, and Cirrus looks again every minute. Until then, connections to it wait. It also lists the variables a connection gets and what's connected.
 
 How buckets work:
 - bucket gives the application an S3 bucket of its own in the cluster's SeaweedFS, called <namespace>-<application> (S3_BUCKET), with a key that reaches that bucket and no other. Nothing else in it is configurable from here but quota, such as { quota: "10Gi" }.
@@ -76,6 +86,4 @@ How volumes work:
 
 To see a change through, pass wait: true to create_application or update_application, or call wait_for_rollout: it answers once the application is healthy or has failed, saying what Cirrus is doing as it goes. If the time runs out, it's still going; call wait_for_rollout again. A failure's message says why, such as a migration that exited with an error.
 
-Cirrus sets the variables for what it provides: DATABASE_URL and PG*, AMQP_URL and RABBITMQ_*, S3_* and AWS_*. Point the application at those rather than setting them by hand, and never put secrets in env.
-
-What's left to a person in Meteorologist: hostnames (an application made here is only reachable inside the cluster until it has one), deleting, turning a service off, changing a volume, and variables read from Secrets. Say so, with the application's page link, when one of those is needed.`;
+What's left to a person in Meteorologist: hostnames (an application made here is only reachable inside the cluster until it has one), deleting, turning a service off, changing a volume, setting secrets' values, and sharing an offering with other namespaces, giving it a Secret, or taking it away. Say so, with the application's page link, when one of those is needed.`;

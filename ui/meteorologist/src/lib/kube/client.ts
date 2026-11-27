@@ -363,6 +363,32 @@ export interface KubeClient {
   listServiceOfferings(namespace?: string): Promise<ServiceOffering[]>;
 
   /**
+   * One ServiceOffering.
+   *
+   * @param namespace
+   * @param name
+   * @returns
+   */
+  getServiceOffering(namespace: string, name: string): Promise<ServiceOffering>;
+
+  /**
+   * Makes a ServiceOffering.
+   *
+   * @param offering
+   * @returns
+   */
+  createServiceOffering(offering: ServiceOffering): Promise<ServiceOffering>;
+
+  /**
+   * Replaces a ServiceOffering's spec. The resourceVersion it carries
+   * makes this fail with a conflict if it changed in the meantime.
+   *
+   * @param offering
+   * @returns
+   */
+  replaceServiceOffering(offering: ServiceOffering): Promise<ServiceOffering>;
+
+  /**
    * SeaweedFS's Buckets, in one namespace or in all of them. Empty when
    * SeaweedFS's operator isn't installed.
    *
