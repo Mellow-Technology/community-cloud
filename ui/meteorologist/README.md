@@ -439,6 +439,13 @@ mounting them, and kept when the application is deleted. And how
 buckets work: their name and keys, the variables Cirrus sets,
 path-style addressing, and that `S3_ENDPOINT` is only inside the
 cluster, so links for browsers are signed for `S3_PUBLIC_ENDPOINT`.
+And how connections work: what a ServiceOffering is, the variables a
+connection sets and how their names are made, that credentials come
+only from the namespace's own offerings, when two applications can
+simply use each other's Service, and `offers`. An agent may make its
+application an offering for its own namespace, and change its title,
+description, protocol and path; `shareWith` and taking an offer away
+are refused, for a person to do here.
 
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the
