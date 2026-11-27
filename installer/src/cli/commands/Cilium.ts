@@ -12,6 +12,12 @@
  * is in place every node sits NotReady with no CNI: this bundle is
  * what finishes the cluster.
  *
+ * It's also how Cilium's settings change afterwards. Run again, it
+ * upgrades the release in place with the values as they are now, and
+ * the values file has the agents and the operator roll whenever their
+ * configuration changes, a couple of nodes at a time, so the bundle
+ * waits for that before calling it done.
+ *
  * The settings come from k8s/networking/cilium/Cilium.values.yaml
  * rather than a pile of --set flags. That file is a template, so the
  * API server address is filled in from the configuration the same way
@@ -110,6 +116,11 @@ const REMOTE_VALUES_PATH = "/tmp/cc-cilium-values.yaml";
 
 // How long to wait for Cilium to report itself healthy
 const READY_TIMEOUT = "10m";
+
+// Where the CLI installs Cilium, and the name of its Helm release: the
+// CLI's defaults, which the install doesn't change
+const CILIUM_NAMESPACE = "kube-system";
+const CILIUM_RELEASE = "cilium";
 
 // How long to wait for every node to go Ready after an install
 const NODES_READY_SECONDS = 300;
@@ -349,15 +360,33 @@ export const CiliumCommands: CommandSpec[] = [
   },
 
   /**
-   * Install Cilium itself.
+   * Install Cilium itself, or upgrade it where it's already installed.
+   *
+   * "cilium install" refuses a cluster that has the release already,
+   * as Helm does, so running this bundle again to change a setting
+   * would fail without the upgrade. Whether it's there is Helm's own
+   * record of the release, a Secret in kube-system, which is what the
+   * install would trip over.
+   *
+   * The upgrade starts from the chart's defaults, lays the release's
+   * last values over them and then this file (the CLI's default,
+   * --reset-then-reuse-values). So anything the install worked out
+   * for itself is kept, and anything this file says wins.
    */
   {
     name: "install-cilium",
-    description: "Install Cilium with the configured values",
+    description: "Install Cilium with the configured values, or upgrade it to them",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
     command: (config: CloudConfig) => {
-      return `cilium install --version ${quoteForShell(getCiliumVersion(config))} --values ${REMOTE_VALUES_PATH}`;
+      const flags = `--version ${quoteForShell(getCiliumVersion(config))} --values ${REMOTE_VALUES_PATH}`;
+      return [
+        `release=$(kubectl -n ${CILIUM_NAMESPACE} get secret -l owner=helm,name=${CILIUM_RELEASE} -o name 2>/dev/null) || { echo "Couldn't ask the cluster whether Cilium is installed" >&2; exit 1; }`,
+        'if [ -n "$release" ]',
+        `then echo "Cilium is installed: upgrading it" && cilium upgrade ${flags}`,
+        `else echo "Installing Cilium" && cilium install ${flags}`,
+        "fi",
+      ];
     },
     output: OutputType.Raw,
   },
@@ -372,7 +401,15 @@ export const CiliumCommands: CommandSpec[] = [
     description: "Wait for Cilium to report itself healthy",
     runOn: CommandTarget.ControlPlane,
     env: buildKubeEnv,
-    command: `cilium status --wait --wait-duration ${READY_TIMEOUT}`,
+    command: [
+      `cilium status --wait --wait-duration ${READY_TIMEOUT}`,
+      // An upgrade that changed the configuration replaces every
+      // agent, and Cilium can call itself healthy while the old ones
+      // are still running on some nodes. These return straight away
+      // when nothing is rolling.
+      `kubectl -n ${CILIUM_NAMESPACE} rollout status daemonset/cilium --timeout=${READY_TIMEOUT}`,
+      `kubectl -n ${CILIUM_NAMESPACE} rollout status deployment/cilium-operator --timeout=${READY_TIMEOUT}`,
+    ],
     output: OutputType.Raw,
   },
 

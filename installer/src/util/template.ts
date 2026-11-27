@@ -311,10 +311,16 @@ function isEmpty(value: any): boolean {
 // to do otherwise
 const DEFAULT_K8S_API_PORT = "6443";
 
-// The MTU pods and Cilium's VXLAN tunnel use: Defined Networking's
-// Nebula interface, 1300, less the 50 bytes VXLAN adds. See
+// The MTU of the mesh between nodes, which Cilium is told rather than
+// left to detect: Defined Networking's Nebula interface, 1300. Cilium
+// takes VXLAN's 50 bytes off it for pods. See
 // k8s/networking/cilium/Cilium.values.yaml.
-const DEFAULT_POD_MTU = 1250;
+const DEFAULT_MESH_MTU = 1300;
+
+// The range a mesh's MTU is taken from: IPv6's minimum, and jumbo
+// frames
+const MIN_MESH_MTU = 1280;
+const MAX_MESH_MTU = 9000;
 
 // Where the device classes are declared. Read here to work out which
 // nodes can serve which of them, and read again by the LVM bundle to
@@ -388,16 +394,26 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
     values.networkDevices = asCiliumDevices();
   }
 
-  // The pods' MTU: network.podMtu where the mesh's own MTU differs
-  if (values.podMtu === undefined) {
-    const configured = (config.getNetwork() as { podMtu?: unknown }).podMtu;
-    const valid = Number.isInteger(configured) && (configured as number) >= 1200 && (configured as number) <= 9000;
-    if (configured !== undefined && !valid) {
+  // The mesh's MTU: network.meshMtu where it isn't Defined
+  // Networking's. network.podMtu was the pods' MTU, VXLAN's 50 bytes
+  // less, for a release: refused by name rather than read as the
+  // mesh's, which would make the pods' 50 bytes too small.
+  if (values.meshMtu === undefined) {
+    const network = config.getNetwork() as { meshMtu?: unknown; podMtu?: unknown };
+    if (network.podMtu !== undefined) {
       throw new Error(
-        `"${String(configured)}" isn't a valid value for network.podMtu. Expected a whole number from 1200 to 9000.`,
+        "network.podMtu is now network.meshMtu, the MTU of the mesh between nodes rather than of the pods. Cilium takes VXLAN's 50 bytes off it itself.",
       );
     }
-    values.podMtu = configured ?? DEFAULT_POD_MTU;
+    const configured = network.meshMtu;
+    const valid =
+      Number.isInteger(configured) && (configured as number) >= MIN_MESH_MTU && (configured as number) <= MAX_MESH_MTU;
+    if (configured !== undefined && !valid) {
+      throw new Error(
+        `"${String(configured)}" isn't a valid value for network.meshMtu. Expected a whole number from ${MIN_MESH_MTU} to ${MAX_MESH_MTU}.`,
+      );
+    }
+    values.meshMtu = configured ?? DEFAULT_MESH_MTU;
   }
 
   // How many storage controllers there can be. TopoLVM's controller
