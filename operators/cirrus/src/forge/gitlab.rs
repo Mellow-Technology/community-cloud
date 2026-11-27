@@ -733,6 +733,60 @@ mod tests {
         );
     }
 
+    // Several images built from one project, as a bake group pushes
+    // them: each application names its own repository, and finds its
+    // pipeline's tag there and not in the others
+    #[tokio::test]
+    async fn each_image_from_one_project_is_found_in_its_own_repository() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/acme%2Fshop/registry/repositories"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"id": 7, "location": "registry.gitlab.com/acme/shop"},
+                {"id": 8, "location": "registry.gitlab.com/acme/shop/api"}
+            ])))
+            .mount(&server)
+            .await;
+        for (repository, digest) in [(7, "sha256:web"), (8, "sha256:api")] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/api/v4/projects/acme%2Fshop/registry/repositories/{repository}/tags/01234567"
+                )))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(
+                        json!({"name": "01234567", "digest": digest, "created_at": "2026-11-23T10:05:00Z"}),
+                    ),
+                )
+                .mount(&server)
+                .await;
+        }
+
+        let gitlab = GitLab::new(&server.uri(), "t");
+        for (repository, digest) in [
+            ("registry.gitlab.com/acme/shop", "sha256:web"),
+            ("registry.gitlab.com/acme/shop/api", "sha256:api"),
+        ] {
+            let found = gitlab
+                .find_image(
+                    "acme/shop",
+                    &pipeline(),
+                    &Finding {
+                        repository,
+                        ..finding(None, false)
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                found,
+                Image::Found {
+                    tag: "01234567".into(),
+                    digest: Some(digest.into())
+                }
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_set_image_tag_is_the_only_one_tried() {
         let server = registry().await;

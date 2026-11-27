@@ -185,6 +185,26 @@ implementations:
 
 To change how the API is reached, you only touch those files.
 
+Every page is a few rounds of requests to the API server, so how far
+away it is decides how fast Meteorologist feels. Two things keep that
+short:
+
+- **It runs beside an API server.** The Deployment requires a
+  control-plane node, and `KUBE_API_SERVER` is that node's own address
+  (`https://$(NODE_IP):6443`, from `status.hostIP`), which K3s's
+  certificate names. The `kubernetes` Service could send a request to
+  another server in another location once there's more than one. On
+  Prime, where nodes are a quarter of a second apart, each request
+  from another node waited that long.
+- **Connections are kept and shared.** `@kubernetes/client-node` makes
+  a new connection pool for every request, so each call opened a
+  connection and paid a TLS handshake first. Requests made with a
+  token use one pool instead (`sharedPool` in `apiServer.ts`), with
+  idle connections kept for a minute. That's safe because the token is
+  in each request's `Authorization` header, not the connection. A
+  development kubeconfig's client certificate is part of the
+  connection, so it keeps the library's own.
+
 ### Signing in (the default, `METEOROLOGIST_KUBE_MODE=user`)
 
 1. People sign in through Authentik with OpenID Connect, using the
@@ -267,15 +287,27 @@ There are two, side by side, and the path picks which:
 - **Bake**, at `/ci/gitlab-bake/<namespace>/<key>/<group>/<project>.yml`:
   `docker buildx bake` with a target (`default` unless another is named)
   from a bake file (bake's own search, `docker-bake.hcl` then compose
-  files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`. The
-  tags are set with `--set "*.tags=…"`, which replaces any the file
-  gives, so the target should build one image; a group of several would
-  push them all to the same tags.
+  files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`.
+  `BAKE_TARGET` may name several targets, separated by spaces (a list
+  in the form), and any of them may be a group, for a repository that builds several images,
+  such as an application and the API that goes with it. The job asks
+  bake which targets they resolve to (`--print`, read with `jq`) and
+  sets each one's tags and cache with `--set "<target>.tags=…"`, which
+  replaces any the file gives: a build of one target is pushed to the
+  project's own registry repository, as before, and a group's each go
+  to one of their own under it, target `api` to `<project>/api`, its
+  name in lower case. The main target (`BAKE_MAIN_TARGET`), when one is
+  set, is pushed to the project's own repository instead, so an
+  application that was there before its project built others beside it
+  stays where it is. Each image is then an application of its own:
+  they all name the same GitLab project, each with its own image
+  repository, and Cirrus finds each one's image by the commit in that
+  repository.
 
 Either runs Docker in Docker on every push to the default branch, tags
 the image with `$CI_COMMIT_SHORT_SHA` (one of the tags Cirrus looks for)
 and `latest`, and pushes both to the project's registry. Where each
-finds its Dockerfile, bake file and target is set for the namespace on
+finds its Dockerfile, bake file, target and main target is set for the namespace on
 the Forges tab, and a project with any of them somewhere else sets them
 on its application's page, which also has both include lines to copy.
 
