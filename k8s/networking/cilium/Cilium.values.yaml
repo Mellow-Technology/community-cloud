@@ -8,15 +8,20 @@ kubeProxyReplacement: true  # Enables eBPF-based kube-proxy replacement for bett
 routingMode: "tunnel"
 tunnelProtocol: "vxlan"
 
-# The MTU pods and the VXLAN tunnel use. Cilium otherwise takes it
-# from the devices above, which include 1500-byte network cards, while
-# traffic between nodes goes over the Nebula mesh, whose interface is
-# 1300 (Defined Networking's default). VXLAN adds 50 bytes, so a full
-# 1500-byte pod packet became 1550 going into a 1300-byte tunnel, to be
-# fragmented, or dropped where it can't be. 1300 less VXLAN's 50 fits.
-# Raise it only with the mesh's MTU. Pods take a new value when
-# they're next created.
-mtu: {{ .Values.podMtu }}
+# The MTU of the network under Cilium: the Nebula mesh between nodes,
+# 1300 (Defined Networking's default), unless network.meshMtu says
+# otherwise. Cilium takes VXLAN's 50 bytes off it for pods, so their
+# routes are 1250 and a full pod packet fits the mesh once wrapped.
+#
+# It's said rather than left to Cilium, which detects it as the
+# smallest MTU among the devices above when an agent starts. An agent
+# that starts before the mesh's interface is up sees only 1500-byte
+# network cards and keeps 1500, so a full pod packet becomes 1550 in a
+# 1300-byte tunnel, to be fragmented, or dropped where it can't be.
+#
+# Capitals: the chart's key is MTU, and it ignores "mtu". Pods take a
+# new value when they're next created.
+MTU: {{ .Values.meshMtu }}
 
 # The devices the eBPF datapath attaches to: every interface
 # Community Cloud treats as carrying traffic between nodes,
@@ -34,6 +39,9 @@ k8sClientRateLimit:
   burst: 600  # Maximum burst rate for API requests
 operator:
   replicas: 1  # Ensures a single replica of the Cilium operator, suitable for small clusters
+  # Restart the operator when the configuration it reads changes, as
+  # rollOutCiliumPods below does for the agents
+  rollOutPods: true
   prometheus:
     enabled: true
   dashboards:
@@ -53,9 +61,11 @@ prometheus:
 dashboards:
   enabled: true
 
-# Ensures smooth rolling updates of Cilium components
-# Ensures that Cilium pods are updated properly during upgrades
-rollOutPods: true
+# Restart the agents when the configuration changes. Otherwise a
+# changed setting, the MTU say, waits for each agent's next restart.
+# The pod template carries a checksum of the cilium-config ConfigMap,
+# so an upgrade that changes nothing restarts nothing. They roll two
+# nodes at a time (the chart's maxUnavailable).
 rollOutCiliumPods: true
 
 # Use Gateway API as it's the future

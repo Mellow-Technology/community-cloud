@@ -17,8 +17,9 @@ import { join } from "node:path";
 
 import { NetworkingCommands, checkNetworkSupportCommand, getTcpBufferBytes } from "../cli/commands/Networking.ts";
 import type { TerminalCommandSpec } from "../cli/commands/Command.ts";
-import { buildTemplateValues } from "../util/template.ts";
-import { configFrom, makeTempDirectory } from "./helpers.ts";
+import YAML from "yaml";
+import { buildTemplateValues, renderInstallerFile } from "../util/template.ts";
+import { configFrom, loadFixtureConfig, makeTempDirectory } from "./helpers.ts";
 
 const CONFIG = configFrom({ network: { congestionControl: "bbr", qdisc: "fq" } });
 
@@ -210,21 +211,32 @@ describe("TCP buffers", () => {
   });
 });
 
-describe("the pods' MTU", () => {
-  const podMtu = (network: Record<string, unknown>) =>
-    (buildTemplateValues(configFrom({ network }), {}) as any).Values.podMtu;
+describe("the mesh's MTU", () => {
+  const meshMtu = (network: Record<string, unknown>) =>
+    (buildTemplateValues(configFrom({ network }), {}) as any).Values.meshMtu;
 
-  it("fits inside the mesh's 1300 bytes with VXLAN's 50, unless set", () => {
-    assert.equal(podMtu({}), 1250);
+  it("is Defined Networking's 1300, unless set", () => {
+    assert.equal(meshMtu({}), 1300);
   });
 
-  it("takes another from network.podMtu, for a mesh with another MTU", () => {
-    assert.equal(podMtu({ podMtu: 1370 }), 1370);
+  it("takes another from network.meshMtu", () => {
+    assert.equal(meshMtu({ meshMtu: 1420 }), 1420);
   });
 
   it("refuses one that isn't a sensible MTU", () => {
-    for (const value of [576, 1300.5, "1250", 65536]) {
-      assert.throws(() => podMtu({ podMtu: value }), /network\.podMtu/);
+    for (const value of [576, 1300.5, "1300", 65536]) {
+      assert.throws(() => meshMtu({ meshMtu: value }), /network\.meshMtu/);
     }
+  });
+
+  it("refuses podMtu, which meant the pods' and not the mesh's", () => {
+    assert.throws(() => meshMtu({ podMtu: 1250 }), /network\.meshMtu/);
+  });
+
+  it("reaches Cilium under the chart's own key, MTU", async () => {
+    const config = await loadFixtureConfig();
+    const values = YAML.parse(await renderInstallerFile(config, "embed://networking/cilium/Cilium.values.yaml"));
+    assert.equal(values.MTU, 1300);
+    assert.equal(values.mtu, undefined);
   });
 });
