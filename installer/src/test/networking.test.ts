@@ -15,7 +15,9 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { NetworkingCommands, checkNetworkSupportCommand } from "../cli/commands/Networking.ts";
+import { NetworkingCommands, checkNetworkSupportCommand, getTcpBufferBytes } from "../cli/commands/Networking.ts";
+import type { TerminalCommandSpec } from "../cli/commands/Command.ts";
+import { buildTemplateValues } from "../util/template.ts";
 import { configFrom, makeTempDirectory } from "./helpers.ts";
 
 const CONFIG = configFrom({ network: { congestionControl: "bbr", qdisc: "fq" } });
@@ -165,5 +167,64 @@ describe("loading the module", () => {
     const names = NetworkingCommands.map((spec: any) => spec.name);
     assert.ok(names.indexOf("load-congestion-module") < names.indexOf("check-network-support"));
     assert.ok(names.indexOf("check-network-support") < names.indexOf("write-sysctl-config"));
+  });
+});
+
+describe("TCP buffers", () => {
+  const written = (network: Record<string, unknown>) => {
+    const step = NetworkingCommands.find((command) => command.name === "write-sysctl-config") as TerminalCommandSpec;
+    const stdin = step.stdin;
+    return typeof stdin === "function" ? stdin(configFrom({ network })) : String(stdin);
+  };
+
+  it("lets a connection buffer up to 32 MiB each way by default", () => {
+    const file = written({ congestionControl: "bbr", qdisc: "fq" });
+    for (const line of [
+      "net.core.rmem_max = 33554432",
+      "net.core.wmem_max = 33554432",
+      "net.ipv4.tcp_rmem = 4096 131072 33554432",
+      "net.ipv4.tcp_wmem = 4096 16384 33554432",
+    ]) {
+      assert.ok(file.includes(line), `${line} in:\n${file}`);
+    }
+  });
+
+  it("takes another size from the configuration", () => {
+    assert.ok(written({ tcpBufferBytes: 67108864 }).includes("net.ipv4.tcp_wmem = 4096 16384 67108864"));
+  });
+
+  it("refuses a size that isn't a sensible whole number of bytes", () => {
+    for (const tcpBufferBytes of [1000, 2 ** 31, 1048576.5, "32M"]) {
+      assert.throws(() => getTcpBufferBytes(configFrom({ network: { tcpBufferBytes } })), /tcpBufferBytes/);
+    }
+  });
+
+  it("is checked after it's applied, ceilings and caps both", () => {
+    const step = NetworkingCommands.find((command) => command.name === "verify-network-settings") as TerminalCommandSpec;
+    const command = step.command;
+    const lines = (typeof command === "function" ? command(CONFIG) : command) as string[];
+    const script = lines.join("\n");
+    assert.match(script, /tcp_wmem/);
+    assert.match(script, /net\.core\.wmem_max/);
+    assert.match(script, /33554432/);
+  });
+});
+
+describe("the pods' MTU", () => {
+  const podMtu = (network: Record<string, unknown>) =>
+    (buildTemplateValues(configFrom({ network }), {}) as any).Values.podMtu;
+
+  it("fits inside the mesh's 1300 bytes with VXLAN's 50, unless set", () => {
+    assert.equal(podMtu({}), 1250);
+  });
+
+  it("takes another from network.podMtu, for a mesh with another MTU", () => {
+    assert.equal(podMtu({ podMtu: 1370 }), 1370);
+  });
+
+  it("refuses one that isn't a sensible MTU", () => {
+    for (const value of [576, 1300.5, "1250", 65536]) {
+      assert.throws(() => podMtu({ podMtu: value }), /network\.podMtu/);
+    }
   });
 });

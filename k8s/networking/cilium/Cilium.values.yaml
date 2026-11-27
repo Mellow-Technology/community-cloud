@@ -8,6 +8,16 @@ kubeProxyReplacement: true  # Enables eBPF-based kube-proxy replacement for bett
 routingMode: "tunnel"
 tunnelProtocol: "vxlan"
 
+# The MTU pods and the VXLAN tunnel use. Cilium otherwise takes it
+# from the devices above, which include 1500-byte network cards, while
+# traffic between nodes goes over the Nebula mesh, whose interface is
+# 1300 (Defined Networking's default). VXLAN adds 50 bytes, so a full
+# 1500-byte pod packet became 1550 going into a 1300-byte tunnel, to be
+# fragmented, or dropped where it can't be. 1300 less VXLAN's 50 fits.
+# Raise it only with the mesh's MTU. Pods take a new value when
+# they're next created.
+mtu: {{ .Values.podMtu }}
+
 # The devices the eBPF datapath attaches to: every interface
 # Community Cloud treats as carrying traffic between nodes,
 # which is the wired and wireless ones plus the mesh tunnels.
