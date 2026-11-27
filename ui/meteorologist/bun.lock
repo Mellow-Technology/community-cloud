@@ -546,7 +546,7 @@
 
     "gopd": ["gopd@1.2.0", "", {}, "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg=="],
 
-    "gui-mellow": ["gui-mellow@github:Mellow-Technology/gui-mellow#5c1d4d1", { "peerDependencies": { "next": ">=15", "react": ">=19", "react-dom": ">=19", "sass": ">=1.80" } }, "Mellow-Technology-gui-mellow-5c1d4d1", "sha512-LEZbL9Q21sYQP8LnAieXnsoMIx5x1vr2QdMp3JcOk4E/iO0U0WniF0n1VDtheSjFqC/5Ynk+zsRhx9pt6CDvIQ=="],
+    "gui-mellow": ["gui-mellow@github:Mellow-Technology/gui-mellow#9e616d3", { "peerDependencies": { "@tiptap/core": "^3", "@tiptap/extension-link": "^3", "@tiptap/extensions": "^3", "@tiptap/pm": "^3", "@tiptap/react": "^3", "@tiptap/starter-kit": "^3", "@tiptap/static-renderer": "^3", "next": ">=15", "react": ">=19", "react-dom": ">=19", "sass": ">=1.80" }, "optionalPeers": ["@tiptap/core", "@tiptap/extension-link", "@tiptap/extensions", "@tiptap/pm", "@tiptap/react", "@tiptap/starter-kit", "@tiptap/static-renderer"] }, "Mellow-Technology-gui-mellow-9e616d3", "sha512-yL+N7TULCqVoCm/+t9XmqAM4yZQ5Ce0xEMf1F+2TTCiXLjAyRDg3uqFUUlNB6x8kzx8hgwlyTy9ROSFZnJG6nw=="],
 
     "has-bigints": ["has-bigints@1.1.0", "", {}, "sha512-R3pbpkcIqv2Pm3dUwgjclDRVmWpTJW2DcMzcIhEXEx1oh/CEMObMm3KLmRJOdvhM7o4uQBnwr8pzRK2sJWIqfg=="],
 
