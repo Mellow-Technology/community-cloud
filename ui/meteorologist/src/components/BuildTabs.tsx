@@ -98,8 +98,10 @@ export function BuildTabs({
           content: (
             <div className={styles.fields}>
               <p className={styles.note}>
-                <code>docker buildx bake</code> with a target from a bake file. The target should build one image: its
-                tags are replaced with the commit&apos;s short SHA and latest.
+                <code>docker buildx bake</code> with a target from a bake file, or a group of targets, each its own
+                image. Their tags are replaced with the commit&apos;s short SHA and latest. One target is pushed to the
+                project&apos;s own registry repository; a group&apos;s each go to one of their own under it, target{" "}
+                <code>api</code> to <code>&lt;project&gt;/api</code>, so each can be an application of its own.
               </p>
               {include("bake")}
               <div className={styles.row}>
@@ -114,9 +116,18 @@ export function BuildTabs({
                 <TextField
                   label="Target"
                   placeholder={inherited?.bakeTarget ?? DEFAULT_BAKE_TARGET}
+                  hint="A target, or a group of them."
                   error={problems.bakeTarget}
                   value={build.bakeTarget ?? ""}
                   onChange={(event) => onChange({ ...build, bakeTarget: event.target.value })}
+                />
+                <TextField
+                  label="Main target"
+                  placeholder={inherited?.bakeMainTarget ?? "None"}
+                  hint="For a group: the target pushed to the project's own repository rather than one of its own, such as the application its other images go with."
+                  error={problems.bakeMainTarget}
+                  value={build.bakeMainTarget ?? ""}
+                  onChange={(event) => onChange({ ...build, bakeMainTarget: event.target.value })}
                 />
               </div>
               {file("bake")}

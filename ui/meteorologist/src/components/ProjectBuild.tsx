@@ -94,7 +94,7 @@ export function ProjectBuild({
           saved={{ ...namespaceBuild, ...own }}
           inherited={namespaceBuild}
           urls={urls}
-          defaultTab={own.bakeFile || own.bakeTarget ? "bake" : "dockerfile"}
+          defaultTab={own.bakeFile || own.bakeTarget || own.bakeMainTarget ? "bake" : "dockerfile"}
         />
         <div>
           <Button loading={saving} disabled={problem !== undefined || (urls !== undefined && !changed)} onClick={save}>

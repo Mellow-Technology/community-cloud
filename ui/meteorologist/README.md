@@ -263,14 +263,25 @@ There are two, side by side, and the path picks which:
   `docker buildx bake` with a target (`default` unless another is named)
   from a bake file (bake's own search, `docker-bake.hcl` then compose
   files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`. The
-  tags are set with `--set "*.tags=…"`, which replaces any the file
-  gives, so the target should build one image; a group of several would
-  push them all to the same tags.
+  target may be a group, for a repository that builds several images,
+  such as an application and the API that goes with it. The job asks
+  bake which targets it resolves to (`--print`, read with `jq`) and
+  sets each one's tags and cache with `--set "<target>.tags=…"`, which
+  replaces any the file gives: a build of one target is pushed to the
+  project's own registry repository, as before, and a group's each go
+  to one of their own under it, target `api` to `<project>/api`, its
+  name in lower case. The main target (`BAKE_MAIN_TARGET`), when one is
+  set, is pushed to the project's own repository instead, so an
+  application that was there before its project built others beside it
+  stays where it is. Each image is then an application of its own:
+  they all name the same GitLab project, each with its own image
+  repository, and Cirrus finds each one's image by the commit in that
+  repository.
 
 Either runs Docker in Docker on every push to the default branch, tags
 the image with `$CI_COMMIT_SHORT_SHA` (one of the tags Cirrus looks for)
 and `latest`, and pushes both to the project's registry. Where each
-finds its Dockerfile, bake file and target is set for the namespace on
+finds its Dockerfile, bake file, target and main target is set for the namespace on
 the Forges tab, and a project with any of them somewhere else sets them
 on its application's page, which also has both include lines to copy.
 

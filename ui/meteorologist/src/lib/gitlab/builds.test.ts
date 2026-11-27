@@ -167,16 +167,98 @@ describe("the CI file", () => {
     const build = job(
       ciFile("bake", { dockerfile: "x/Dockerfile", bakeFile: "ci/docker-bake.hcl", bakeTarget: "web" }),
     );
-    expect(build.variables).toMatchObject({ BAKE_FILE: "ci/docker-bake.hcl", BAKE_TARGET: "web" });
+    expect(build.variables).toMatchObject({
+      BAKE_FILE: "ci/docker-bake.hcl",
+      BAKE_TARGET: "web",
+      BAKE_MAIN_TARGET: "",
+    });
     const script = build.script.join("\n");
-    expect(script).toContain("docker buildx bake");
-    expect(script).toContain('${BAKE_FILE:+--file "$BAKE_FILE"}');
-    expect(script).toContain('--set "*.tags=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"');
-    expect(script).toContain("--push");
-    expect(script.trim().endsWith('"$BAKE_TARGET"')).toBe(true);
+    expect(script).toContain("docker buildx bake $files --print");
+    expect(script).toContain('--set "$each.tags=$repository:$CI_COMMIT_SHORT_SHA"');
+    expect(script.trim().endsWith('docker buildx bake $files "$@" --push "$BAKE_TARGET"')).toBe(true);
+  });
+
+  test("names the main target, when there is one", () => {
+    expect(job(ciFile("bake", { bakeTarget: "all", bakeMainTarget: "web" })).variables).toMatchObject({
+      BAKE_MAIN_TARGET: "web",
+    });
   });
 
   test("leaves the bake file to bake when none is given", () => {
     expect(job(ciFile("bake", {})).variables).toMatchObject({ BAKE_FILE: "", BAKE_TARGET: "default" });
+  });
+});
+
+// What the bake job's script pushes where, run with a stand-in for
+// docker that answers --print with the given targets and records what
+// the build was asked to do. Needs sh and jq, as the job's image has.
+const hasTools = Bun.spawnSync(["sh", "-c", "command -v jq"]).exitCode === 0;
+
+/**
+ * The tags each target is pushed with.
+ *
+ * @param targets what the bake target resolves to
+ * @param main BAKE_MAIN_TARGET
+ * @returns by target
+ */
+function pushed(targets: string[], main = ""): Record<string, string[]> {
+  const file = parse(ciFile("bake", { bakeTarget: "all", bakeMainTarget: main })) as {
+    "docker-build": { script: string[] };
+  };
+  const shell = file["docker-build"].script.at(-1) ?? "";
+  const directory = `${process.env.TMPDIR ?? "/tmp"}/bake-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const plan = JSON.stringify({ target: Object.fromEntries(targets.map((each) => [each, {}])) });
+  const docker = `#!/bin/sh\ncase "$*" in *--print*) echo '${plan}' ;; *) printf '%s\\n' "$@" > "$OUT" ;; esac\n`;
+  Bun.spawnSync(["mkdir", "-p", directory]);
+  Bun.spawnSync(["sh", "-c", `cat > "${directory}/docker" && chmod +x "${directory}/docker"`], {
+    stdin: Buffer.from(docker),
+  });
+  const run = Bun.spawnSync(["sh", "-c", shell], {
+    env: {
+      PATH: `${directory}:${process.env.PATH}`,
+      OUT: `${directory}/out`,
+      CI_REGISTRY_IMAGE: "registry.gitlab.com/acme/shop",
+      CI_COMMIT_SHORT_SHA: "abc123",
+      BAKE_FILE: "",
+      BAKE_TARGET: "all",
+      BAKE_MAIN_TARGET: main,
+    },
+  });
+  const args =
+    run.exitCode === 0
+      ? Bun.spawnSync(["cat", `${directory}/out`])
+          .stdout.toString()
+          .split("\n")
+      : [];
+  Bun.spawnSync(["rm", "-rf", directory]);
+  const tags: Record<string, string[]> = {};
+  for (const arg of args) {
+    const match = arg.match(/^([^.]+)\.tags=(.+)$/);
+    if (match) (tags[match[1]!] ??= []).push(match[2]!);
+  }
+  return tags;
+}
+
+describe.if(hasTools)("what the bake job pushes", () => {
+  test("one target goes to the project's own repository, as before", () => {
+    expect(pushed(["default"])).toEqual({
+      default: ["registry.gitlab.com/acme/shop:abc123", "registry.gitlab.com/acme/shop:latest"],
+    });
+  });
+
+  test("a group's targets each go to a repository of their own", () => {
+    const tags = pushed(["web", "api"]);
+    expect(tags.api).toEqual(["registry.gitlab.com/acme/shop/api:abc123", "registry.gitlab.com/acme/shop/api:latest"]);
+    expect(tags.web?.[0]).toBe("registry.gitlab.com/acme/shop/web:abc123");
+  });
+
+  test("the main target stays in the project's own repository", () => {
+    const tags = pushed(["web", "api"], "web");
+    expect(tags.web?.[0]).toBe("registry.gitlab.com/acme/shop:abc123");
+    expect(tags.api?.[0]).toBe("registry.gitlab.com/acme/shop/api:abc123");
+  });
+
+  test("a repository's name is the target's, in lower case", () => {
+    expect(pushed(["web", "Worker_2"]).Worker_2?.[0]).toBe("registry.gitlab.com/acme/shop/worker_2:abc123");
   });
 });
