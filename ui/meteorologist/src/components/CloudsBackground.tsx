@@ -1,11 +1,12 @@
 /**
  * @file
- * Clouds drifting faintly behind every page, for a weather app, and
- * now and then an airliner climbing through them.
+ * Clouds drifting faintly behind every page, for a weather app, with
+ * a hot-air balloon among them and birds in the distance.
  *
  * GUI Mellow's Pattern, with a tile of its own that GUI Mellow doesn't
  * have (../lib/cloudsTile.ts): outlines of clouds in a range of sizes,
- * scattered so the repeat doesn't read as a grid, and one plane. Like GUI Mellow's patterns,
+ * scattered so the repeat doesn't read as a grid, a balloon, and a few
+ * small flocks. Like GUI Mellow's patterns,
  * the tile is a mask over --gm-pattern-color, and its lines are the
  * same width whatever a shape's size. The colour is the theme's text
  * colour, thinned, so it suits light and dark alike while showing a
