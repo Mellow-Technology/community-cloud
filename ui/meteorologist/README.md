@@ -45,7 +45,12 @@ know about:
     namespace, Postgres included, an affinity for the region's nodes,
     required or preferred. A namespace placed with the old
     `scheduler.alpha.kubernetes.io/node-selector` annotation is shown
-    with its region, and moved to the labels when it's saved.
+    with its region, and moved to the labels when it's saved. Regions
+    are shown by name, such as North America for `nam`, from a copy of
+    the installer's list (`src/lib/regions.ts`, kept in step with
+    `installer/src/topology/regions.ts` by its test). The form offers
+    the regions the cluster's nodes are in, or every region when the
+    nodes can't be listed.
   - **Limits**: a ResourceQuota (`requests.cpu`, `limits.memory`,
     `requests.storage`) for the namespace's totals. There's also a
     LimitRange with each container's defaults, which a quota needs:
@@ -604,6 +609,7 @@ src/
     namespace/              namespace settings, and what someone with limited access can reach
     office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
+    regions.ts              region codes and names, mirroring the installer's list
     webapp/                 WebApplication types, form conversion, warnings, health, live status
 ```
 

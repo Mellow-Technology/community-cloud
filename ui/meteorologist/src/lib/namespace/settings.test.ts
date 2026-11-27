@@ -99,10 +99,12 @@ describe("reading back", () => {
 
   test("says where it runs", () => {
     expect(describePlacement({})).toBe("Anywhere");
-    expect(describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "sea" } })).toBe("sea");
+    expect(describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "sea" } })).toBe("Southeast Asia");
+    // One the installer doesn't know is shown as it is
+    expect(describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "lab" } })).toBe("lab");
     expect(
       describePlacement({ labels: { [NAMESPACE_REGION_LABEL]: "sea", [NAMESPACE_AFFINITY_LABEL]: "preferred" } }),
-    ).toBe("sea, preferred");
+    ).toBe("Southeast Asia, preferred");
   });
 });
 

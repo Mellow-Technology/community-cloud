@@ -981,7 +981,7 @@ function seed(): FixtureStore {
         workload("deployment", "picoclaw-gate", 1),
       ].map((each) => [key(each.namespace, `${each.kind}/${each.name}`), each]),
     ),
-    regions: ["fra", "sea"],
+    regions: ["eur", "sea"],
     version: 100,
   };
 }

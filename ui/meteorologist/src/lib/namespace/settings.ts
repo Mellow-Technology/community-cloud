@@ -28,6 +28,7 @@
  * Meteorologist only ever changes its own and leaves any others a
  * person has made alone.
  */
+import { regionName } from "../regions";
 import { CAPABILITIES, capabilityLabelPatch } from "../capabilities";
 import type { LimitRange, ObjectMeta, ResourceQuota, ServiceAccount } from "../kube/types";
 import { QUANTITY, parseQuantity } from "../quantity";
@@ -171,7 +172,8 @@ export function describePlacement(metadata: Pick<ObjectMeta, "labels" | "annotat
   if (region === "") {
     return "Anywhere";
   }
-  return affinity === "preferred" ? `${region}, preferred` : region;
+  const name = regionName(region);
+  return affinity === "preferred" ? `${name}, preferred` : name;
 }
 
 /**
