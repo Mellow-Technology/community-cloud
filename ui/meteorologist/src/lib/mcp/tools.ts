@@ -23,7 +23,8 @@ import { KubeError, describeError, isNotFound, type KubeClient } from "../kube/c
 import { emptyForm, fromForm, toForm } from "../webapp/form";
 import { appHealth } from "../webapp/health";
 import { dockerfileLabels, needsOf } from "../webapp/labels";
-import { appHref, specImage } from "../webapp/present";
+import { sharedName } from "../webapp/names";
+import { appHref, requestedServices, specImage } from "../webapp/present";
 import { PROTOCOLS, type ServiceOffering } from "../offerings/types";
 import type { WebApplication } from "../webapp/types";
 import { availableProperties, readCapabilities, unavailable, type Capabilities } from "./capabilities";
@@ -117,7 +118,14 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
     resources: spec.resources,
     postgres: spec.postgres !== undefined,
     rabbitmq: spec.rabbitmq !== undefined,
-    bucket: spec.bucket,
+    // Its bucket in SeaweedFS, by name, or false when it has none
+    bucket:
+      spec.bucket === undefined
+        ? false
+        : {
+            name: sharedName(app.metadata.namespace ?? "", app.metadata.name),
+            ...(spec.bucket.quota ? { quota: spec.bucket.quota } : {}),
+          },
     volumes: spec.volumes ?? [],
     connections: spec.connections ?? [],
     offers: spec.offers,
@@ -584,6 +592,9 @@ export const TOOLS: Tool[] = [
           image: specImage(app),
           health: appHealth(app).label,
           url: app.status?.url,
+          // What Cirrus gives it: Postgres, a bucket, volumes, RabbitMQ,
+          // migrations, GitLab
+          uses: requestedServices(app),
           gitlab: app.spec.source?.gitlab && {
             project: app.spec.source.gitlab.project,
             connection: app.spec.source.gitlab.tokenSecret.name,

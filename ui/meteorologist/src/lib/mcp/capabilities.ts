@@ -19,7 +19,7 @@
  * that hasn't got to the namespace yet), nothing is held back: Cirrus
  * says what's wrong when it provisions, as it always has.
  */
-import { isForbidden, type KubeClient } from "../kube/client";
+import { isForbidden, settle, type KubeClient } from "../kube/client";
 import type { ApplicationChanges } from "./changes";
 
 export const CAPABILITIES_CONFIG_MAP = "cirrus-capabilities";
@@ -58,26 +58,53 @@ export const SERVICES = ["postgres", "rabbitmq", "bucket"] as const;
 /**
  * The namespace's report, or nothing when there isn't one to read.
  *
+ * The report's own offerings are replaced with the namespace's as they
+ * are now. Cirrus writes the report every few minutes, so an
+ * application that has just offered itself wouldn't be in it yet, and
+ * connecting another to it straight away would be refused. Whoever can
+ * read the report can list the namespace's own offerings. Those shared
+ * from other namespaces can't be listed from here, so they're the
+ * report's.
+ *
  * @param kube
  * @param namespace
  * @returns
  */
 export async function readCapabilities(
-  kube: Pick<KubeClient, "getConfigMap">,
+  kube: Pick<KubeClient, "getConfigMap" | "listServiceOfferings">,
   namespace: string,
 ): Promise<Capabilities | undefined> {
+  let report: Capabilities;
   try {
     const configMap = await kube.getConfigMap(namespace, CAPABILITIES_CONFIG_MAP);
     const text = configMap?.data?.[CAPABILITIES_KEY];
     if (text === undefined) return undefined;
     const parsed = JSON.parse(text) as Capabilities;
-    return typeof parsed === "object" && parsed !== null && parsed.services !== undefined ? parsed : undefined;
+    if (typeof parsed !== "object" || parsed === null || parsed.services === undefined) return undefined;
+    report = parsed;
   } catch (error) {
     // An older Cirrus's roles don't grant reading it, and a report
     // that isn't JSON is no report
     if (isForbidden(error) || error instanceof SyntaxError) return undefined;
     throw error;
   }
+
+  const own = await settle(() => kube.listServiceOfferings(namespace));
+  if (!own.ok) return report;
+  return {
+    ...report,
+    offerings: [
+      ...report.offerings.filter((offering) => offering.namespace !== namespace),
+      ...own.value.map((offering) => ({
+        name: offering.metadata.name,
+        namespace,
+        title: offering.spec.title,
+        ...(offering.spec.description ? { description: offering.spec.description } : {}),
+        protocol: offering.spec.protocol ?? "http",
+        ready: offering.status?.conditions?.some((each) => each.type === "Ready" && each.status === "True") ?? false,
+      })),
+    ].sort((a, b) => a.namespace.localeCompare(b.namespace) || a.name.localeCompare(b.name)),
+  };
 }
 
 /**

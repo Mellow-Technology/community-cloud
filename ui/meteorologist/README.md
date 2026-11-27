@@ -410,7 +410,10 @@ offerings:
   leaving out a service that isn't available and storage types with no
   StorageClass, and both refuse what isn't available, with Cirrus's
   reason (`src/lib/mcp/capabilities.ts`). Without a report, from an
-  older Cirrus, nothing is held back.
+  older Cirrus, nothing is held back. The namespace's own offerings are
+  listed as they are now rather than as the report last had them, so an
+  application offered a moment ago can be connected to straight away;
+  those shared from other namespaces are the report's.
 - `list_applications` and `get_application`, for what's there and how
   it's doing
 - `create_application`, which works out nothing itself: the agent

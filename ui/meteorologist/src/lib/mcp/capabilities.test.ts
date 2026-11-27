@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { KubeError } from "../kube/client";
 import { readCapabilities, unavailable, type Capabilities } from "./capabilities";
 
-const report: Capabilities = {
+const baseReport: Capabilities = {
   version: 1,
   namespace: "team-shop",
   services: {
@@ -16,6 +16,7 @@ const report: Capabilities = {
   egress: { restricted: false },
   offerings: [],
 };
+const report = baseReport;
 const nothing = { services: new Set<string>(), connections: new Set<string>() };
 
 describe("reading the report", () => {
@@ -24,12 +25,16 @@ describe("reading the report", () => {
       getConfigMap: async () => {
         throw new KubeError(403, "forbidden", "Forbidden");
       },
+      listServiceOfferings: async () => [],
     };
     expect(await readCapabilities(kube, "team-shop")).toBeUndefined();
   });
 
   test("is nothing when it isn't JSON", async () => {
-    const kube = { getConfigMap: async () => ({ metadata: { name: "x" }, data: { "capabilities.json": "{" } }) };
+    const kube = {
+      getConfigMap: async () => ({ metadata: { name: "x" }, data: { "capabilities.json": "{" } }),
+      listServiceOfferings: async () => [],
+    };
     expect(await readCapabilities(kube, "team-shop")).toBeUndefined();
   });
 
@@ -38,8 +43,47 @@ describe("reading the report", () => {
       getConfigMap: async () => {
         throw new KubeError(0, "connection refused");
       },
+      listServiceOfferings: async () => [],
     };
     await expect(readCapabilities(kube, "team-shop")).rejects.toThrow("connection refused");
+  });
+});
+
+describe("the offerings in the report", () => {
+  const report = {
+    ...structuredClone(baseReport),
+    offerings: [
+      { name: "old", namespace: "team-shop", title: "Gone since", protocol: "http", ready: true },
+      { name: "plane", namespace: "cc-office", title: "Plane API", protocol: "http", ready: true },
+    ],
+  };
+  const kube = (own: string[] | Error) => ({
+    getConfigMap: async () => ({ metadata: { name: "x" }, data: { "capabilities.json": JSON.stringify(report) } }),
+    listServiceOfferings: async () => {
+      if (own instanceof Error) throw own;
+      return own.map((name) => ({
+        metadata: { name, namespace: "team-shop" },
+        spec: { title: name, service: { name } },
+        status: {
+          conditions: [{ type: "Ready", status: "True" as const, reason: "", message: "", lastTransitionTime: "" }],
+        },
+      }));
+    },
+  });
+
+  test("are the namespace's own as they are now, and others' as reported", async () => {
+    // One just offered, which the report is too old to have
+    const read = await readCapabilities(kube(["sonic-ml"]), "team-shop");
+    expect(read?.offerings.map((each) => `${each.namespace}/${each.name}`)).toEqual([
+      "cc-office/plane",
+      "team-shop/sonic-ml",
+    ]);
+    expect(unavailable({ connections: [{ offering: "sonic-ml" }] }, read, nothing)).toEqual([]);
+  });
+
+  test("are the report's when the namespace's can't be listed", async () => {
+    const read = await readCapabilities(kube(new KubeError(403, "forbidden", "Forbidden")), "team-shop");
+    expect(read?.offerings.map((each) => each.name)).toEqual(["old", "plane"]);
   });
 });
 
