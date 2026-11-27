@@ -30,6 +30,7 @@ Before creating or updating, work out what the application needs:
    - Migrations: Procfile release: line; Rails bin/rails db:migrate; Django python manage.py migrate; Prisma npx prisma migrate deploy; Laravel php artisan migrate --force; Phoenix bin/migrate or a release task; Alembic alembic upgrade head.
    - Health check: a route such as /up (Rails 7.1+), /healthz, /health or /api/health.
    - Port: EXPOSE in the Dockerfile is read by Cirrus, so only set port when there isn't one.
+   - Several images from one repository, such as an application and its API built by a docker buildx bake group: each is an application of its own, with the same gitlab project and its own image. With Meteorologist's bake build, target api is pushed to <project's registry>/api, and a single target, or the main target if one is set, to the project's own repository.
    - Redis has no field yet; say so if the application needs one.
 3. After creating or updating, write the returned dockerfileLabels into the project's Dockerfile, in the stage that's run (the last one), replacing any ${LABEL_PREFIX}* labels already there. That's what makes the next look quick, and Cirrus reads them too: once they're in the image, what they ask for is filled in where the spec says nothing (get_application shows it under detected). The spec wins, and detect: false turns them off.
 

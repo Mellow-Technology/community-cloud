@@ -10,14 +10,17 @@
  * The fields of both tabs are one build, saved together by whatever
  * holds them.
  */
+import { useState } from "react";
 import { Disclosure } from "gui-mellow/Accordion";
 import { CodeBlock } from "gui-mellow/CodeBlock";
 import { TextField } from "gui-mellow/Field";
+import { ListField } from "gui-mellow/RepeatingField";
 import { Tabs } from "gui-mellow/Tabs";
 
 import {
   DEFAULT_BAKE_TARGET,
   DEFAULT_DOCKERFILE,
+  bakeTargets,
   buildProblems,
   ciFile,
   includeSnippet,
@@ -56,6 +59,9 @@ export function BuildTabs({
   defaultTab?: Builder;
 }) {
   const problems = buildProblems(build);
+  // The rows as typed, blank ones included, which the build itself,
+  // a list of names, can't hold while one is being added
+  const [targets, setTargets] = useState(() => bakeTargets(build));
   const include = (builder: Builder) =>
     urls && <CodeBlock code={includeSnippet(urls[builder])} language="yaml" title={includeTitle} />;
   const file = (builder: Builder) => (
@@ -98,8 +104,10 @@ export function BuildTabs({
           content: (
             <div className={styles.fields}>
               <p className={styles.note}>
-                <code>docker buildx bake</code> with a target from a bake file. The target should build one image: its
-                tags are replaced with the commit&apos;s short SHA and latest.
+                <code>docker buildx bake</code> with a target from a bake file, or a group of targets, each its own
+                image. Their tags are replaced with the commit&apos;s short SHA and latest. One target is pushed to the
+                project&apos;s own registry repository; a group&apos;s each go to one of their own under it, target{" "}
+                <code>api</code> to <code>&lt;project&gt;/api</code>, so each can be an application of its own.
               </p>
               {include("bake")}
               <div className={styles.row}>
@@ -112,13 +120,27 @@ export function BuildTabs({
                   onChange={(event) => onChange({ ...build, bakeFile: event.target.value })}
                 />
                 <TextField
-                  label="Target"
-                  placeholder={inherited?.bakeTarget ?? DEFAULT_BAKE_TARGET}
-                  error={problems.bakeTarget}
-                  value={build.bakeTarget ?? ""}
-                  onChange={(event) => onChange({ ...build, bakeTarget: event.target.value })}
+                  label="Main target"
+                  placeholder={inherited?.bakeMainTarget ?? "None"}
+                  hint="For a group: the target pushed to the project's own repository rather than one of its own, such as the application its other images go with."
+                  error={problems.bakeMainTarget}
+                  value={build.bakeMainTarget ?? ""}
+                  onChange={(event) => onChange({ ...build, bakeMainTarget: event.target.value })}
                 />
               </div>
+              <ListField
+                label="Targets"
+                values={targets}
+                onChange={(rows) => {
+                  setTargets(rows);
+                  onChange({ ...build, bakeTarget: rows.join(" ") });
+                }}
+                placeholder="web"
+                addLabel="Add a target"
+                empty={`None: ${inherited?.bakeTarget ? `the namespace's, ${inherited.bakeTarget.split(" ").join(", ")}` : `bake's ${DEFAULT_BAKE_TARGET} target`}.`}
+                hint="Each target, or group of targets, to build. Several images are each pushed to a repository of their own."
+                error={problems.bakeTarget}
+              />
               {file("bake")}
             </div>
           ),

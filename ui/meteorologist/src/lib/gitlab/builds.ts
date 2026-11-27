@@ -52,14 +52,25 @@ const BUILDER_PATHS: Record<Builder, string> = { dockerfile: "ci/gitlab", bake: 
  * Where a project's builds find what they build from. Blank is the
  * default: Dockerfile, bake's own search for its file, and the
  * "default" target.
+ *
+ * bakeTarget is one or more targets, separated by spaces, and any of
+ * them can be a group. Several images built together are each pushed
+ * to a repository of its own under the project's,
+ * <project>/<target>. bakeMainTarget is the one pushed to the
+ * project's own repository instead, for a project whose main image was
+ * there before it built others beside it. Blank, a build of one target
+ * is pushed there, as it always was, and a group's all go under it.
  */
 export interface Build {
   dockerfile?: string;
   bakeFile?: string;
   bakeTarget?: string;
+  bakeMainTarget?: string;
 }
 
-const BUILD_FIELDS = ["dockerfile", "bakeFile", "bakeTarget"] as const;
+const BUILD_FIELDS = ["dockerfile", "bakeFile", "bakeTarget", "bakeMainTarget"] as const;
+// The fields that are names rather than paths
+const NAME_FIELDS: ReadonlySet<string> = new Set(["bakeTarget", "bakeMainTarget"]);
 
 /**
  * A namespace's build settings.
@@ -91,6 +102,27 @@ export function normalisePath(path: string): string {
 }
 
 /**
+ * Bake targets, from a list written with spaces or commas between them,
+ * each once.
+ *
+ * @param text
+ * @returns
+ */
+export function splitTargets(text: string): string[] {
+  return [...new Set(text.split(/[\s,]+/).filter((each) => each !== ""))];
+}
+
+/**
+ * The targets a build bakes, as a list; empty for the default.
+ *
+ * @param build
+ * @returns
+ */
+export function bakeTargets(build: Build): string[] {
+  return splitTargets(build.bakeTarget ?? "");
+}
+
+/**
  * A build with its fields trimmed and blanks left out.
  *
  * @param build
@@ -100,7 +132,14 @@ export function normaliseBuild(build: Build | undefined): Build {
   const normalised: Build = {};
   for (const field of BUILD_FIELDS) {
     const value = build?.[field];
-    const trimmed = value === undefined ? "" : field === "bakeTarget" ? value.trim() : normalisePath(value);
+    const trimmed =
+      value === undefined
+        ? ""
+        : field === "bakeTarget"
+          ? splitTargets(value).join(" ")
+          : NAME_FIELDS.has(field)
+            ? value.trim()
+            : normalisePath(value);
     if (trimmed !== "") {
       normalised[field] = trimmed;
     }
@@ -126,6 +165,7 @@ function storedBuild(value: unknown): Build | undefined {
       dockerfile: text("dockerfile"),
       bakeFile: text("bakeFile"),
       bakeTarget: text("bakeTarget"),
+      bakeMainTarget: text("bakeMainTarget"),
     });
   } else {
     return undefined;
@@ -160,7 +200,12 @@ export function buildSettingsFrom(configMap: ConfigMap | undefined): BuildSettin
   } catch {
     // Written badly by hand: as if no project had anything of its own
   }
-  const build = normaliseBuild({ dockerfile: data.dockerfile, bakeFile: data.bakeFile, bakeTarget: data.bakeTarget });
+  const build = normaliseBuild({
+    dockerfile: data.dockerfile,
+    bakeFile: data.bakeFile,
+    bakeTarget: data.bakeTarget,
+    bakeMainTarget: data.bakeMainTarget,
+  });
   return { key, build, projects };
 }
 
@@ -256,11 +301,12 @@ export function withProjectBuild(settings: BuildSettings, project: string, build
  * @returns
  */
 export function describeBuild(build: Build): string {
-  const { dockerfile, bakeFile, bakeTarget } = normaliseBuild(build);
+  const { dockerfile, bakeFile, bakeTarget, bakeMainTarget } = normaliseBuild(build);
   return [
     dockerfile && `Dockerfile ${dockerfile}`,
     bakeFile && `bake file ${bakeFile}`,
-    bakeTarget && `bake target ${bakeTarget}`,
+    bakeTarget && `bake ${bakeTarget.includes(" ") ? "targets" : "target"} ${bakeTarget.split(" ").join(", ")}`,
+    bakeMainTarget && `main target ${bakeMainTarget}`,
   ]
     .filter(Boolean)
     .join(", ");
@@ -305,9 +351,13 @@ export function buildProblems(build: Build): Partial<Record<keyof Build, string>
   if (dockerfile) problems.dockerfile = dockerfile;
   const bakeFile = pathProblem(build.bakeFile, "docker-bake.hcl");
   if (bakeFile) problems.bakeFile = bakeFile;
-  const target = build.bakeTarget?.trim() ?? "";
-  if (target !== "" && !BAKE_TARGET.test(target)) {
-    problems.bakeTarget = "A target's name: letters, digits, hyphens and underscores.";
+  const badTarget = splitTargets(build.bakeTarget ?? "").find((each) => !BAKE_TARGET.test(each));
+  if (badTarget !== undefined) {
+    problems.bakeTarget = `${badTarget} isn't a target's name: letters, digits, hyphens and underscores.`;
+  }
+  const main = build.bakeMainTarget?.trim() ?? "";
+  if (main !== "" && !BAKE_TARGET.test(main)) {
+    problems.bakeMainTarget = "A target's name: letters, digits, hyphens and underscores.";
   }
   return problems;
 }
@@ -388,30 +438,59 @@ docker-build:
  * @returns
  */
 export function ciFile(builder: Builder, build: Build): string {
-  const { dockerfile, bakeFile, bakeTarget } = normaliseBuild(build);
+  const { dockerfile, bakeFile, bakeTarget, bakeMainTarget } = normaliseBuild(build);
   if (builder === "bake") {
     const target = bakeTarget ?? DEFAULT_BAKE_TARGET;
-    return `# Served by Meteorologist. Builds bake target ${target}${bakeFile ? ` from ${bakeFile}` : ""} and pushes it
+    const several = target.includes(" ");
+    return `# Served by Meteorologist. Builds bake ${several ? "targets" : "target"} ${target.split(" ").join(", ")}${bakeFile ? ` from ${bakeFile}` : ""} and pushes ${several ? "them" : "it"}
 # to this project's container registry on every push to the default
-# branch, where Cirrus finds it by the commit. The target should build
-# one image: these tags replace any its file gives it.
+# branch, where Cirrus finds it by the commit. These tags replace any
+# the bake file gives.
+#
+# Several targets, or a group, build several images, each pushed to a
+# repository of its own: target "api" to $CI_REGISTRY_IMAGE/api. ${
+      bakeMainTarget
+        ? `Target ${bakeMainTarget} is
+# pushed to $CI_REGISTRY_IMAGE itself.`
+        : `A build of one target is
+# pushed to $CI_REGISTRY_IMAGE itself.`
+    } Each is tagged as below, with its
+# own repository in place of $CI_REGISTRY_IMAGE.
 ${TAGS}
 ${JOB}
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
     BAKE_FILE: "${bakeFile ?? ""}"
     BAKE_TARGET: "${target}"
+    BAKE_MAIN_TARGET: "${bakeMainTarget ?? ""}"
   script:
-    # Reuse layers from the previous latest image (inline cache) when it exists.
-    - >
-      docker buildx bake
-      \${BAKE_FILE:+--file "$BAKE_FILE"}
-      --set "*.tags=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-      --set "*.tags=$CI_REGISTRY_IMAGE:latest"
-      --set "*.cache-from=type=registry,ref=$CI_REGISTRY_IMAGE:latest"
-      --set "*.cache-to=type=inline"
-      --push
-      "$BAKE_TARGET"
+    # Which images the targets build: each, and each in a group. The
+    # names are checked, so they're split on spaces unquoted.
+    - apk add --no-cache jq > /dev/null
+    - |
+      files=""
+      if [ -n "$BAKE_FILE" ]; then files="--file $BAKE_FILE"; fi
+      targets=$(docker buildx bake $files --print $BAKE_TARGET | jq -r '.target | keys[]')
+      count=$(echo "$targets" | wc -w)
+      if [ -n "$BAKE_MAIN_TARGET" ] && ! echo "$targets" | grep -qx "$BAKE_MAIN_TARGET"; then
+        echo "Warning: the main target $BAKE_MAIN_TARGET isn't among those $BAKE_TARGET builds ($(echo $targets)), so nothing is pushed to $CI_REGISTRY_IMAGE itself"
+      fi
+      set --
+      for each in $targets; do
+        if [ "$each" = "$BAKE_MAIN_TARGET" ] || { [ -z "$BAKE_MAIN_TARGET" ] && [ "$count" -eq 1 ]; }; then
+          repository="$CI_REGISTRY_IMAGE"
+        else
+          repository="$CI_REGISTRY_IMAGE/$(echo "$each" | tr 'A-Z' 'a-z')"
+        fi
+        echo "$each: $repository"
+        # Reuse layers from the target's previous latest image (inline cache) when it exists
+        set -- "$@" \\
+          --set "$each.tags=$repository:$CI_COMMIT_SHORT_SHA" \\
+          --set "$each.tags=$repository:latest" \\
+          --set "$each.cache-from=type=registry,ref=$repository:latest" \\
+          --set "$each.cache-to=type=inline"
+      done
+      docker buildx bake $files "$@" --push $BAKE_TARGET
 `;
   }
   const file = dockerfile ?? DEFAULT_DOCKERFILE;

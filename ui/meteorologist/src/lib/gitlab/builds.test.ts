@@ -7,10 +7,12 @@ import {
   buildProblems,
   buildSettingsFrom,
   buildsConfigMap,
+  bakeTargets,
   ciFile,
   describeBuild,
   includeSnippet,
   includeUrl,
+  normaliseBuild,
   projectFromSegments,
   withProjectBuild,
   type BuildSettings,
@@ -104,7 +106,9 @@ describe("builds", () => {
       expect(buildProblems({ dockerfile: bad }).dockerfile).toBeDefined();
       expect(buildProblems({ bakeFile: bad }).bakeFile).toBeDefined();
     }
-    expect(buildProblems({ bakeTarget: "web app" }).bakeTarget).toBeDefined();
+    // Spaces separate targets, so "web app" is two good ones
+    expect(buildProblems({ bakeTarget: "web app" }).bakeTarget).toBeUndefined();
+    expect(buildProblems({ bakeTarget: "web;app" }).bakeTarget).toBeDefined();
     expect(buildProblems({ bakeTarget: "*" }).bakeTarget).toBeDefined();
   });
 
@@ -167,16 +171,144 @@ describe("the CI file", () => {
     const build = job(
       ciFile("bake", { dockerfile: "x/Dockerfile", bakeFile: "ci/docker-bake.hcl", bakeTarget: "web" }),
     );
-    expect(build.variables).toMatchObject({ BAKE_FILE: "ci/docker-bake.hcl", BAKE_TARGET: "web" });
+    expect(build.variables).toMatchObject({
+      BAKE_FILE: "ci/docker-bake.hcl",
+      BAKE_TARGET: "web",
+      BAKE_MAIN_TARGET: "",
+    });
     const script = build.script.join("\n");
-    expect(script).toContain("docker buildx bake");
-    expect(script).toContain('${BAKE_FILE:+--file "$BAKE_FILE"}');
-    expect(script).toContain('--set "*.tags=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"');
-    expect(script).toContain("--push");
-    expect(script.trim().endsWith('"$BAKE_TARGET"')).toBe(true);
+    expect(script).toContain("docker buildx bake $files --print");
+    expect(script).toContain('--set "$each.tags=$repository:$CI_COMMIT_SHORT_SHA"');
+    // Unquoted, so several targets are several arguments; they're checked names
+    expect(script.trim().endsWith('docker buildx bake $files "$@" --push $BAKE_TARGET')).toBe(true);
+  });
+
+  test("names the main target, when there is one", () => {
+    expect(job(ciFile("bake", { bakeTarget: "all", bakeMainTarget: "web" })).variables).toMatchObject({
+      BAKE_MAIN_TARGET: "web",
+    });
   });
 
   test("leaves the bake file to bake when none is given", () => {
     expect(job(ciFile("bake", {})).variables).toMatchObject({ BAKE_FILE: "", BAKE_TARGET: "default" });
+  });
+});
+
+// What the bake job's script pushes where, run with a stand-in for
+// docker that answers --print with the given targets and records what
+// the build was asked to do. Needs sh and jq, as the job's image has.
+const hasTools = Bun.spawnSync(["sh", "-c", "command -v jq"]).exitCode === 0;
+
+/**
+ * What the bake job asks docker buildx bake to do, after --print.
+ *
+ * @param targets what the bake targets resolve to
+ * @param main BAKE_MAIN_TARGET
+ * @param bakeTarget the targets asked for
+ * @returns its arguments, one to an item
+ */
+function baked(targets: string[], main = "", bakeTarget = "all"): string[] {
+  const file = parse(ciFile("bake", { bakeTarget, bakeMainTarget: main })) as {
+    "docker-build": { script: string[] };
+  };
+  const shell = file["docker-build"].script.at(-1) ?? "";
+  const directory = `${process.env.TMPDIR ?? "/tmp"}/bake-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const plan = JSON.stringify({ target: Object.fromEntries(targets.map((each) => [each, {}])) });
+  const docker = `#!/bin/sh\ncase "$*" in *--print*) echo '${plan}' ;; *) printf '%s\\n' "$@" > "$OUT" ;; esac\n`;
+  Bun.spawnSync(["mkdir", "-p", directory]);
+  Bun.spawnSync(["sh", "-c", `cat > "${directory}/docker" && chmod +x "${directory}/docker"`], {
+    stdin: Buffer.from(docker),
+  });
+  const run = Bun.spawnSync(["sh", "-c", shell], {
+    env: {
+      PATH: `${directory}:${process.env.PATH}`,
+      OUT: `${directory}/out`,
+      CI_REGISTRY_IMAGE: "registry.gitlab.com/acme/shop",
+      CI_COMMIT_SHORT_SHA: "abc123",
+      BAKE_FILE: "",
+      BAKE_TARGET: bakeTarget,
+      BAKE_MAIN_TARGET: main,
+    },
+  });
+  const args =
+    run.exitCode === 0
+      ? Bun.spawnSync(["cat", `${directory}/out`])
+          .stdout.toString()
+          .split("\n")
+      : [];
+  Bun.spawnSync(["rm", "-rf", directory]);
+  return args.filter((arg) => arg !== "");
+}
+
+/**
+ * The tags each target is pushed with.
+ *
+ * @param targets what the bake target resolves to
+ * @param main BAKE_MAIN_TARGET
+ * @returns by target
+ */
+function pushed(targets: string[], main = ""): Record<string, string[]> {
+  const args = baked(targets, main);
+  const tags: Record<string, string[]> = {};
+  for (const arg of args) {
+    const match = arg.match(/^([^.]+)\.tags=(.+)$/);
+    if (match) (tags[match[1]!] ??= []).push(match[2]!);
+  }
+  return tags;
+}
+
+describe.if(hasTools)("what the bake job pushes", () => {
+  test("one target goes to the project's own repository, as before", () => {
+    expect(pushed(["default"])).toEqual({
+      default: ["registry.gitlab.com/acme/shop:abc123", "registry.gitlab.com/acme/shop:latest"],
+    });
+  });
+
+  test("a group's targets each go to a repository of their own", () => {
+    const tags = pushed(["web", "api"]);
+    expect(tags.api).toEqual(["registry.gitlab.com/acme/shop/api:abc123", "registry.gitlab.com/acme/shop/api:latest"]);
+    expect(tags.web?.[0]).toBe("registry.gitlab.com/acme/shop/web:abc123");
+  });
+
+  test("the main target stays in the project's own repository", () => {
+    const tags = pushed(["web", "api"], "web");
+    expect(tags.web?.[0]).toBe("registry.gitlab.com/acme/shop:abc123");
+    expect(tags.api?.[0]).toBe("registry.gitlab.com/acme/shop/api:abc123");
+  });
+
+  test("a repository's name is the target's, in lower case", () => {
+    expect(pushed(["web", "Worker_2"]).Worker_2?.[0]).toBe("registry.gitlab.com/acme/shop/worker_2:abc123");
+  });
+});
+
+describe.if(hasTools)("several targets", () => {
+  test("are all baked, each to its own repository", () => {
+    const args = baked(["web", "api"], "", "web api");
+    expect(args.slice(args.indexOf("--push"))).toEqual(["--push", "web", "api"]);
+    expect(args).toContain("api.tags=registry.gitlab.com/acme/shop/api:abc123");
+  });
+});
+
+describe("a build's targets", () => {
+  test("are a list, written with spaces or commas, each once", () => {
+    expect(bakeTargets({ bakeTarget: " web, api  web " })).toEqual(["web", "api"]);
+    expect(normaliseBuild({ bakeTarget: "web,api" }).bakeTarget).toBe("web api");
+    expect(bakeTargets({})).toEqual([]);
+  });
+
+  test("are each checked", () => {
+    expect(buildProblems({ bakeTarget: "web ap!" }).bakeTarget).toContain("ap!");
+  });
+
+  test("are named in the CI file and its variable", () => {
+    const text = ciFile("bake", { bakeTarget: "web api" });
+    expect(text).toContain("Builds bake targets web, api");
+    const variables = (parse(text) as { "docker-build": { variables: Record<string, string> } })["docker-build"]
+      .variables;
+    expect(variables.BAKE_TARGET).toBe("web api");
+  });
+
+  test("are described as a list", () => {
+    expect(describeBuild({ bakeTarget: "web api" })).toBe("bake targets web, api");
   });
 });
