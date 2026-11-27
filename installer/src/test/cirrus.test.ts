@@ -286,6 +286,39 @@ describe("the ExternalDNS instances Cirrus runs", () => {
     );
   });
 
+  it("tell applications where browsers reach S3 when the cluster serves it outside, and not otherwise", async () => {
+    const deployment = async (storage: string | undefined) => {
+      const config = await loadFixtureConfig();
+      const values = config.getConfig().values;
+      values.domain = { ...values.domain, storage };
+      if (storage === undefined) delete values.domain.storage;
+      const documents = parseAllDocuments(
+        renderInstallerFile(config, "embed://operators/cirrus/Cirrus.yaml", {
+          templateNamespace: "community-cloud",
+        }),
+      ).map((document) => {
+        assert.deepEqual(document.errors, []);
+        return document.toJS();
+      });
+      return documents.find((each) => each.kind === "Deployment").spec.template
+        .spec.containers[0].env;
+    };
+
+    const served = await deployment("storage.example.org");
+    assert.equal(
+      served.find((each: any) => each.name === "CIRRUS_S3_PUBLIC_ENDPOINT")
+        ?.value,
+      "https://storage.example.org",
+    );
+    const inside = await deployment(undefined);
+    assert.equal(
+      inside.find((each: any) => each.name === "CIRRUS_S3_PUBLIC_ENDPOINT"),
+      undefined,
+    );
+    // Optional: a cluster without it still installs Cirrus
+    assert.ok(!CIRRUS.values!.includes("domain.storage"));
+  });
+
   it("keep their records apart from another cluster's by the main domain", async () => {
     const config = await loadFixtureConfig();
     const container = (

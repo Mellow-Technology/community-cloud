@@ -48,6 +48,22 @@ How migrations run:
 - It's retried once, and fails after timeoutSeconds (30 minutes unless said).
 - A failed migration leaves the old version running and isn't rerun for that image. Fix it and roll out a new image, or have a person delete the Job to run it again. You can't read its logs: give the person the Job's name, which wait_for_rollout and get_application report.
 
+How connections work:
+- A ServiceOffering is a service saying what it is and how to reach it, so an application connects to it by name rather than with copied addresses and passwords. get_capabilities lists those this namespace can use, its own and those other namespaces share with it, each with a title, a description and a protocol. Read the description: it says what the service does and how to use it.
+- Connect through connections, with the offering's name, and its namespace when it isn't this one. The application gets <NAME>_HOST, <NAME>_PORT, <NAME>_URL (with the scheme the protocol gives, and any path) and <NAME>_TYPE (the protocol), and a variable for each of the offering's own values, such as <NAME>_REGION. NAME is the offering's name, or the connection's name when one is given, in upper case with anything but letters and digits as _: offering models gives MODELS_URL, and a connection named search-api gives SEARCH_API_URL. Give a name when the application expects others, and point its config at these variables.
+- Credentials come only from an offering in this namespace, as <NAME>_USERNAME, <NAME>_PASSWORD and the like. One shared from another namespace gives the address alone, so its description says how to authenticate.
+- Prefer an offering to asking for a secret: an application using an OpenAI-compatible client, for one, may have models offered here rather than needing an API key. Only connect to what the application actually uses.
+- Two applications in this namespace, such as an application and the API built beside it from the same repository, can also reach each other by Service name (http://<application>:<port>) without an offering. Offer one when others should find it by name, or to describe it.
+- offers makes the application an offering itself, named for it, for its Service's http port: give it a title, a description that says what it does and how to use it, a protocol if it isn't http, and a path if its API isn't at /. It's offered to this namespace. A person shares it with others, and only a person can take it away, since what connects to it would stop working.
+- A connection waits, in Provisioned, until its offering is there and has found its Service.
+
+How buckets work:
+- bucket gives the application an S3 bucket of its own in the cluster's SeaweedFS, called <namespace>-<application> (S3_BUCKET), with a key that reaches that bucket and no other. Nothing else in it is configurable from here but quota, such as { quota: "10Gi" }.
+- Cirrus sets S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, and AWS_ENDPOINT_URL_S3, AWS_REGION, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, which AWS's SDKs read by themselves. Point the application's storage config at them; a framework that wants its own names (Rails' Active Storage, Django's django-storages, Laravel's filesystems) should read them from these.
+- Use path-style addressing (forcePathStyle: true, use_path_style_endpoint, addressing_style "path"): SeaweedFS doesn't serve buckets as subdomains. The region is us-east-1, which SeaweedFS ignores but SDKs insist on.
+- S3_ENDPOINT is inside the cluster only. Uploads and downloads that go through the application work as they are; links handed to browsers, such as presigned URLs, don't, since a signature covers the host. Where the cluster serves S3 outside, S3_PUBLIC_ENDPOINT is that address: sign browser links with a client pointed at it. Without it, serve files through the application. Objects aren't public: every read needs the keys or a signed link.
+- The bucket and its contents are kept when the application is deleted, and it can't be turned off from here.
+
 How volumes work:
 - Prefer the services: a database for data, a bucket for uploads and files. A volume is for what has to be a filesystem, such as SQLite, a search index or a cache.
 - A disk volume (fast, the default, on NVMe; sata; hdd) is a claim of its own, <application>-<name>, on storage local to one node. It's made on the node the first pod lands on, and every copy of the application shares it and runs on that node, so more replicas don't spread across nodes.

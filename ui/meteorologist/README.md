@@ -45,7 +45,12 @@ know about:
     namespace, Postgres included, an affinity for the region's nodes,
     required or preferred. A namespace placed with the old
     `scheduler.alpha.kubernetes.io/node-selector` annotation is shown
-    with its region, and moved to the labels when it's saved.
+    with its region, and moved to the labels when it's saved. Regions
+    are shown by name, such as North America for `nam`, from a copy of
+    the installer's list (`src/lib/regions.ts`, kept in step with
+    `installer/src/topology/regions.ts` by its test). The form offers
+    the regions the cluster's nodes are in, or every region when the
+    nodes can't be listed.
   - **Limits**: a ResourceQuota (`requests.cpu`, `limits.memory`,
     `requests.storage`) for the namespace's totals. There's also a
     LimitRange with each container's defaults, which a quota needs:
@@ -324,6 +329,18 @@ GitLab only includes a remote file whose last path segment, query and
 all, ends in `.yml` or `.yaml`. Changing the key (Forges tab) breaks
 every project's include until its line is replaced.
 
+### Loading
+
+A namespace's Applications tab draws its header and tabs as soon as the
+namespace is read, and the list streams in after them, with
+placeholder rows under its real columns until it does (a `<Suspense>`
+around `ApplicationList`). Its route's `loading.tsx` stands in for the
+whole tab before even the namespace is read, as when the tab is first
+clicked. The placeholders are `src/components/Placeholder.tsx`: grey
+bars that pulse, and hold still under `prefers-reduced-motion`, announced once
+to screen readers as loading. GUI Mellow has no spinner or placeholder
+of its own yet; when it does (GM-15), these move there.
+
 ### Live status
 
 `src/components/LiveRefresh.tsx` opens a server-sent event stream at
@@ -418,7 +435,17 @@ serving with the Job's name to hand to a person. And how volumes
 work: local to one node and shared by every copy, rollouts that stop
 the old copies first, storage types needing a node with those disks,
 RAM disks emptied on restart and counted as memory, migrations not
-mounting them, and kept when the application is deleted.
+mounting them, and kept when the application is deleted. And how
+buckets work: their name and keys, the variables Cirrus sets,
+path-style addressing, and that `S3_ENDPOINT` is only inside the
+cluster, so links for browsers are signed for `S3_PUBLIC_ENDPOINT`.
+And how connections work: what a ServiceOffering is, the variables a
+connection sets and how their names are made, that credentials come
+only from the namespace's own offerings, when two applications can
+simply use each other's Service, and `offers`. An agent may make its
+application an offering for its own namespace, and change its title,
+description, protocol and path; `shareWith` and taking an offer away
+are refused, for a person to do here.
 
 A change is laid over the form made from the live resource and saved
 the way the application form saves (`src/lib/mcp/changes.ts`), so the
@@ -620,7 +647,7 @@ tag against `package.json` too.
 src/
   proxy.ts                  sign-in check and token refresh, before every page
   app/                      pages, and the /auth/*, /healthz and /mcp routes
-  components/               the form, switches, and local pieces GUI Mellow lacks
+  components/               the form, switches, and local pieces GUI Mellow lacks, such as loading placeholders (GM-15)
   lib/
     capabilities.ts         the namespace capability registry
     environment.ts          where secret and shared environment values are kept
@@ -633,6 +660,7 @@ src/
     namespace/              namespace settings, and what someone with limited access can reach
     office.ts               the installer's package records: reading them, office applications, their health
     postgres.ts             the Postgres Cirrus gives each namespace, mirroring Cirrus's defaults
+    regions.ts              region codes and names, mirroring the installer's list
     webapp/                 WebApplication types, form conversion, warnings, health, live status
 ```
 

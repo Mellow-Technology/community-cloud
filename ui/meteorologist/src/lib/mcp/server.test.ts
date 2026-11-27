@@ -427,3 +427,64 @@ test("a rollout waiting for a secret says which, for the agent to pass on", asyn
   expect(rollout.finished).toBe(true);
   expect(rollout.next).toContain("the secret STRIPE_SECRET_KEY");
 });
+
+test("buckets are explained: path style, and which endpoint browsers can use", async () => {
+  const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+  const instructions = (answer?.result as { instructions: string }).instructions;
+  expect(instructions).toContain("How buckets work");
+  expect(instructions).toContain("path-style addressing");
+  expect(instructions).toContain("S3_PUBLIC_ENDPOINT");
+});
+
+describe("offers", () => {
+  test("an agent offers its application to its namespace", async () => {
+    const result = await call("update_application", {
+      name: "shop",
+      offers: { title: "Shop API", description: "Orders and baskets.", path: "/api" },
+    });
+    expect(result.isError).toBeUndefined();
+    const app = await fixtureClient().getWebApplication("team-shop", "shop");
+    expect(app.spec.offers).toEqual({ title: "Shop API", description: "Orders and baskets.", path: "/api" });
+    expect(result.structuredContent.offers).toEqual(app.spec.offers);
+  });
+
+  test("but can't share it with other namespaces", async () => {
+    const result = await call("update_application", { name: "shop", offers: { title: "x", shareWith: ["sandbox"] } });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("shareWith can't be set from here");
+  });
+
+  test("keeps what a person shared, when it changes the rest", async () => {
+    const kube = fixtureClient();
+    const shop = await kube.getWebApplication("team-shop", "shop");
+    await kube.replaceWebApplication({
+      ...shop,
+      spec: { ...shop.spec, offers: { title: "Shop", shareWith: ["sandbox"] } },
+    });
+    await call("update_application", { name: "shop", offers: { description: "Now with baskets." } });
+    expect((await kube.getWebApplication("team-shop", "shop")).spec.offers).toEqual({
+      title: "Shop",
+      description: "Now with baskets.",
+      shareWith: ["sandbox"],
+    });
+  });
+
+  test("can't be taken away from here", async () => {
+    await call("update_application", { name: "shop", offers: { title: "Shop API" } });
+    const result = await call("update_application", { name: "shop", offers: null });
+    expect(result.content[0]?.text).toContain("can't stop offering itself");
+  });
+
+  test("refuses a protocol Cirrus doesn't know", async () => {
+    const result = await call("update_application", { name: "shop", offers: { protocol: "smtp" } });
+    expect(result.content[0]?.text).toContain("offers.protocol");
+  });
+});
+
+test("connections are explained: the variables, credentials, and offering itself", async () => {
+  const answer = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, context);
+  const instructions = (answer?.result as { instructions: string }).instructions;
+  expect(instructions).toContain("How connections work");
+  expect(instructions).toContain("<NAME>_URL");
+  expect(instructions).toContain("offers makes the application an offering");
+});

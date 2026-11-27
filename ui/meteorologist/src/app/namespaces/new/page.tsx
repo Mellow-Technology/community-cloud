@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "New namespace" };
 export default async function NewNamespacePage() {
   const kube = await getKube();
   // Listing nodes takes more than most people are allowed; without it
-  // the region is typed rather than chosen
+  // every region is offered rather than those with nodes
   const regions = await settle(() => kube.listRegions());
 
   return (

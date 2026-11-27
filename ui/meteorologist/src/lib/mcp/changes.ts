@@ -20,6 +20,10 @@
  *   queue is where data gets lost, or a vhost deleted.
  * - Volumes are only added, never changed or taken away, for the same
  *   reason.
+ * - An application can offer itself to the rest of its namespace, but
+ *   not to others: shareWith is a trust decision for a person. Nor can
+ *   an offer be taken away from here, since whatever connects to it
+ *   would stop working.
  * - Secrets are asked for by name and description, never given a
  *   value: a person sets that in Meteorologist, and Cirrus holds the
  *   rollout until they have. Shared values are only added, too.
@@ -29,6 +33,7 @@
  *   replacing one with a plain value would put a secret in the spec.
  */
 import { DEFAULT_GITLAB_REF, DEFAULT_GITLAB_URL, DEFAULT_TOKEN_KEY, type StorageType } from "../webapp/types";
+import { PROTOCOLS } from "../offerings/types";
 import { validateForm, type WebApplicationForm } from "../webapp/form";
 
 /**
@@ -55,6 +60,10 @@ export interface ApplicationChanges {
   shared?: Array<{ name: string; as?: string }>;
   volumes?: Array<{ name: string; mountPath: string; size: string; type?: StorageType }>;
   connections?: Array<{ offering: string; namespace?: string; name?: string }>;
+  // Its own ServiceOffering, for other applications in the namespace;
+  // shareWith, which reaches others, is a person's to set
+  offers?:
+    { title?: string; description?: string; protocol?: string; path?: string; shareWith?: unknown } | false | null;
   gitlab?: { project: string; connection: string; url?: string; ref?: string };
 }
 
@@ -186,6 +195,31 @@ export function applyChanges(
     if (!form.serviceConnections.some((each) => JSON.stringify(each) === JSON.stringify(row))) {
       form.serviceConnections.push(row);
     }
+  }
+
+  if (changes.offers === null || changes.offers === false) {
+    if (base.offers) {
+      problems.push(
+        "It can't stop offering itself from here: whatever connects to it would stop working. A person does that in Meteorologist.",
+      );
+    }
+  } else if (changes.offers !== undefined) {
+    if (changes.offers.shareWith !== undefined) {
+      problems.push(
+        "offers.shareWith can't be set from here: sharing with other namespaces is a person's decision, in Meteorologist. It's offered to its own namespace.",
+      );
+    }
+    form.offers = true;
+    if (changes.offers.title !== undefined) form.offerTitle = changes.offers.title;
+    if (changes.offers.description !== undefined) form.offerDescription = changes.offers.description;
+    if (changes.offers.protocol !== undefined) {
+      if ((PROTOCOLS as readonly string[]).includes(changes.offers.protocol)) {
+        form.offerProtocol = changes.offers.protocol;
+      } else {
+        problems.push(`offers.protocol: one of ${PROTOCOLS.join(", ")}.`);
+      }
+    }
+    if (changes.offers.path !== undefined) form.offerPath = changes.offers.path;
   }
 
   if (changes.gitlab !== undefined) {

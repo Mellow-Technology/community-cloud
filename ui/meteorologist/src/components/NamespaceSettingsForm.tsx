@@ -30,6 +30,7 @@ import {
   type RegistryRow,
 } from "@/lib/namespace/settings";
 import { POSTGRES_CLUSTER, POSTGRES_STORAGE, postgresStorageProblem } from "@/lib/postgres";
+import { REGIONS, regionName, sortRegions } from "@/lib/regions";
 import styles from "./WebApplicationForm.module.scss";
 
 export interface NamespaceSettingsFormProps {
@@ -52,6 +53,8 @@ export interface NamespaceSettingsFormProps {
  * @returns
  */
 export function NamespaceSettingsForm({ initial, existing, regions }: NamespaceSettingsFormProps) {
+  // The regions the nodes are in, or every region when they couldn't be listed
+  const offered = regions.length > 0 ? regions : REGIONS.map((region) => region.code);
   const router = useRouter();
   const creating = existing === undefined;
   const [form, setForm] = useState(initial);
@@ -136,24 +139,28 @@ export function NamespaceSettingsForm({ initial, existing, regions }: NamespaceS
       title: "Where it runs",
       body: (
         <div className={styles.fields}>
-          {regions.length > 0 ? (
-            <SelectField
-              label="Region"
-              value={form.region}
-              error={shownErrors.region}
-              onChange={(event) => set("region", event.target.value)}
-              options={[
-                { value: "", label: "Anywhere" },
-                ...regions.map((region) => ({ value: region, label: region })),
-                // A region set by hand that no node is in now
-                ...(form.region !== "" && !regions.includes(form.region)
-                  ? [{ value: form.region, label: `${form.region} (no nodes)` }]
-                  : []),
-              ]}
-            />
-          ) : (
-            <TextField label="Region" placeholder="sea" {...text("region")} />
-          )}
+          <SelectField
+            label="Region"
+            value={form.region}
+            error={shownErrors.region}
+            hint={
+              regions.length > 0
+                ? undefined
+                : "The regions the cluster's nodes are in couldn't be listed, so every region is offered. Pods placed in one without nodes wait."
+            }
+            onChange={(event) => set("region", event.target.value)}
+            options={[
+              { value: "", label: "Anywhere" },
+              ...sortRegions(offered).map((region) => ({
+                value: region,
+                label: regionName(region),
+              })),
+              // A region set by hand that no node is in now
+              ...(form.region !== "" && !offered.includes(form.region)
+                ? [{ value: form.region, label: `${regionName(form.region)} (no nodes)` }]
+                : []),
+            ]}
+          />
           {form.region.trim() !== "" && (
             <SelectField
               label="Keeping to it"

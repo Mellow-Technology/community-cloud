@@ -23,6 +23,7 @@ import { emptyForm, fromForm, toForm } from "../webapp/form";
 import { appHealth } from "../webapp/health";
 import { dockerfileLabels, needsOf } from "../webapp/labels";
 import { appHref, specImage } from "../webapp/present";
+import { PROTOCOLS } from "../offerings/types";
 import type { WebApplication } from "../webapp/types";
 import { availableProperties, readCapabilities, unavailable, type Capabilities } from "./capabilities";
 import { applyChanges, type ApplicationChanges } from "./changes";
@@ -111,6 +112,7 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
     bucket: spec.bucket,
     volumes: spec.volumes ?? [],
     connections: spec.connections ?? [],
+    offers: spec.offers,
     migrations: spec.migrations,
     // The newest image's migration Job, kept until the next image's
     // starts, so a person can be told where its logs are
@@ -192,7 +194,7 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   bucket: {
     type: ["boolean", "object"],
     description:
-      "true, or { quota }, gives it an S3 bucket with S3_* and AWS_* variables. Can't be turned off from here.",
+      "true, or { quota }, gives it an S3 bucket of its own with S3_* and AWS_* variables. Use path-style addressing. S3_ENDPOINT is inside the cluster; S3_PUBLIC_ENDPOINT, when there is one, is for links handed to browsers. See the server's instructions on buckets. Can't be turned off from here.",
     properties: { quota: { type: "string", description: "Such as 10Gi." } },
   },
   migrations: {
@@ -269,15 +271,33 @@ const CHANGES_PROPERTIES: Record<string, unknown> = {
   connections: {
     type: "array",
     description:
-      "ServiceOfferings to connect to, added to those it has. Its variables start with the name, or the offering's name.",
+      "ServiceOfferings to connect to, added to those it has: services the namespace can use, its own or shared with it, which get_capabilities lists. Each sets <NAME>_HOST, <NAME>_PORT, <NAME>_URL and <NAME>_TYPE, and the offering's own values, where NAME is the connection's name, or the offering's, in upper case with anything but letters and digits as _. See the server's instructions on connections.",
     items: {
       type: "object",
       properties: {
         offering: { type: "string" },
         namespace: { type: "string", description: "Where the offering is, when it isn't this namespace." },
-        name: { type: "string" },
+        name: {
+          type: "string",
+          description: "What its variables start with, when the application expects other names than the offering's.",
+        },
       },
       required: ["offering"],
+    },
+  },
+  offers: {
+    type: "object",
+    description:
+      "Offers the application to the rest of its namespace as a ServiceOffering named for it, for its Service's http port, so others connect to it by name. Sharing it with other namespaces, and taking it away, are a person's to do.",
+    properties: {
+      title: { type: "string", description: 'What it is, in a few words: "Shop API".' },
+      description: {
+        type: "string",
+        description:
+          "What it does and how to use it, for whoever chooses what to connect to: its endpoints and how it's authenticated.",
+      },
+      protocol: { type: "string", enum: [...PROTOCOLS], description: "Decides the URL's scheme; http unless said." },
+      path: { type: "string", description: "Added to the URL, such as /api." },
     },
   },
   gitlab: {

@@ -34,6 +34,10 @@ pub struct Settings {
     pub seaweed_name: String,
     pub seaweed_namespace: String,
     pub s3_endpoint: String,
+    /// Where browsers reach the same S3, when the cluster serves it
+    /// outside (the installer's domain.storage), for links handed to
+    /// them. Nothing when it doesn't.
+    pub s3_public_endpoint: Option<String>,
 
     pub gateway_name: String,
     pub gateway_namespace: String,
@@ -67,6 +71,7 @@ impl Default for Settings {
             seaweed_name: "seaweed".to_string(),
             seaweed_namespace: "seaweedfs".to_string(),
             s3_endpoint: "http://seaweed-s3.seaweedfs.svc:8333".to_string(),
+            s3_public_endpoint: None,
             gateway_name: "cc-letsencrypt-web-gateway".to_string(),
             gateway_namespace: "community-cloud".to_string(),
             cluster_issuer: "cc-lets-encrypt".to_string(),
@@ -101,6 +106,10 @@ impl Settings {
             seaweed_name: read("CIRRUS_SEAWEED_NAME", defaults.seaweed_name),
             seaweed_namespace: read("CIRRUS_SEAWEED_NAMESPACE", defaults.seaweed_namespace),
             s3_endpoint: read("CIRRUS_S3_ENDPOINT", defaults.s3_endpoint),
+            s3_public_endpoint: env::var("CIRRUS_S3_PUBLIC_ENDPOINT")
+                .ok()
+                .map(|v| v.trim().trim_end_matches('/').to_string())
+                .filter(|v| !v.is_empty()),
             gateway_name: read("CIRRUS_GATEWAY_NAME", defaults.gateway_name),
             gateway_namespace: read("CIRRUS_GATEWAY_NAMESPACE", defaults.gateway_namespace),
             cluster_issuer: read("CIRRUS_CLUSTER_ISSUER", defaults.cluster_issuer),
