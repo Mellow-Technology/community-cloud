@@ -24,6 +24,7 @@ import { emptyForm, fromForm, toForm } from "../webapp/form";
 import { appHealth } from "../webapp/health";
 import { dockerfileLabels, needsOf } from "../webapp/labels";
 import { sharedName } from "../webapp/names";
+import { givenVariables } from "../webapp/variables";
 import { appHref, requestedServices, specImage } from "../webapp/present";
 import { PROTOCOLS, type ServiceOffering } from "../offerings/types";
 import type { WebApplication } from "../webapp/types";
@@ -104,6 +105,7 @@ function refusal(message: string): ToolResult {
 export function describeApplication(app: WebApplication, publicUrl: string): Record<string, unknown> {
   const spec = app.spec;
   const health = appHealth(app);
+  const given = givenVariables(app);
   return {
     name: app.metadata.name,
     image: specImage(app),
@@ -166,6 +168,11 @@ export function describeApplication(app: WebApplication, publicUrl: string): Rec
       reason,
       message,
     })),
+    // Every variable it's given, with where from, so its settings can
+    // be pointed at real names: Cirrus's report, or the names expected
+    // from the spec until there is one
+    variables: given.variables,
+    variablesReported: given.reported,
     // What the image's labels filled in that the spec leaves out
     detected: app.status?.detected?.applied ?? [],
     page: new URL(appHref(app), publicUrl).toString(),

@@ -201,6 +201,17 @@ export interface WebApplicationStatus {
   environment?: { secrets?: ValueStatus[]; shared?: ValueStatus[] };
   // What the image's labels filled in
   detected?: DetectedStatus;
+  // Every environment variable it's given, where from, and a plain
+  // one's value
+  variables?: VariableStatus[];
+}
+
+export interface VariableStatus {
+  name: string;
+  // postgres, bucket, rabbitmq, connections, secrets, shared or env
+  from: string;
+  value?: string;
+  secret?: boolean;
 }
 
 export interface DetectedStatus {

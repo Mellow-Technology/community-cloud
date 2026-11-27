@@ -620,3 +620,12 @@ test("an application's bucket is shown by name, and its services in the list", a
   );
   expect(listed.uses).toContain("Bucket");
 });
+
+test("get_application lists the variables an application is given", async () => {
+  const kube = fixtureClient();
+  const shop = await kube.getWebApplication("team-shop", "shop");
+  await kube.replaceWebApplication({ ...shop, spec: { ...shop.spec, bucket: {} } });
+  const app = (await call("get_application", { name: "shop" })).structuredContent;
+  expect(app.variablesReported).toBe(false);
+  expect(app.variables.map((each: { name: string }) => each.name)).toContain("S3_BUCKET");
+});

@@ -194,6 +194,16 @@ with the same pull Secrets. `detect: false` skips that too.
 
 Anything in `spec.env` comes after these, so it wins.
 
+`status.variables` lists every variable the application is actually
+given, in the container's order (`src/reconcile/variables.rs`): each
+one's name, what gives it (`postgres`, `bucket`, `rabbitmq`,
+`connections`, `secrets`, `shared` or `env`), and a plain one's value.
+One read from a Secret is listed by name with `secret: true`, never its
+value; a Secret loaded whole, as Postgres's and RabbitMQ's are, is
+listed by its keys. It's what's true of this application on this
+cluster, `S3_PUBLIC_ENDPOINT` included or not, so whoever configures the
+application can map its settings onto real names.
+
 ### Secrets and shared values
 
 ```yaml
