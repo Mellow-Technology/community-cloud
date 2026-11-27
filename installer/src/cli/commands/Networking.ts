@@ -13,6 +13,14 @@
  * BBR wants a fair queueing qdisc underneath it to pace packets, hence
  * setting net.core.default_qdisc alongside it.
  *
+ * And the most a TCP connection may buffer. One stream can have no
+ * more than its window in flight, so it can go no faster than its
+ * buffer over the round trip: at Ubuntu's 4 MiB send buffer and the
+ * 120 to 250 ms between Community Cloud's sites, that's 130 to 270
+ * Mbit/s a connection, however fast the link. 32 MiB lifts that to
+ * about a gigabit at 250 ms. These are ceilings the kernel grows a
+ * connection's buffers towards as it needs, not what each one takes.
+ *
  * Requires:
  * - sudo
  * - a kernel offering the configured algorithm, as a module or built in
@@ -38,6 +46,18 @@ const QDISC_SYSCTL_PATH = "/proc/sys/net/core/default_qdisc";
 // What we fall back to when a configuration doesn't say
 const DEFAULT_CONGESTION_CONTROL = "bbr";
 const DEFAULT_QDISC = "fq";
+const DEFAULT_TCP_BUFFER_BYTES = 32 * 1024 * 1024;
+
+// The range a buffer ceiling is taken from: below a megabyte would
+// slow even nearby links, and above a gigabyte is memory no node here
+// should hand one connection
+const MIN_TCP_BUFFER_BYTES = 1024 * 1024;
+const MAX_TCP_BUFFER_BYTES = 1024 * 1024 * 1024;
+
+// The smallest and starting sizes of a connection's buffers, the
+// kernel's own defaults, kept as they are
+const TCP_RMEM_MIN_AND_DEFAULT = "4096 131072";
+const TCP_WMEM_MIN_AND_DEFAULT = "4096 16384";
 
 // These values are interpolated into shell commands that run as root,
 // so we only accept the shape a kernel module or qdisc name actually
@@ -51,11 +71,14 @@ const SAFE_NAME = /^[a-z0-9_-]+$/;
  * - qdisc: the default queueing discipline, e.g. "fq"
  * - congestionModule: the kernel module providing the algorithm.
  *   Derived from the algorithm name when it isn't set.
+ * - tcpBufferBytes: the most a TCP connection may buffer each way,
+ *   32 MiB unless set.
  */
 interface NetworkConfig {
   congestionControl?: string;
   qdisc?: string;
   congestionModule?: string;
+  tcpBufferBytes?: number;
 }
 
 /**
@@ -118,6 +141,27 @@ function getCongestionModule(config: CloudConfig): string {
  * @param settingName
  * @returns
  */
+/**
+ * The most a TCP connection may buffer each way, in bytes.
+ *
+ * @param config
+ * @returns
+ */
+export function getTcpBufferBytes(config: CloudConfig): number {
+  const { tcpBufferBytes } = getNetworkConfig(config);
+  if (tcpBufferBytes === undefined) return DEFAULT_TCP_BUFFER_BYTES;
+  if (
+    !Number.isInteger(tcpBufferBytes) ||
+    tcpBufferBytes < MIN_TCP_BUFFER_BYTES ||
+    tcpBufferBytes > MAX_TCP_BUFFER_BYTES
+  ) {
+    throw new Error(
+      `"${tcpBufferBytes}" isn't a valid value for network.tcpBufferBytes. Expected a whole number of bytes from ${MIN_TCP_BUFFER_BYTES} (1 MiB) to ${MAX_TCP_BUFFER_BYTES} (1 GiB).`,
+    );
+  }
+  return tcpBufferBytes;
+}
+
 function checkName(value: string, settingName: string): string {
   if (typeof value !== "string" || !SAFE_NAME.test(value)) {
     throw new Error(
@@ -251,13 +295,19 @@ export const NetworkingCommands: CommandSpec[] = [
    */
   {
     name: "write-sysctl-config",
-    description: "Write the congestion control and qdisc sysctl settings",
+    description: "Write the congestion control, qdisc and TCP buffer sysctl settings",
     command: writeFileCommand(SYSCTL_FILE, { asRoot: true }),
-    stdin: (config: CloudConfig) =>
-      fileContents([
+    stdin: (config: CloudConfig) => {
+      const buffer = getTcpBufferBytes(config);
+      return fileContents([
         `${QDISC_SYSCTL_KEY} = ${getQdisc(config)}`,
         `net.ipv4.tcp_congestion_control = ${getCongestionControl(config)}`,
-      ]),
+        `net.core.rmem_max = ${buffer}`,
+        `net.core.wmem_max = ${buffer}`,
+        `net.ipv4.tcp_rmem = ${TCP_RMEM_MIN_AND_DEFAULT} ${buffer}`,
+        `net.ipv4.tcp_wmem = ${TCP_WMEM_MIN_AND_DEFAULT} ${buffer}`,
+      ]);
+    },
     output: OutputType.Raw,
   },
 
@@ -280,10 +330,11 @@ export const NetworkingCommands: CommandSpec[] = [
   {
     name: "verify-network-settings",
     purpose: CommandPurpose.Verify,
-    description: "Verify the node is using the configured congestion control and qdisc",
+    description: "Verify the node is using the configured congestion control, qdisc and TCP buffers",
     command: (config: CloudConfig) => {
       const algorithm = getCongestionControl(config);
       const qdisc = getQdisc(config);
+      const buffer = getTcpBufferBytes(config);
 
       return [
         "current_congestion=$(sysctl -n net.ipv4.tcp_congestion_control)",
@@ -292,6 +343,12 @@ export const NetworkingCommands: CommandSpec[] = [
         'echo "default qdisc: $current_qdisc"',
         `[ "$current_congestion" = "${algorithm}" ] || { echo "Expected congestion control ${algorithm}, got $current_congestion" >&2; exit 1; }`,
         `[ "$current_qdisc" = "${qdisc}" ] || { echo "Expected qdisc ${qdisc}, got $current_qdisc" >&2; exit 1; }`,
+        // The ceilings, which sysctl prints with tabs between the fields
+        "current_wmem=$(sysctl -n net.ipv4.tcp_wmem | awk '{print $3}')",
+        "current_rmem=$(sysctl -n net.ipv4.tcp_rmem | awk '{print $3}')",
+        'echo "TCP buffers: send up to $current_wmem, receive up to $current_rmem"',
+        `[ "$current_wmem" = "${buffer}" ] && [ "$current_rmem" = "${buffer}" ] || { echo "Expected TCP buffers up to ${buffer}" >&2; exit 1; }`,
+        `[ "$(sysctl -n net.core.wmem_max)" = "${buffer}" ] && [ "$(sysctl -n net.core.rmem_max)" = "${buffer}" ] || { echo "Expected net.core.rmem_max and wmem_max of ${buffer}" >&2; exit 1; }`,
       ];
     },
     output: OutputType.Raw,

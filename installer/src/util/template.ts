@@ -311,6 +311,11 @@ function isEmpty(value: any): boolean {
 // to do otherwise
 const DEFAULT_K8S_API_PORT = "6443";
 
+// The MTU pods and Cilium's VXLAN tunnel use: Defined Networking's
+// Nebula interface, 1300, less the 50 bytes VXLAN adds. See
+// k8s/networking/cilium/Cilium.values.yaml.
+const DEFAULT_POD_MTU = 1250;
+
 // Where the device classes are declared. Read here to work out which
 // nodes can serve which of them, and read again by the LVM bundle to
 // know which volume groups to create.
@@ -381,6 +386,18 @@ export function buildTemplateValues(config: CloudConfig, context?: any) {
   // interface on this node.
   if (values.networkDevices === undefined) {
     values.networkDevices = asCiliumDevices();
+  }
+
+  // The pods' MTU: network.podMtu where the mesh's own MTU differs
+  if (values.podMtu === undefined) {
+    const configured = (config.getNetwork() as { podMtu?: unknown }).podMtu;
+    const valid = Number.isInteger(configured) && (configured as number) >= 1200 && (configured as number) <= 9000;
+    if (configured !== undefined && !valid) {
+      throw new Error(
+        `"${String(configured)}" isn't a valid value for network.podMtu. Expected a whole number from 1200 to 9000.`,
+      );
+    }
+    values.podMtu = configured ?? DEFAULT_POD_MTU;
   }
 
   // How many storage controllers there can be. TopoLVM's controller

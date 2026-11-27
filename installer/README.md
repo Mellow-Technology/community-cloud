@@ -153,6 +153,8 @@ else is a subsection.
 | `congestionControl` | `bbr` | TCP congestion control. BBR holds throughput up over links that lose the odd packet, which CUBIC reads as congestion. |
 | `qdisc` | `fq` | The default queueing discipline. BBR wants a fair-queueing one underneath it. |
 | `congestionModule` | `tcp_<algorithm>` | The kernel module, when it isn't named after the algorithm. |
+| `tcpBufferBytes` | `33554432` (32 MiB) | The most a TCP connection may buffer each way (`tcp_rmem`, `tcp_wmem`, `rmem_max`, `wmem_max`). A connection can't go faster than its buffer over the round trip: Ubuntu's 4 MiB send buffer allows about 130 Mbit/s at 250 ms, and 32 MiB about a gigabit. |
+| `podMtu` | `1250` | The MTU pods and Cilium's VXLAN tunnel use: the mesh's 1300 less VXLAN's 50 bytes. Set it with the mesh's MTU, since anything bigger is fragmented or dropped between nodes. |
 
 Most kernels ship BBR as a module that isn't loaded until something
 asks for it, so a kernel only lists it as available once it is.
