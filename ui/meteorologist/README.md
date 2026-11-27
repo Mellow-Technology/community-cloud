@@ -262,10 +262,11 @@ There are two, side by side, and the path picks which:
 - **Bake**, at `/ci/gitlab-bake/<namespace>/<key>/<group>/<project>.yml`:
   `docker buildx bake` with a target (`default` unless another is named)
   from a bake file (bake's own search, `docker-bake.hcl` then compose
-  files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`. The
-  target may be a group, for a repository that builds several images,
+  files, unless a path is given), as `BAKE_TARGET` and `BAKE_FILE`.
+  `BAKE_TARGET` may name several targets, separated by spaces (a list
+  in the form), and any of them may be a group, for a repository that builds several images,
   such as an application and the API that goes with it. The job asks
-  bake which targets it resolves to (`--print`, read with `jq`) and
+  bake which targets they resolve to (`--print`, read with `jq`) and
   sets each one's tags and cache with `--set "<target>.tags=…"`, which
   replaces any the file gives: a build of one target is pushed to the
   project's own registry repository, as before, and a group's each go

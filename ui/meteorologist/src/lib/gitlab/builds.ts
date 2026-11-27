@@ -53,8 +53,9 @@ const BUILDER_PATHS: Record<Builder, string> = { dockerfile: "ci/gitlab", bake: 
  * default: Dockerfile, bake's own search for its file, and the
  * "default" target.
  *
- * A bake target can be a group of several, each its own image: each
- * is pushed to a repository of its own under the project's,
+ * bakeTarget is one or more targets, separated by spaces, and any of
+ * them can be a group. Several images built together are each pushed
+ * to a repository of its own under the project's,
  * <project>/<target>. bakeMainTarget is the one pushed to the
  * project's own repository instead, for a project whose main image was
  * there before it built others beside it. Blank, a build of one target
@@ -101,6 +102,27 @@ export function normalisePath(path: string): string {
 }
 
 /**
+ * Bake targets, from a list written with spaces or commas between them,
+ * each once.
+ *
+ * @param text
+ * @returns
+ */
+export function splitTargets(text: string): string[] {
+  return [...new Set(text.split(/[\s,]+/).filter((each) => each !== ""))];
+}
+
+/**
+ * The targets a build bakes, as a list; empty for the default.
+ *
+ * @param build
+ * @returns
+ */
+export function bakeTargets(build: Build): string[] {
+  return splitTargets(build.bakeTarget ?? "");
+}
+
+/**
  * A build with its fields trimmed and blanks left out.
  *
  * @param build
@@ -110,7 +132,14 @@ export function normaliseBuild(build: Build | undefined): Build {
   const normalised: Build = {};
   for (const field of BUILD_FIELDS) {
     const value = build?.[field];
-    const trimmed = value === undefined ? "" : NAME_FIELDS.has(field) ? value.trim() : normalisePath(value);
+    const trimmed =
+      value === undefined
+        ? ""
+        : field === "bakeTarget"
+          ? splitTargets(value).join(" ")
+          : NAME_FIELDS.has(field)
+            ? value.trim()
+            : normalisePath(value);
     if (trimmed !== "") {
       normalised[field] = trimmed;
     }
@@ -276,7 +305,7 @@ export function describeBuild(build: Build): string {
   return [
     dockerfile && `Dockerfile ${dockerfile}`,
     bakeFile && `bake file ${bakeFile}`,
-    bakeTarget && `bake target ${bakeTarget}`,
+    bakeTarget && `bake ${bakeTarget.includes(" ") ? "targets" : "target"} ${bakeTarget.split(" ").join(", ")}`,
     bakeMainTarget && `main target ${bakeMainTarget}`,
   ]
     .filter(Boolean)
@@ -322,11 +351,13 @@ export function buildProblems(build: Build): Partial<Record<keyof Build, string>
   if (dockerfile) problems.dockerfile = dockerfile;
   const bakeFile = pathProblem(build.bakeFile, "docker-bake.hcl");
   if (bakeFile) problems.bakeFile = bakeFile;
-  for (const field of ["bakeTarget", "bakeMainTarget"] as const) {
-    const target = build[field]?.trim() ?? "";
-    if (target !== "" && !BAKE_TARGET.test(target)) {
-      problems[field] = "A target's name: letters, digits, hyphens and underscores.";
-    }
+  const badTarget = splitTargets(build.bakeTarget ?? "").find((each) => !BAKE_TARGET.test(each));
+  if (badTarget !== undefined) {
+    problems.bakeTarget = `${badTarget} isn't a target's name: letters, digits, hyphens and underscores.`;
+  }
+  const main = build.bakeMainTarget?.trim() ?? "";
+  if (main !== "" && !BAKE_TARGET.test(main)) {
+    problems.bakeMainTarget = "A target's name: letters, digits, hyphens and underscores.";
   }
   return problems;
 }
@@ -410,13 +441,14 @@ export function ciFile(builder: Builder, build: Build): string {
   const { dockerfile, bakeFile, bakeTarget, bakeMainTarget } = normaliseBuild(build);
   if (builder === "bake") {
     const target = bakeTarget ?? DEFAULT_BAKE_TARGET;
-    return `# Served by Meteorologist. Builds bake target ${target}${bakeFile ? ` from ${bakeFile}` : ""} and pushes it
+    const several = target.includes(" ");
+    return `# Served by Meteorologist. Builds bake ${several ? "targets" : "target"} ${target.split(" ").join(", ")}${bakeFile ? ` from ${bakeFile}` : ""} and pushes ${several ? "them" : "it"}
 # to this project's container registry on every push to the default
 # branch, where Cirrus finds it by the commit. These tags replace any
 # the bake file gives.
 #
-# A group builds several images, each pushed to a repository of its
-# own: target "api" to $CI_REGISTRY_IMAGE/api. ${
+# Several targets, or a group, build several images, each pushed to a
+# repository of its own: target "api" to $CI_REGISTRY_IMAGE/api. ${
       bakeMainTarget
         ? `Target ${bakeMainTarget} is
 # pushed to $CI_REGISTRY_IMAGE itself.`
@@ -432,12 +464,13 @@ ${JOB}
     BAKE_TARGET: "${target}"
     BAKE_MAIN_TARGET: "${bakeMainTarget ?? ""}"
   script:
-    # Which images the target builds: itself, or each target in its group
+    # Which images the targets build: each, and each in a group. The
+    # names are checked, so they're split on spaces unquoted.
     - apk add --no-cache jq > /dev/null
     - |
       files=""
       if [ -n "$BAKE_FILE" ]; then files="--file $BAKE_FILE"; fi
-      targets=$(docker buildx bake $files --print "$BAKE_TARGET" | jq -r '.target | keys[]')
+      targets=$(docker buildx bake $files --print $BAKE_TARGET | jq -r '.target | keys[]')
       count=$(echo "$targets" | wc -w)
       if [ -n "$BAKE_MAIN_TARGET" ] && ! echo "$targets" | grep -qx "$BAKE_MAIN_TARGET"; then
         echo "Warning: the main target $BAKE_MAIN_TARGET isn't among those $BAKE_TARGET builds ($(echo $targets)), so nothing is pushed to $CI_REGISTRY_IMAGE itself"
@@ -457,7 +490,7 @@ ${JOB}
           --set "$each.cache-from=type=registry,ref=$repository:latest" \\
           --set "$each.cache-to=type=inline"
       done
-      docker buildx bake $files "$@" --push "$BAKE_TARGET"
+      docker buildx bake $files "$@" --push $BAKE_TARGET
 `;
   }
   const file = dockerfile ?? DEFAULT_DOCKERFILE;
