@@ -566,8 +566,16 @@ mod tests {
 
         let started = std::time::Instant::now();
         let result = gitlab.successful_pipelines("group/project", "main", 1).await;
-        assert!(result.is_err(), "expected a timeout, got {:?}", result.map(|each| each.len()));
-        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert!(
+            result.is_err(),
+            "expected a timeout, got {:?}",
+            result.map(|each| each.len())
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
