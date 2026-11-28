@@ -23,6 +23,8 @@
 //! Only the handful of endpoints Cirrus needs are here, through
 //! reqwest; a GitLab client crate would bring far more than that.
 
+use std::time::Duration;
+
 use k8s_openapi::jiff::{SignedDuration, Timestamp};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -130,6 +132,20 @@ const HOOKS: Needs = Needs {
     role: "Maintainer",
 };
 
+// How long a request to GitLab may take, connecting included, and how
+// long connecting may. Without them a request whose connection goes
+// quiet waits forever: no answer, and no error either. One reconcile of
+// an application at a time, so that application would be stuck until
+// Cirrus restarts, its later changes never seen, while every other one
+// carried on. A connection cut off mid-request by a network outage did
+// exactly that. A timeout makes it an error, logged and tried again.
+//
+// Thirty seconds is far longer than any of these requests takes, long
+// lists of tags and pipelines included, so it only ends one that has
+// stopped.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 // How many of the registry's tags an error lists
 const TAGS_SHOWN: usize = 5;
 
@@ -138,9 +154,23 @@ const BODY_SHOWN: usize = 200;
 
 impl GitLab {
     pub fn new(base: &str, token: &str) -> Self {
+        Self::with_timeout(base, token, REQUEST_TIMEOUT)
+    }
+
+    /// As `new`, with requests given `timeout` to finish.
+    ///
+    /// @param base
+    /// @param token
+    /// @param timeout
+    /// @returns
+    fn with_timeout(base: &str, token: &str, timeout: Duration) -> Self {
         crate::install_crypto_provider();
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT.min(timeout))
+                .timeout(timeout)
+                .build()
+                .expect("a reqwest client builds"),
             base: base.trim_end_matches('/').to_string(),
             token: token.to_string(),
         }
@@ -522,6 +552,31 @@ mod tests {
     use super::*;
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn gives_up_on_a_gitlab_that_never_answers() {
+        let server = MockServer::start().await;
+        // Takes the request and says nothing, as a connection gone quiet
+        // mid-request does
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(60)))
+            .mount(&server)
+            .await;
+        let gitlab = GitLab::with_timeout(&server.uri(), "token", Duration::from_millis(200));
+
+        let started = std::time::Instant::now();
+        let result = gitlab.successful_pipelines("group/project", "main", 1).await;
+        assert!(
+            result.is_err(),
+            "expected a timeout, got {:?}",
+            result.map(|each| each.len())
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn renders_tags() {
